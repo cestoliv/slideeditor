@@ -1,9 +1,24 @@
-const DB_NAME = "slide-studio-db";
-const DB_VERSION = 1;
-const STORE_NAME = "projects";
 const DESIGN_WIDTH = 1080;
 const OUTPUT_WIDTH = 1080;
-const OUTPUT_HEIGHT = 1920;
+const DEFAULT_RATIO = { w: 9, h: 16 };
+const RATIO_PRESETS = [
+  { w: 9, h: 16, label: "9:16", note: "TikTok · Reels · Stories" },
+  { w: 3, h: 4, label: "3:4", note: "Instagram tall portrait" },
+  { w: 4, h: 5, label: "4:5", note: "Instagram portrait" },
+  { w: 1, h: 1, label: "1:1", note: "Square" },
+  { w: 1.91, h: 1, label: "1.91:1", note: "Instagram landscape" },
+];
+// Instagram accepts 3:4 through 1.91:1. TikTok's own 9:16 falls below that
+// band, so custom values are allowed wider and only flagged, never blocked.
+const INSTAGRAM_MIN_RATIO = 3 / 4;
+const INSTAGRAM_MAX_RATIO = 1.91;
+const CUSTOM_RATIO_MIN = 0.4;
+const CUSTOM_RATIO_MAX = 2.5;
+const PREVIEW_CHROMES = [
+  { id: "tiktok", label: "TikTok" },
+  { id: "instagram-feed", label: "Instagram feed" },
+  { id: "instagram-story", label: "Instagram Stories" },
+];
 const INITIAL_OVERLAY_MAX_SIZE = 0.82;
 const DEFAULT_OUTLINE_WIDTH = 12;
 const OUTLINE_RATIO = 0.17;
@@ -21,6 +36,7 @@ const FONT_SIZE_MIN = 20;
 const FONT_SIZE_MAX = 180;
 const FONT_SIZE_SLIDER_MAX = 1000;
 const FONT_SIZE_SLIDER_STEP = 10;
+const THUMBNAIL_WIDTH = 540;
 const CANVAS_ZOOM_MIN = 0.2;
 const CANVAS_ZOOM_MAX = 3;
 const FONT_SIZE_SLIDER_STOPS = [
@@ -47,7 +63,14 @@ const state = {
   selectedTextId: null,
   selectedOverlayId: null,
   selectedLayerKeys: [],
-  db: null,
+  library: new Map(),
+  libraryFilter: "",
+  libraryKind: "background",
+  librarySearchTimer: null,
+  librarySource: "project",
+  events: null,
+  saveInFlight: false,
+  saveQueued: false,
   stageWidth: 0,
   stageHeight: 0,
   canvasZoom: 1,
@@ -55,8 +78,9 @@ const state = {
   toastTimer: null,
   mobileInspectorOpen: false,
   photoAdjustMode: false,
-  showTikTokOverlay: false,
-  draggingAssetId: null,
+  previewVisible: false,
+  previewChromeChoice: null,
+  draggingItemId: null,
   draggingSlideId: null,
   slideDragGhost: null,
   thumbnailRefreshTimer: null,
@@ -78,10 +102,38 @@ const history = {
   applying: false,
 };
 
+function normalizeProject(project) {
+  project.ratio = projectRatio(project);
+  for (const slide of project.slides || []) {
+    if (slide.imageScale == null) slide.imageScale = 1;
+    if (slide.imageX == null) slide.imageX = 0;
+    if (slide.imageY == null) slide.imageY = 0;
+    if (!Array.isArray(slide.overlays)) slide.overlays = [];
+    if (!Array.isArray(slide.texts)) slide.texts = [];
+    slide.overlays.forEach((overlay, index) => {
+      const asset = state.library.get(overlay.itemId);
+      if (overlay.height == null && asset) {
+        const crop = overlayCrop(overlay);
+        overlay.height = overlay.width * outputAspect(project) * ((asset.height * crop.h) / (asset.width * crop.w));
+      }
+      if (overlay.z == null) overlay.z = index + 1;
+    });
+    slide.texts.forEach((text, index) => {
+      if (text.outlineWidth == null) text.outlineWidth = DEFAULT_OUTLINE_WIDTH;
+      if (!normalizeHexColor(text.color)) text.color = textColor(text);
+      if (!text.background) text.background = "white";
+      if (!text.backgroundShape) text.backgroundShape = "full";
+      if (!text.align) text.align = "center";
+      if (text.rotation == null) text.rotation = 0;
+      if (text.z == null) text.z = (slide.overlays?.length || 0) + index + 1;
+    });
+  }
+  return project;
+}
+
 function cloneProject(project) {
   return {
     ...project,
-    assets: (project.assets || []).map((asset) => ({ ...asset })),
     slides: (project.slides || []).map((slide) => ({
       ...slide,
       texts: (slide.texts || []).map((text) => ({ ...text })),
@@ -110,7 +162,7 @@ function applyHistorySnapshot(snapshot) {
   setLayerSelection(selectedLayerKeys());
   state.croppingOverlayId = null;
   renderEditor();
-  putProject(state.projects[index]).catch((error) => console.error(error));
+  flushSave(state.projects[index]);
   history.applying = false;
 }
 
@@ -140,6 +192,8 @@ function projectPath(projectId) {
 
 function routeFromPathname(pathname = window.location.pathname) {
   if (pathname === "/" || pathname === "/index.html") return { view: "dashboard" };
+  const library = pathname.match(/^\/library(?:\/(backgrounds|assets))?\/?$/);
+  if (library) return { view: "library", kind: library[1] === "assets" ? "asset" : "background" };
   const match = pathname.match(/^\/projects\/([^/]+)\/?$/);
   if (!match) return { view: "not-found" };
   try {
@@ -225,42 +279,71 @@ async function copyText(value) {
   toast(`Copied ${value}`);
 }
 
-function openDatabase() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "id" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+/**
+ * The backend holds library items. The editor keeps a cache so the many render
+ * paths can resolve an id to an image without awaiting anything.
+ */
+async function refreshLibrary() {
+  const result = await slideApi.listLibrary({ limit: 200 });
+  state.library = new Map(result.items.map((item) => [item.id, decorateItem(item)]));
+  return state.library;
 }
 
-function getAllProjects() {
-  return new Promise((resolve, reject) => {
-    const request = state.db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
+/** `imageData` keeps the name the render and export paths already use. */
+function decorateItem(item) {
+  return { ...item, imageData: item.url };
+}
+
+function rememberItem(item) {
+  const decorated = decorateItem(item);
+  state.library.set(item.id, decorated);
+  return decorated;
+}
+
+/** Fills in the fields derived from library items, which are never persisted. */
+function hydrateProject(project) {
+  for (const slide of project.slides || []) {
+    const background = state.library.get(slide.backgroundItemId);
+    slide.imageData = background?.url || "";
+    slide.width = background?.width || slide.width || 1080;
+    slide.height = background?.height || slide.height || 1920;
+    slide.texts = slide.texts || [];
+    slide.overlays = slide.overlays || [];
+  }
+  return project;
+}
+
+/** The inverse: strip everything the server recomputes from library items. */
+function documentFor(project) {
+  return {
+    ratio: projectRatio(project),
+    slides: (project.slides || []).map((slide) => {
+      const { imageData, ...rest } = slide;
+      return rest;
+    }),
+  };
+}
+
+async function loadProjectIntoState(projectId) {
+  const project = hydrateProject(await slideApi.getProject(projectId));
+  const index = state.projects.findIndex((item) => item.id === projectId);
+  if (index >= 0) state.projects[index] = project;
+  else state.projects.push(project);
+  return project;
 }
 
 function putProject(project) {
-  return new Promise((resolve, reject) => {
-    const request = state.db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put(project);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  return slideApi
+    .saveProject(project.id, { name: project.name, version: project.version, document: documentFor(project) })
+    .then((saved) => {
+      project.version = saved.version;
+      project.updatedAt = saved.updatedAt;
+      return project;
+    });
 }
 
 function deleteProjectFromDb(projectId) {
-  return new Promise((resolve, reject) => {
-    const request = state.db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).delete(projectId);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  return slideApi.deleteProject(projectId);
 }
 
 function activeProject() {
@@ -333,8 +416,69 @@ function toggleLayerSelection(kind, id) {
   else setLayerSelection([...keys, key], key);
 }
 
-function projectAsset(assetId) {
-  return activeProject()?.assets?.find((asset) => asset.id === assetId) || null;
+function projectAsset(itemId) {
+  return state.library.get(itemId) || null;
+}
+
+/** Library items this project actually uses, in the order they were added. */
+function projectItems(project = activeProject()) {
+  const seen = new Set();
+  const items = [];
+  for (const slide of project?.slides || []) {
+    for (const overlay of slide.overlays || []) {
+      if (seen.has(overlay.itemId)) continue;
+      seen.add(overlay.itemId);
+      const item = state.library.get(overlay.itemId);
+      if (item) items.push(item);
+    }
+  }
+  return items;
+}
+
+function projectRatio(project = activeProject()) {
+  const w = Number(project?.ratio?.w);
+  const h = Number(project?.ratio?.h);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return { ...DEFAULT_RATIO };
+  return { w, h };
+}
+
+function outputHeight(project = activeProject()) {
+  const ratio = projectRatio(project);
+  // An even height keeps the export free of half-pixel rounding.
+  return Math.max(2, Math.round((OUTPUT_WIDTH * ratio.h) / ratio.w / 2) * 2);
+}
+
+function outputAspect(project = activeProject()) {
+  return OUTPUT_WIDTH / outputHeight(project);
+}
+
+function thumbnailHeight(project = activeProject()) {
+  return Math.max(2, Math.round(THUMBNAIL_WIDTH / outputAspect(project) / 2) * 2);
+}
+
+function ratioLabel(project = activeProject()) {
+  const ratio = projectRatio(project);
+  const preset = RATIO_PRESETS.find((item) => Math.abs(item.w / item.h - ratio.w / ratio.h) < 0.0005);
+  if (preset) return preset.label;
+  return `${formatRatioPart(ratio.w)}:${formatRatioPart(ratio.h)}`;
+}
+
+function formatRatioPart(value) {
+  return Number(value.toFixed(2)).toString();
+}
+
+function isInstagramSafeRatio(ratio) {
+  const value = ratio.w / ratio.h;
+  return value >= INSTAGRAM_MIN_RATIO - 0.0005 && value <= INSTAGRAM_MAX_RATIO + 0.0005;
+}
+
+function suggestedChrome(project = activeProject()) {
+  const ratio = projectRatio(project);
+  return ratio.w / ratio.h < 0.7 ? "tiktok" : "instagram-feed";
+}
+
+function activeChrome() {
+  return state.previewChromeChoice || suggestedChrome();
 }
 
 function overlayCrop(overlay) {
@@ -345,14 +489,14 @@ function overlayCrop(overlay) {
   return { x, y, w, h };
 }
 
-function getOverlayMetrics(overlay, asset = projectAsset(overlay.assetId), { full = false } = {}) {
+function getOverlayMetrics(overlay, asset = projectAsset(overlay.itemId), { full = false } = {}) {
   const cropping = !full && state.croppingOverlayId === overlay.id;
   const crop = full || cropping ? { w: 1, h: 1 } : overlayCrop(overlay);
   const srcW = (asset?.width || 1) * crop.w;
   const srcH = (asset?.height || 1) * crop.h;
   const aspect = srcW ? srcH / srcW : 1;
   const width = overlay.width;
-  const naturalHeight = width * (OUTPUT_WIDTH / OUTPUT_HEIGHT) * aspect;
+  const naturalHeight = width * outputAspect() * aspect;
   const height = Number.isFinite(Number(overlay.height)) ? Number(overlay.height) : naturalHeight;
   return { width, height };
 }
@@ -361,7 +505,7 @@ function textAlignment(text) {
   return ["left", "center", "right"].includes(text?.align) ? text.align : "center";
 }
 
-function overlayStageInset(overlay, asset = projectAsset(overlay.assetId)) {
+function overlayStageInset(overlay, asset = projectAsset(overlay.itemId)) {
   const metrics = getOverlayMetrics(overlay, asset);
   return layerStageInset(overlay.x, overlay.y, metrics.width, metrics.height);
 }
@@ -386,11 +530,11 @@ function overlayClipCss(overlay, asset) {
   return `inset(${inset.top * 100}% ${inset.right * 100}% ${inset.bottom * 100}% ${inset.left * 100}%)`;
 }
 
-function constrainOverlay(overlay, asset = projectAsset(overlay.assetId)) {
+function constrainOverlay(overlay, asset = projectAsset(overlay.itemId)) {
   if (!asset) return overlay;
   overlay.width = clamp(Number(overlay.width) || 0.34, 0.04, 2.4);
   const crop = overlayCrop(overlay);
-  const naturalHeight = overlay.width * (OUTPUT_WIDTH / OUTPUT_HEIGHT) * (((asset.height || 1) * crop.h) / ((asset.width || 1) * crop.w));
+  const naturalHeight = overlay.width * outputAspect() * (((asset.height || 1) * crop.h) / ((asset.width || 1) * crop.w));
   overlay.height = clamp(Number(overlay.height) || naturalHeight, 0.025, 2.4);
   overlay.rotation = ((Number(overlay.rotation) || 0) % 360 + 360) % 360;
   return overlay;
@@ -403,7 +547,7 @@ function initialOverlayWidth(asset) {
     return 0.34;
   }
   const naturalWidth = sourceWidth / OUTPUT_WIDTH;
-  const naturalHeight = sourceHeight / OUTPUT_HEIGHT;
+  const naturalHeight = sourceHeight / outputHeight();
   const fitScale = Math.min(
     1,
     INITIAL_OVERLAY_MAX_SIZE / naturalWidth,
@@ -531,13 +675,13 @@ function showLayerMenu(event, kind, id) {
   positionLayerMenu(menu, event.clientX, event.clientY);
 }
 
-function showAssetDeleteMenu(event, assetId) {
+function showAssetDeleteMenu(event, itemId) {
   event.preventDefault();
   event.stopPropagation();
   closeLayerMenu();
   hideAssetPreview();
 
-  const asset = projectAsset(assetId);
+  const asset = projectAsset(itemId);
   if (!asset) return;
 
   const menu = document.createElement("div");
@@ -554,7 +698,7 @@ function showAssetDeleteMenu(event, assetId) {
   button.addEventListener("click", (clickEvent) => {
     clickEvent.stopPropagation();
     closeLayerMenu();
-    deleteProjectAsset(assetId);
+    deleteProjectAsset(itemId);
   });
   menu.appendChild(button);
   document.body.appendChild(menu);
@@ -638,6 +782,162 @@ function showProjectMenu(event, projectId) {
   positionLayerMenu(menu, clientX, clientY);
 }
 
+function menuButton(label, { active = false, tag = "", danger = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `layer-menu-item${danger ? " is-danger" : ""}${active ? " is-active" : ""}`;
+  button.setAttribute("role", "menuitemradio");
+  button.setAttribute("aria-checked", String(active));
+  button.innerHTML = `${active ? icon("check") : '<span class="menu-icon-space"></span>'}<span class="menu-label"></span>${tag ? '<em class="menu-tag"></em>' : ""}`;
+  button.querySelector(".menu-label").textContent = label;
+  if (tag) button.querySelector(".menu-tag").textContent = tag;
+  return button;
+}
+
+function showRatioMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeLayerMenu();
+  const project = activeProject();
+  if (!project) return;
+  const current = projectRatio(project);
+
+  const menu = document.createElement("div");
+  menu.className = "layer-menu layer-menu--ratio";
+  menu.setAttribute("role", "menu");
+
+  RATIO_PRESETS.forEach((preset) => {
+    const active = Math.abs(preset.w / preset.h - current.w / current.h) < 0.0005;
+    const button = menuButton(preset.label, { active, tag: preset.note });
+    button.addEventListener("click", (clickEvent) => {
+      clickEvent.stopPropagation();
+      closeLayerMenu();
+      applyProjectRatio(preset.w, preset.h);
+    });
+    menu.appendChild(button);
+  });
+
+  const custom = document.createElement("form");
+  custom.className = "ratio-custom";
+  custom.innerHTML = `
+    <label class="ratio-custom-label">Custom</label>
+    <span class="ratio-custom-fields">
+      <input class="ratio-custom-input" type="number" name="w" min="1" step="0.01" value="${formatRatioPart(current.w)}" aria-label="Ratio width" />
+      <span>:</span>
+      <input class="ratio-custom-input" type="number" name="h" min="1" step="0.01" value="${formatRatioPart(current.h)}" aria-label="Ratio height" />
+      <button class="button button--quiet ratio-custom-apply" type="submit">Apply</button>
+    </span>
+    <small class="ratio-custom-note"></small>
+  `;
+  const note = custom.querySelector(".ratio-custom-note");
+  const describe = () => {
+    const w = Number(custom.elements.w.value);
+    const h = Number(custom.elements.h.value);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+      note.textContent = "Enter two positive numbers.";
+      return null;
+    }
+    const value = w / h;
+    if (value < CUSTOM_RATIO_MIN || value > CUSTOM_RATIO_MAX) {
+      note.textContent = `Keep the ratio between ${CUSTOM_RATIO_MIN}:1 and ${CUSTOM_RATIO_MAX}:1.`;
+      return null;
+    }
+    note.textContent = isInstagramSafeRatio({ w, h })
+      ? `Exports at ${OUTPUT_WIDTH} × ${Math.max(2, Math.round((OUTPUT_WIDTH * h) / w / 2) * 2)}.`
+      : "Instagram accepts 3:4 to 1.91:1. TikTok takes this one.";
+    return { w, h };
+  };
+  describe();
+  custom.addEventListener("input", describe);
+  custom.addEventListener("submit", (submitEvent) => {
+    submitEvent.preventDefault();
+    const ratio = describe();
+    if (!ratio) return;
+    closeLayerMenu();
+    applyProjectRatio(ratio.w, ratio.h);
+  });
+  menu.appendChild(custom);
+
+  document.body.appendChild(menu);
+  const rect = event.currentTarget.getBoundingClientRect();
+  positionLayerMenu(menu, rect.left, rect.top - menu.getBoundingClientRect().height - 8);
+}
+
+function applyProjectRatio(w, h) {
+  const project = activeProject();
+  if (!project) return;
+  const current = projectRatio(project);
+  if (Math.abs(current.w / current.h - w / h) < 0.0005) return;
+  recordHistory();
+  project.ratio = { w, h };
+  const aspect = outputAspect(project);
+  project.slides.forEach((slide) => {
+    (slide.overlays || []).forEach((overlay) => {
+      const asset = state.library.get(overlay.itemId);
+      if (!asset) return;
+      // Overlay height is a fraction of canvas height, so a new ratio makes the
+      // stored value stale. Recompute it to keep the photo undistorted.
+      const crop = overlayCrop(overlay);
+      overlay.height = overlay.width * aspect * (((asset.height || 1) * crop.h) / ((asset.width || 1) * crop.w));
+      constrainOverlay(overlay, asset);
+    });
+    constrainImagePosition(slide, OUTPUT_WIDTH, outputHeight(project));
+    clearSlideThumbnail(slide.id);
+  });
+  scheduleSave();
+  renderEditor();
+  toast(`Slides are now ${ratioLabel(project)} · ${OUTPUT_WIDTH} × ${outputHeight(project)}`);
+}
+
+function showPreviewMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeLayerMenu();
+  if (!activeProject()) return;
+  const suggested = suggestedChrome();
+
+  const menu = document.createElement("div");
+  menu.className = "layer-menu layer-menu--preview";
+  menu.setAttribute("role", "menu");
+
+  const off = menuButton("Off", { active: !state.previewVisible });
+  off.addEventListener("click", (clickEvent) => {
+    clickEvent.stopPropagation();
+    closeLayerMenu();
+    setPreviewChrome(null);
+  });
+  menu.appendChild(off);
+
+  PREVIEW_CHROMES.forEach((chrome) => {
+    const active = state.previewVisible && activeChrome() === chrome.id;
+    const button = menuButton(chrome.label, { active, tag: chrome.id === suggested ? "Suggested" : "" });
+    button.addEventListener("click", (clickEvent) => {
+      clickEvent.stopPropagation();
+      closeLayerMenu();
+      setPreviewChrome(chrome.id);
+    });
+    menu.appendChild(button);
+  });
+
+  document.body.appendChild(menu);
+  const rect = event.currentTarget.getBoundingClientRect();
+  positionLayerMenu(menu, rect.right + 8, rect.top);
+}
+
+function setPreviewChrome(chromeId) {
+  state.previewVisible = Boolean(chromeId);
+  // A null choice keeps the overlay following the ratio's suggestion.
+  if (chromeId) state.previewChromeChoice = chromeId;
+  const trigger = app.querySelector('[data-action="preview-menu"]');
+  trigger?.classList.toggle("is-active", state.previewVisible);
+  const stage = app.querySelector(".stage");
+  const existing = stage?.querySelector(".chrome-overlay");
+  if (!stage) return;
+  existing?.remove();
+  stage.insertAdjacentHTML("beforeend", renderPreviewChrome());
+  sizeStage();
+}
+
 function closeProjectDeleteConfirmation() {
   document.querySelector(".project-delete-confirmation")?.remove();
 }
@@ -702,7 +1002,7 @@ function showProjectDeleteConfirmation(projectId) {
 function beginCrop(overlayId) {
   recordHistory();
   const overlay = (activeSlide()?.overlays || []).find((item) => item.id === overlayId);
-  const asset = overlay ? projectAsset(overlay.assetId) : null;
+  const asset = overlay ? projectAsset(overlay.itemId) : null;
   if (!overlay || !asset) return;
   state.photoAdjustMode = false;
   selectOnlyLayer("overlay", overlay.id);
@@ -723,7 +1023,7 @@ function exitCropMode({ apply = true } = {}) {
   const overlay = apply ? (activeSlide()?.overlays || []).find((item) => item.id === overlayId) : null;
   state.croppingOverlayId = null;
   if (!overlay) return true;
-  const asset = projectAsset(overlay.assetId);
+  const asset = projectAsset(overlay.itemId);
   const crop = overlayCrop(overlay);
   const full = getOverlayMetrics(overlay, asset, { full: true });
   overlay.x += crop.x * full.width;
@@ -748,14 +1048,62 @@ function scheduleSave() {
   scheduleThumbnailRefresh();
   state.shareAllCache = null;
   clearTimeout(state.saveTimer);
-  state.saveTimer = setTimeout(async () => {
-    try {
-      await putProject(project);
-    } catch (error) {
+  state.saveTimer = setTimeout(() => flushSave(project), 400);
+}
+
+/**
+ * One save at a time. Anything that lands mid-flight is coalesced into a single
+ * follow-up, so a fast edit stream cannot open a queue of racing writes.
+ */
+async function flushSave(project) {
+  if (state.saveInFlight) {
+    state.saveQueued = true;
+    return;
+  }
+  state.saveInFlight = true;
+  try {
+    await putProject(project);
+  } catch (error) {
+    if (error.status === 409) {
+      await reloadAfterConflict(project.id);
+    } else {
       console.error(error);
-      toast("Couldn’t save this project in your browser.");
+      toast("Couldn\u2019t save. Is the Slide Studio server still running?");
     }
-  }, 180);
+  } finally {
+    state.saveInFlight = false;
+    if (state.saveQueued) {
+      state.saveQueued = false;
+      flushSave(activeProject() || project);
+    }
+  }
+}
+
+async function reloadAfterConflict(projectId) {
+  try {
+    await refreshLibrary();
+    normalizeProject(await loadProjectIntoState(projectId));
+    if (state.activeProjectId === projectId) renderEditor();
+    toast("An agent changed this slideshow, so it reloaded.");
+  } catch (error) {
+    console.error(error);
+    toast("This slideshow changed elsewhere and could not be reloaded.");
+  }
+}
+
+/** An agent write reaches an open editor through the server's event stream. */
+function handleServerEvent(event) {
+  if (event?.type === "project.changed" && event.projectId === state.activeProjectId) {
+    const project = activeProject();
+    if (project && event.version > project.version && !state.saveInFlight) {
+      reloadAfterConflict(event.projectId);
+    }
+    return;
+  }
+  if (event?.type === "project.removed" && event.projectId === state.activeProjectId) {
+    toast("This slideshow was removed.");
+    openDashboard();
+  }
 }
 
 function toast(message) {
@@ -798,6 +1146,8 @@ function icon(name) {
     adjust: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h7"/><path d="M15 7h5"/><circle cx="13" cy="7" r="2"/><path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/></svg>',
     preview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M10 6h4"/><path d="M10 17.5h4"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7"/></svg>',
+    archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>',
   };
   return icons[name] || "";
 }
@@ -827,7 +1177,14 @@ function renderHeader({ editor = false } = {}) {
           <button class="button button--quiet" type="button" data-action="export" aria-label="Download current slide as PNG" title="Download PNG" ${activeSlide() ? "" : "disabled"}>
             ${icon("download")} <span>PNG</span>
           </button>
-        ` : `<button class="button button--primary" type="button" data-action="new-project">New project</button>`}
+          <button class="button button--quiet" type="button" data-action="export-all" aria-label="Download all slides as a ZIP" title="Download all slides as a ZIP" ${project.slides.length ? "" : "disabled"}>
+            ${icon("archive")} <span>ZIP</span>
+          </button>
+          <a class="icon-button" href="/library/backgrounds" data-link aria-label="Open the image library" title="Image library">${icon("image")}</a>
+        ` : `
+          <a class="button button--quiet" href="/library/backgrounds" data-link>${icon("image")} <span>Library</span></a>
+          <button class="button button--primary" type="button" data-action="new-project">New project</button>
+        `}
         <a class="icon-button github-link" href="https://github.com/alexgusevski/tiktokslideeditor" target="_blank" rel="noopener noreferrer" aria-label="Open Slide Studio on GitHub" title="Open GitHub repository"><img class="github-mark" src="/assets/Octicons-mark-github.svg" alt="" /></a>
       </div>
     </header>
@@ -862,7 +1219,9 @@ function renderDashboard() {
             <span><strong>Start a project</strong><small>Add photos when you’re ready</small></span>
           </button>
           ${sortedProjects.map((project) => {
-            const cover = project.slides[0]?.imageData;
+            const cover = project.coverUrl || project.slides[0]?.imageData;
+            // Dashboard entries are summaries, so the count comes from the server.
+            const slideCount = project.slideCount ?? project.slides.length;
             return `
               <button class="project-card" type="button" data-project-id="${project.id}" aria-haspopup="menu" aria-label="Open ${escapeHtml(project.name)}. Right-click for actions." title="Right-click for actions">
                 <span class="project-preview">
@@ -870,7 +1229,7 @@ function renderDashboard() {
                 </span>
                 <span class="project-meta">
                   <strong>${escapeHtml(project.name)}</strong>
-                  <span>${project.slides.length} ${project.slides.length === 1 ? "slide" : "slides"} · ${formatDate(project.updatedAt)}</span>
+                  <span>${slideCount} ${slideCount === 1 ? "slide" : "slides"} · ${formatDate(project.updatedAt)}</span>
                 </span>
               </button>
             `;
@@ -880,6 +1239,208 @@ function renderDashboard() {
     </main>
   `;
   bindDashboardEvents();
+}
+
+async function renderLibraryAdmin() {
+  const kind = state.libraryKind === "asset" ? "asset" : "background";
+  document.title = `${kind === "asset" ? "Assets" : "Backgrounds"} · Slide Studio`;
+  hideAssetPreview();
+  state.activeProjectId = null;
+  let items = [];
+  try {
+    await refreshLibrary();
+    items = [...state.library.values()].filter((item) => item.kind === kind);
+  } catch (error) {
+    console.error(error);
+    toast("Can’t reach the Slide Studio server.");
+  }
+  const filter = state.libraryFilter.trim().toLowerCase();
+  const shown = filter
+    ? items.filter((item) => `${item.name} ${item.description} ${item.usage} ${item.tags.join(" ")}`.toLowerCase().includes(filter))
+    : items;
+
+  app.innerHTML = `
+    ${renderHeader()}
+    <main class="library-admin">
+      <section class="library-head">
+        <div>
+          <p class="eyebrow">Image library</p>
+          <h1>${kind === "asset" ? "Assets" : "Backgrounds"}</h1>
+          <p class="library-intro">${kind === "asset"
+            ? "Logos, stickers and cut-outs an agent can place on a slide."
+            : "Full-bleed photos an agent can use as the base of a slide."}</p>
+        </div>
+        <nav class="library-tabs" aria-label="Library">
+          <a class="library-tab ${kind === "background" ? "is-active" : ""}" href="/library/backgrounds" data-link>Backgrounds</a>
+          <a class="library-tab ${kind === "asset" ? "is-active" : ""}" href="/library/assets" data-link>Assets</a>
+        </nav>
+      </section>
+      <section class="library-toolbar">
+        <input class="library-search" type="search" placeholder="Search name, description, usage or tags" value="${escapeHtml(state.libraryFilter)}" aria-label="Search the library" />
+        <button class="button button--primary" type="button" data-action="library-upload">${icon("plus")}<span>Upload ${kind === "asset" ? "assets" : "backgrounds"}</span></button>
+      </section>
+      <p class="library-hint">An agent reads <strong>description</strong> and <strong>usage</strong> to choose images. Vague entries produce vague slideshows.</p>
+      <div class="library-grid">
+        ${shown.length ? shown.map((item) => renderLibraryCard(item)).join("") : `<p class="library-empty">${
+          items.length ? "Nothing matches that search." : `No ${kind === "asset" ? "assets" : "backgrounds"} yet. Upload a few to get started.`
+        }</p>`}
+      </div>
+    </main>
+    <input id="library-upload" class="hidden-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/avif" multiple />
+  `;
+  bindLibraryAdmin(kind);
+}
+
+function renderLibraryCard(item) {
+  return `
+    <article class="library-card" data-item-id="${item.id}">
+      <div class="library-thumb"><img src="${item.url}" alt="${escapeHtml(item.name)}" loading="lazy" /></div>
+      <div class="library-fields">
+        <label class="library-field">
+          <span>Name</span>
+          <input type="text" data-field="name" value="${escapeHtml(item.name)}" maxlength="120" />
+        </label>
+        <label class="library-field">
+          <span>Description · what it shows</span>
+          <textarea data-field="description" rows="2" placeholder="A wide sunset over an empty beach">${escapeHtml(item.description)}</textarea>
+        </label>
+        <label class="library-field">
+          <span>Usage · when to use it</span>
+          <textarea data-field="usage" rows="2" placeholder="Use as an opening slide for travel posts">${escapeHtml(item.usage)}</textarea>
+        </label>
+        <label class="library-field">
+          <span>Tags</span>
+          <input type="text" data-field="tags" value="${escapeHtml(item.tags.join(", "))}" placeholder="travel, warm" />
+        </label>
+        <div class="library-card-footer">
+          <span class="library-meta">${item.width} × ${item.height}</span>
+          <span class="library-status" data-status></span>
+          <button class="button button--quiet is-danger" type="button" data-action="library-delete">${icon("trash")}<span>Delete</span></button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function bindLibraryAdmin(kind) {
+  bindGlobalActions();
+  const search = app.querySelector(".library-search");
+  search?.addEventListener("input", () => {
+    state.libraryFilter = search.value;
+    clearTimeout(state.librarySearchTimer);
+    state.librarySearchTimer = setTimeout(async () => {
+      await renderLibraryAdmin();
+      const refocused = app.querySelector(".library-search");
+      if (refocused) {
+        refocused.focus();
+        refocused.setSelectionRange(refocused.value.length, refocused.value.length);
+      }
+    }, 200);
+  });
+
+  const input = app.querySelector("#library-upload");
+  app.querySelector('[data-action="library-upload"]')?.addEventListener("click", () => input.click());
+  input?.addEventListener("change", async (event) => {
+    const files = [...event.target.files].filter(isImageFile);
+    event.target.value = "";
+    if (!files.length) return;
+    let added = 0;
+    for (const file of files) {
+      try {
+        rememberItem(await slideApi.uploadLibraryItem({ kind, file }));
+        added += 1;
+      } catch (error) {
+        console.error(error);
+        toast(error.message);
+      }
+    }
+    if (added) toast(`${added} ${added === 1 ? "image" : "images"} uploaded`);
+    await renderLibraryAdmin();
+  });
+
+  app.querySelectorAll(".library-card").forEach((card) => {
+    const itemId = card.dataset.itemId;
+    const status = card.querySelector("[data-status]");
+    card.querySelectorAll("[data-field]").forEach((field) => {
+      field.addEventListener("change", async () => {
+        status.textContent = "Saving…";
+        try {
+          rememberItem(await slideApi.updateLibraryItem(itemId, { [field.dataset.field]: field.value }));
+          status.textContent = "Saved";
+          setTimeout(() => { status.textContent = ""; }, 1600);
+        } catch (error) {
+          console.error(error);
+          status.textContent = "Not saved";
+        }
+      });
+    });
+    card.querySelector('[data-action="library-delete"]')?.addEventListener("click", () => {
+      confirmLibraryDelete(itemId).catch((error) => {
+        console.error(error);
+        toast("That image couldn’t be deleted.");
+      });
+    });
+  });
+}
+
+async function confirmLibraryDelete(itemId) {
+  const item = state.library.get(itemId);
+  if (!item) return;
+  try {
+    await deleteLibraryItem(itemId, false);
+  } catch (error) {
+    if (error.status !== 409) throw error;
+    // The item sits on slides, so name them before offering to break those slides.
+    const users = error.payload?.usedBy || [];
+    showLibraryDeleteConfirmation(item, users);
+  }
+}
+
+async function deleteLibraryItem(itemId, force) {
+  const item = state.library.get(itemId);
+  await slideApi.deleteLibraryItem(itemId, { force });
+  state.library.delete(itemId);
+  toast(`${item?.name || "Image"} deleted`);
+  await renderLibraryAdmin();
+}
+
+function showLibraryDeleteConfirmation(item, users) {
+  document.querySelector(".library-delete-confirmation")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop library-delete-confirmation";
+  const names = users.map((project) => escapeHtml(project.name)).join(", ");
+  backdrop.innerHTML = `
+    <section class="modal modal--confirm" role="alertdialog" aria-modal="true" aria-labelledby="delete-item-title">
+      <h2 id="delete-item-title">Delete ${escapeHtml(item.name)}?</h2>
+      <p>It is used by <strong>${names}</strong>. Deleting it removes the image from ${users.length === 1 ? "that slideshow" : "those slideshows"} as well. This can’t be undone.</p>
+      <div class="modal-actions">
+        <button class="button button--quiet" type="button" data-action="cancel">Cancel</button>
+        <button class="button button--danger" type="button" data-action="confirm">Delete anyway</button>
+      </div>
+    </section>
+  `;
+  const close = () => backdrop.remove();
+  backdrop.querySelector('[data-action="cancel"]').addEventListener("click", close);
+  backdrop.addEventListener("pointerdown", (event) => {
+    if (event.target === backdrop) close();
+  });
+  backdrop.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  backdrop.querySelector('[data-action="confirm"]').addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    event.currentTarget.textContent = "Deleting…";
+    try {
+      await deleteLibraryItem(item.id, true);
+      close();
+    } catch (error) {
+      console.error(error);
+      toast("That image couldn’t be deleted.");
+      close();
+    }
+  });
+  document.body.appendChild(backdrop);
+  backdrop.querySelector('[data-action="confirm"]').focus();
 }
 
 function renderEditor() {
@@ -925,7 +1486,7 @@ function renderEditor() {
 
 function renderSlideRail(project) {
   return `
-    <aside class="slide-rail">
+    <aside class="slide-rail" style="--thumb-aspect: ${projectRatio(project).w} / ${projectRatio(project).h}">
       <div class="rail-heading"><h2>Slides</h2><span>${project.slides.length}</span></div>
       <div class="slide-list">
         ${project.slides.map((slide, index) => `
@@ -958,6 +1519,7 @@ function scheduleThumbnailRefresh() {
 
 function thumbnailSignature(slide) {
   return JSON.stringify([
+    projectRatio(),
     slide.backgroundRevision || "",
     slide.imageScale || 1,
     slide.imageX || 0,
@@ -988,7 +1550,7 @@ async function refreshSlideThumbnail(slide) {
   state.thumbnailVersions.set(slide.id, version);
   target.classList.add("is-rendering");
   try {
-    const canvas = await renderSlideCanvas(slide, 540, 960);
+    const canvas = await renderSlideCanvas(slide, THUMBNAIL_WIDTH, thumbnailHeight());
     const blob = await canvasToBlob(canvas);
     if (state.thumbnailVersions.get(slide.id) !== version) return;
     const url = URL.createObjectURL(blob);
@@ -1012,23 +1574,37 @@ function refreshAllSlideThumbnails(slides) {
 }
 
 function renderAssetRail(project) {
-  const assets = project.assets || [];
+  const browsingAll = state.librarySource === "all";
+  const filter = state.libraryFilter.trim().toLowerCase();
+  const pool = browsingAll ? [...state.library.values()].filter((item) => item.kind === "asset") : projectItems(project);
+  const assets = filter
+    ? pool.filter((item) => `${item.name} ${item.description} ${item.usage} ${item.tags.join(" ")}`.toLowerCase().includes(filter))
+    : pool;
   return `
     <aside class="asset-rail">
       <div class="rail-heading"><h2>Assets</h2><span>${assets.length}</span></div>
-      <div class="asset-grid" aria-label="Uploaded assets">
+      <div class="asset-scope" role="group" aria-label="Asset source">
+        <button class="asset-scope-button ${browsingAll ? "" : "is-active"}" type="button" data-action="assets-in-project" aria-pressed="${!browsingAll}">In use</button>
+        <button class="asset-scope-button ${browsingAll ? "is-active" : ""}" type="button" data-action="assets-all" aria-pressed="${browsingAll}">Library</button>
+      </div>
+      <input class="asset-search" type="search" placeholder="Search assets" value="${escapeHtml(state.libraryFilter)}" aria-label="Search the asset library" />
+      <div class="asset-grid" aria-label="Asset library">
         ${assets.length ? assets.map((asset) => `
-          <div class="asset-item" data-asset-id="${asset.id}" draggable="true" title="${escapeHtml(asset.name)}">
-            <img src="${asset.imageData}" alt="${escapeHtml(asset.name)}" draggable="false" />
-            <button class="asset-remove" type="button" data-action="delete-asset" data-asset-id="${asset.id}" aria-label="Remove ${escapeHtml(asset.name)}">×</button>
+          <div class="asset-item" data-item-id="${asset.id}" draggable="true" title="${escapeHtml(asset.name)}${asset.description ? ` — ${escapeHtml(asset.description)}` : ""}">
+            <img src="${asset.url}" alt="${escapeHtml(asset.name)}" draggable="false" loading="lazy" />
           </div>
-        `).join("") : `<p class="asset-empty">Upload logos, stickers, or extra photos. Drag them onto a photo to place them.</p>`}
+        `).join("") : `<p class="asset-empty">${browsingAll
+            ? "The asset library is empty. Upload logos, stickers, or extra photos."
+            : "No assets on this slideshow yet. Switch to Library and drag one onto the photo."}</p>`}
       </div>
       <div class="asset-trash" data-asset-trash>
         ${icon("trash")}
-        <span>Drag here to delete</span>
+        <span>Drag here to remove</span>
       </div>
-      <div class="rail-upload"><button class="button button--quiet" type="button" data-action="upload-assets">${icon("plus")}<span>Upload assets</span></button></div>
+      <div class="rail-upload">
+        <button class="button button--quiet" type="button" data-action="upload-assets">${icon("plus")}<span>Upload assets</span></button>
+        <a class="button button--quiet" href="/library/assets" data-link>${icon("edit")}<span>Manage library</span></a>
+      </div>
     </aside>
   `;
 }
@@ -1054,14 +1630,14 @@ function renderStage(slide) {
           <img class="stage-image-ghost" src="${slide.imageData}" alt="" draggable="false" aria-hidden="true" />
           <div class="stage ${state.photoAdjustMode ? "is-adjusting" : ""}" data-natural-width="${slide.width}" data-natural-height="${slide.height}">
             <img class="stage-image" src="${slide.imageData}" alt="${escapeHtml(slide.name)}" draggable="false" />
-            ${renderTikTokOverlay()}
+            ${renderPreviewChrome()}
           </div>
           <div class="layer-stack">
             ${slideItems(slide).map(({ kind, item }) => (kind === "overlay" ? renderOverlayBox(item) : renderTextBox(item))).join("")}
           </div>
         </div>
         <span class="stage-dimensions">
-          <span>${OUTPUT_WIDTH} × ${OUTPUT_HEIGHT} · 9:16</span>
+          <button class="stage-ratio" type="button" data-action="ratio-menu" aria-haspopup="menu" title="Change the aspect ratio">${OUTPUT_WIDTH} × ${outputHeight()} · ${ratioLabel()}</button>
           <span class="canvas-zoom-controls" aria-label="Canvas zoom">
             <button class="canvas-zoom-button" type="button" data-action="canvas-zoom-out" aria-label="Zoom canvas out">−</button>
             <button class="canvas-zoom-level" type="button" data-action="canvas-zoom-reset" title="Reset canvas zoom">${Math.round(state.canvasZoom * 100)}%</button>
@@ -1080,40 +1656,98 @@ function renderCanvasActions() {
       <button class="canvas-action" type="button" data-action="add-text" title="Add text">${icon("text")}<span>Text</span></button>
       <button class="canvas-action" type="button" data-action="upload-assets" title="Add image">${icon("image")}<span>Image</span></button>
       <button class="canvas-action ${state.photoAdjustMode ? "is-active" : ""}" type="button" data-action="adjust-photo" aria-pressed="${state.photoAdjustMode}" title="Adjust photo">${icon("adjust")}<span>Adjust photo</span></button>
-      <button class="canvas-action ${state.showTikTokOverlay ? "is-active" : ""}" type="button" data-action="toggle-tiktok-overlay" aria-pressed="${state.showTikTokOverlay}" title="Toggle TikTok UI overlay">${icon("preview")}<span>Overlay</span></button>
+      <button class="canvas-action ${state.previewVisible ? "is-active" : ""}" type="button" data-action="preview-menu" aria-haspopup="menu" title="Choose the UI preview overlay">${icon("preview")}<span>Overlay</span></button>
     </div>
   `;
 }
 
-function renderTikTokOverlay() {
+function renderPreviewChrome() {
+  const chrome = activeChrome();
+  const mocks = {
+    "tiktok": renderTikTokChrome,
+    "instagram-feed": renderInstagramFeedChrome,
+    "instagram-story": renderInstagramStoryChrome,
+  };
+  const render = mocks[chrome] || renderTikTokChrome;
   return `
-    <div class="tiktok-overlay ${state.showTikTokOverlay ? "" : "is-hidden"}" aria-hidden="true">
-      <div class="tiktok-overlay-canvas">
-        <div class="tt-preview-label">PREVIEW ONLY · NOT EXPORTED</div>
-        <div class="tt-topbar"><span>Following</span><strong>For You</strong><span class="tt-search">⌕</span></div>
-        <div class="tt-side-actions">
-          <div class="tt-avatar"><span></span><b>+</b></div>
-          <div class="tt-action"><span class="tt-heart">♥</span><small>128K</small></div>
-          <div class="tt-action"><span class="tt-bubble">●</span><small>842</small></div>
-          <div class="tt-action"><span class="tt-bookmark">▮</span><small>12K</small></div>
-          <div class="tt-action"><span class="tt-share">↗</span><small>Share</small></div>
-          <div class="tt-disc">♪</div>
-        </div>
-        <div class="tt-caption">
-          <strong>@yourname</strong>
-          <p>Your caption appears here <b>more</b></p>
-          <span>♫ Original sound · yourname</span>
-        </div>
-        <div class="tt-bottom-nav">
-          <span><b>⌂</b>Home</span><span><b>♙</b>Friends</span><span class="tt-create">+</span><span><b>▣</b>Inbox</span><span><b>◉</b>Profile</span>
-        </div>
+    <div class="chrome-overlay chrome-overlay--${chrome} ${state.previewVisible ? "" : "is-hidden"}" aria-hidden="true">
+      <div class="chrome-overlay-canvas">
+        <div class="chrome-preview-label">PREVIEW ONLY · NOT EXPORTED</div>
+        ${render()}
       </div>
     </div>
   `;
 }
 
+function renderTikTokChrome() {
+  return `
+    <div class="tt-topbar"><span>Following</span><strong>For You</strong><span class="tt-search">⌕</span></div>
+    <div class="tt-side-actions">
+      <div class="tt-avatar"><span></span><b>+</b></div>
+      <div class="tt-action"><span class="tt-heart">♥</span><small>128K</small></div>
+      <div class="tt-action"><span class="tt-bubble">●</span><small>842</small></div>
+      <div class="tt-action"><span class="tt-bookmark">▮</span><small>12K</small></div>
+      <div class="tt-action"><span class="tt-share">↗</span><small>Share</small></div>
+      <div class="tt-disc">♪</div>
+    </div>
+    <div class="tt-caption">
+      <strong>@yourname</strong>
+      <p>Your caption appears here <b>more</b></p>
+      <span>♫ Original sound · yourname</span>
+    </div>
+    <div class="tt-bottom-nav">
+      <span><b>⌂</b>Home</span><span><b>♙</b>Friends</span><span class="tt-create">+</span><span><b>▣</b>Inbox</span><span><b>◉</b>Profile</span>
+    </div>
+  `;
+}
+
+/**
+ * Instagram draws its feed chrome above and below the photo rather than on it.
+ * The bands here overlap the edges to show how close that chrome sits, so key
+ * content stays clear of the extreme top and bottom.
+ */
+function renderInstagramFeedChrome() {
+  const slideCount = activeProject()?.slides.length || 1;
+  const slideIndex = Math.max(0, activeProject()?.slides.findIndex((slide) => slide.id === state.activeSlideId) ?? 0) + 1;
+  return `
+    <div class="ig-header">
+      <span class="ig-avatar"></span>
+      <span class="ig-handle"><strong>yourname</strong></span>
+      <span class="ig-more">···</span>
+    </div>
+    ${slideCount > 1 ? `<div class="ig-counter">${slideIndex}/${slideCount}</div>` : ""}
+    <div class="ig-footer">
+      <div class="ig-actions">
+        <span class="ig-heart">♥</span>
+        <span class="ig-bubble">●</span>
+        <span class="ig-send">↗</span>
+        ${slideCount > 1 ? `<span class="ig-dots">${[...Array(Math.min(slideCount, 10)).keys()].map((index) => `<i class="${index + 1 === slideIndex ? "is-current" : ""}"></i>`).join("")}</span>` : ""}
+        <span class="ig-save">▯</span>
+      </div>
+      <div class="ig-caption"><strong>yourname</strong> Your caption appears here <b>more</b></div>
+    </div>
+  `;
+}
+
+function renderInstagramStoryChrome() {
+  return `
+    <div class="ig-story-progress"><i class="is-done"></i><i class="is-current"></i><i></i><i></i></div>
+    <div class="ig-story-header">
+      <span class="ig-avatar"></span>
+      <span class="ig-handle"><strong>yourname</strong><small>2h</small></span>
+      <span class="ig-more">···</span>
+      <span class="ig-close">✕</span>
+    </div>
+    <div class="ig-story-reply">
+      <span class="ig-story-field">Send message</span>
+      <span class="ig-heart">♥</span>
+      <span class="ig-send">↗</span>
+    </div>
+  `;
+}
+
 function renderOverlayBox(overlay) {
-  const asset = projectAsset(overlay.assetId);
+  const asset = projectAsset(overlay.itemId);
   if (!asset) return "";
   const selected = isLayerSelected("overlay", overlay.id);
   const cropping = overlay.id === state.croppingOverlayId;
@@ -1231,7 +1865,7 @@ function renderInspector() {
   const overlay = selectedOverlay();
   const selectionCount = selectedLayers().length;
   const multiMode = selectionCount > 1;
-  const overlayAsset = overlay ? projectAsset(overlay.assetId) : null;
+  const overlayAsset = overlay ? projectAsset(overlay.itemId) : null;
   const slide = activeSlide();
   const photoMode = Boolean(state.photoAdjustMode && slide);
   const overlayMode = Boolean(!photoMode && !multiMode && overlay);
@@ -1358,41 +1992,68 @@ function renderInspector() {
   `;
 }
 
-function openProject(projectId, { historyMode = "push" } = {}) {
-  const project = state.projects.find((item) => item.id === projectId);
-  if (!project) return false;
+async function openProject(projectId, { historyMode = "push" } = {}) {
+  let project;
+  try {
+    project = normalizeProject(await loadProjectIntoState(projectId));
+  } catch (error) {
+    if (error.status !== 404) console.error(error);
+    return false;
+  }
   updateBrowserRoute(projectPath(projectId), historyMode);
   state.activeProjectId = projectId;
   state.activeSlideId = project.slides[0]?.id || null;
+  history.past = [];
+  history.future = [];
   clearLayerSelection();
   state.photoAdjustMode = false;
   renderEditor();
   return true;
 }
 
-function openDashboard({ historyMode = "push" } = {}) {
+async function openDashboard({ historyMode = "push" } = {}) {
   updateBrowserRoute("/", historyMode);
+  state.activeProjectId = null;
+  await refreshProjectList();
   renderDashboard();
 }
 
-function renderCurrentRoute() {
+async function renderCurrentRoute() {
   const route = routeFromPathname();
-  if (route.view === "project" && openProject(route.projectId, { historyMode: "none" })) return;
+  if (route.view === "library") {
+    state.libraryKind = route.kind;
+    await renderLibraryAdmin();
+    return;
+  }
+  if (route.view === "project" && await openProject(route.projectId, { historyMode: "none" })) return;
   const missingProject = route.view === "project";
   updateBrowserRoute("/", "replace");
+  await refreshProjectList();
   renderDashboard();
-  if (missingProject) toast("This project isn’t available in this browser.");
+  if (missingProject) toast("No slideshow with that id.");
 }
 
-function createProject() {
-  const now = Date.now();
-  const project = { id: uid(), name: "New Project", createdAt: now, updatedAt: now, slides: [], assets: [] };
-  state.projects.push(project);
-  openProject(project.id);
-  putProject(project).catch((error) => {
+async function refreshProjectList() {
+  try {
+    state.projects = (await slideApi.listProjects()).map((summary) => {
+      const known = state.projects.find((item) => item.id === summary.id);
+      return { ...(known || {}), ...summary, slides: known?.slides || [] };
+    });
+  } catch (error) {
     console.error(error);
-    toast("Couldn’t save this project in your browser.");
-  });
+    toast("Can’t reach the Slide Studio server.");
+  }
+}
+
+async function createProject() {
+  try {
+    const project = await slideApi.createProject("New Project", { ratio: { ...DEFAULT_RATIO }, slides: [] });
+    state.projects.push(hydrateProject(project));
+    await openProject(project.id);
+  } catch (error) {
+    console.error(error);
+    toast("Couldn’t create the slideshow.");
+  }
 }
 
 function bindDashboardEvents() {
@@ -1405,6 +2066,15 @@ function bindDashboardEvents() {
 
 function bindGlobalActions() {
   app.querySelector('[data-action="home"]')?.addEventListener("click", () => openDashboard());
+  // In-app links stay in the single page instead of reloading it.
+  app.querySelectorAll("a[data-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+      event.preventDefault();
+      updateBrowserRoute(new URL(link.href).pathname, "push");
+      renderCurrentRoute();
+    });
+  });
 }
 
 function bindEditorEvents() {
@@ -1444,6 +2114,7 @@ function bindEditorEvents() {
   app.querySelector('[data-action="export"]')?.addEventListener("click", exportActiveSlide);
   app.querySelector('[data-action="share"]')?.addEventListener("click", shareActiveSlide);
   app.querySelector('[data-action="share-all"]')?.addEventListener("click", shareAllSlides);
+  app.querySelector('[data-action="export-all"]')?.addEventListener("click", exportAllSlides);
   app.querySelector('[data-action="toggle-inspector"]')?.addEventListener("click", () => {
     state.mobileInspectorOpen = !state.mobileInspectorOpen;
     app.querySelector(".inspector")?.classList.toggle("is-mobile-open", state.mobileInspectorOpen);
@@ -1454,12 +2125,8 @@ function bindEditorEvents() {
     state.mobileInspectorOpen = true;
     renderEditor();
   });
-  app.querySelector('[data-action="toggle-tiktok-overlay"]')?.addEventListener("click", (event) => {
-    state.showTikTokOverlay = !state.showTikTokOverlay;
-    event.currentTarget.classList.toggle("is-active", state.showTikTokOverlay);
-    event.currentTarget.setAttribute("aria-pressed", String(state.showTikTokOverlay));
-    app.querySelector(".tiktok-overlay")?.classList.toggle("is-hidden", !state.showTikTokOverlay);
-  });
+  app.querySelector('[data-action="preview-menu"]')?.addEventListener("click", showPreviewMenu);
+  app.querySelector('[data-action="ratio-menu"]')?.addEventListener("click", showRatioMenu);
   app.querySelector('[data-action="canvas-zoom-out"]')?.addEventListener("click", () => setCanvasZoom(state.canvasZoom / 1.2));
   app.querySelector('[data-action="canvas-zoom-reset"]')?.addEventListener("click", () => setCanvasZoom(1));
   app.querySelector('[data-action="canvas-zoom-in"]')?.addEventListener("click", () => setCanvasZoom(state.canvasZoom * 1.2));
@@ -1850,7 +2517,7 @@ function sizeStage() {
   const composition = inner.querySelector(".canvas-composition");
   const toolbarGap = composition ? parseFloat(getComputedStyle(composition).columnGap) || 0 : 0;
   const canvasWidth = Math.max(1, availableWidth - (actions?.offsetWidth || 0) - toolbarGap);
-  const ratio = OUTPUT_WIDTH / OUTPUT_HEIGHT;
+  const ratio = outputAspect();
   let width = canvasWidth;
   let height = width / ratio;
   if (height > availableHeight) {
@@ -1864,6 +2531,7 @@ function sizeStage() {
   stage.style.width = `${width}px`;
   stage.style.height = `${height}px`;
   stage.style.setProperty("--stage-scale", width / OUTPUT_WIDTH);
+  stage.style.setProperty("--chrome-height", `${outputHeight()}px`);
   updateStageImage(slide);
   activeSlide().texts.forEach(updateTextBox);
   (activeSlide().overlays || []).forEach(updateOverlayBox);
@@ -1914,9 +2582,7 @@ function getImageLayout(slide, canvasWidth, canvasHeight) {
   };
 }
 
-function constrainImagePosition(slide) {
-  const canvasWidth = state.stageWidth || OUTPUT_WIDTH;
-  const canvasHeight = state.stageHeight || OUTPUT_HEIGHT;
+function constrainImagePosition(slide, canvasWidth = state.stageWidth || OUTPUT_WIDTH, canvasHeight = state.stageHeight || outputHeight()) {
   const layout = getImageLayout(slide, canvasWidth, canvasHeight);
   slide.imageX = clamp(slide.imageX || 0, -layout.maxOffsetX, layout.maxOffsetX);
   slide.imageY = clamp(slide.imageY || 0, -layout.maxOffsetY, layout.maxOffsetY);
@@ -2148,7 +2814,7 @@ function paintTextContent(text, content, box) {
 
 function updateOverlayBox(overlay) {
   const box = app.querySelector(`.overlay-box[data-overlay-id="${overlay.id}"]`);
-  const asset = projectAsset(overlay.assetId);
+  const asset = projectAsset(overlay.itemId);
   if (!box || !asset) return;
   const metrics = getOverlayMetrics(overlay, asset);
   const crop = overlayCrop(overlay);
@@ -2278,13 +2944,13 @@ async function handleSlideBackgroundChange(event) {
   if (!target || !project || project.id !== target.projectId || !slide) return;
 
   try {
-    const imageData = await fileToDataUrl(file);
-    const dimensions = await getImageDimensions(imageData);
+    const item = rememberItem(await slideApi.uploadLibraryItem({ kind: "background", file }));
     recordHistory();
-    slide.imageData = imageData;
-    slide.width = dimensions.width;
-    slide.height = dimensions.height;
-    slide.backgroundRevision = uid();
+    slide.backgroundItemId = item.id;
+    slide.imageData = item.url;
+    slide.width = item.width;
+    slide.height = item.height;
+    slide.backgroundRevision = item.id;
     constrainImagePosition(slide);
     clearSlideThumbnail(slide.id);
     scheduleSave();
@@ -2405,27 +3071,27 @@ function bindSlideReordering() {
 
 function bindAssetLibrary() {
   app.querySelectorAll(".asset-item").forEach((item) => {
-    const assetId = item.dataset.assetId;
+    const itemId = item.dataset.itemId;
     const previewSrc = item.querySelector("img")?.src;
     item.addEventListener("pointerenter", (event) => {
-      if (state.draggingAssetId || !previewSrc) return;
+      if (state.draggingItemId || !previewSrc) return;
       showAssetPreview(previewSrc, event.clientX, event.clientY);
     });
     item.addEventListener("pointermove", (event) => {
-      if (state.draggingAssetId) return hideAssetPreview();
+      if (state.draggingItemId) return hideAssetPreview();
       if (previewSrc) showAssetPreview(previewSrc, event.clientX, event.clientY);
     });
     item.addEventListener("pointerleave", hideAssetPreview);
     item.addEventListener("dragstart", (event) => {
       hideAssetPreview();
-      state.draggingAssetId = assetId;
-      event.dataTransfer.setData("application/x-slide-asset", assetId);
-      event.dataTransfer.setData("text/plain", `asset:${assetId}`);
+      state.draggingItemId = itemId;
+      event.dataTransfer.setData("application/x-slide-asset", itemId);
+      event.dataTransfer.setData("text/plain", `asset:${itemId}`);
       event.dataTransfer.effectAllowed = "copyMove";
       item.classList.add("is-dragging");
     });
     item.addEventListener("dragend", () => {
-      state.draggingAssetId = null;
+      state.draggingItemId = null;
       item.classList.remove("is-dragging");
       app.querySelector("[data-asset-trash]")?.classList.remove("is-hot");
       hideAssetPreview();
@@ -2433,8 +3099,29 @@ function bindAssetLibrary() {
   });
   app.querySelectorAll('[data-action="delete-asset"]').forEach((button) => {
     button.addEventListener("click", (event) => {
-      showAssetDeleteMenu(event, button.dataset.assetId);
+      showAssetDeleteMenu(event, button.dataset.itemId);
     });
+  });
+  app.querySelector('[data-action="assets-in-project"]')?.addEventListener("click", () => {
+    state.librarySource = "project";
+    renderEditor();
+  });
+  app.querySelector('[data-action="assets-all"]')?.addEventListener("click", () => {
+    state.librarySource = "all";
+    renderEditor();
+  });
+  const search = app.querySelector(".asset-search");
+  search?.addEventListener("input", () => {
+    state.libraryFilter = search.value;
+    clearTimeout(state.librarySearchTimer);
+    state.librarySearchTimer = setTimeout(() => {
+      renderEditor();
+      const refocused = app.querySelector(".asset-search");
+      if (refocused) {
+        refocused.focus();
+        refocused.setSelectionRange(refocused.value.length, refocused.value.length);
+      }
+    }, 180);
   });
   bindAssetTrash();
 }
@@ -2465,7 +3152,7 @@ function hideAssetPreview() {
 function bindAssetTrash() {
   const tray = app.querySelector("[data-asset-trash]");
   if (!tray) return;
-  const isAssetDrag = (event) => Boolean(state.draggingAssetId) || [...event.dataTransfer.types].includes("application/x-slide-asset");
+  const isAssetDrag = (event) => Boolean(state.draggingItemId) || [...event.dataTransfer.types].includes("application/x-slide-asset");
   tray.addEventListener("dragover", (event) => {
     if (!isAssetDrag(event)) return;
     event.preventDefault();
@@ -2479,17 +3166,17 @@ function bindAssetTrash() {
     event.preventDefault();
     event.stopPropagation();
     tray.classList.remove("is-hot");
-    const payload = event.dataTransfer.getData("application/x-slide-asset") || event.dataTransfer.getData("text/plain") || state.draggingAssetId || "";
-    const assetId = payload.startsWith("asset:") ? payload.slice(6) : payload;
-    state.draggingAssetId = null;
-    if (assetId) deleteProjectAsset(assetId);
+    const payload = event.dataTransfer.getData("application/x-slide-asset") || event.dataTransfer.getData("text/plain") || state.draggingItemId || "";
+    const itemId = payload.startsWith("asset:") ? payload.slice(6) : payload;
+    state.draggingItemId = null;
+    if (itemId) deleteProjectAsset(itemId);
   });
 }
 
 function bindStageAssetDrop() {
   const stage = app.querySelector(".stage-frame") || app.querySelector(".stage");
   if (!stage) return;
-  const hasAssetPayload = (event) => Boolean(state.draggingAssetId) || [...event.dataTransfer.types].includes("application/x-slide-asset");
+  const hasAssetPayload = (event) => Boolean(state.draggingItemId) || [...event.dataTransfer.types].includes("application/x-slide-asset");
   stage.addEventListener("dragover", (event) => {
     if (!hasAssetPayload(event)) return;
     event.preventDefault();
@@ -2503,10 +3190,10 @@ function bindStageAssetDrop() {
     event.preventDefault();
     stage.classList.remove("is-drop-target");
     const payload = event.dataTransfer.getData("application/x-slide-asset") || event.dataTransfer.getData("text/plain");
-    const assetId = payload.startsWith("asset:") ? payload.slice(6) : payload;
-    if (!assetId) return;
+    const itemId = payload.startsWith("asset:") ? payload.slice(6) : payload;
+    if (!itemId) return;
     const rect = stage.getBoundingClientRect();
-    addOverlayFromAsset(assetId, {
+    addOverlayFromAsset(itemId, {
       x: (event.clientX - rect.left) / rect.width,
       y: (event.clientY - rect.top) / rect.height,
     });
@@ -2602,9 +3289,9 @@ async function addDroppedAssetsToSlide(files, event) {
   toast(`${assets.length} ${assets.length === 1 ? "image" : "images"} added to the slide`);
 }
 
-function addOverlayFromAsset(assetId, point, { render = true, record = true } = {}) {
+function addOverlayFromAsset(itemId, point, { render = true, record = true } = {}) {
   const slide = activeSlide();
-  const asset = projectAsset(assetId);
+  const asset = projectAsset(itemId);
   if (!slide || !asset) {
     toast(slide ? "That asset is missing." : "Open a photo first, then drop the asset on it.");
     return null;
@@ -2613,7 +3300,7 @@ function addOverlayFromAsset(assetId, point, { render = true, record = true } = 
   if (!slide.overlays) slide.overlays = [];
   const overlay = constrainOverlay({
     id: uid(),
-    assetId: asset.id,
+    itemId: asset.id,
     x: 0.33,
     y: 0.36,
     width: initialOverlayWidth(asset),
@@ -2640,12 +3327,9 @@ function addOverlayFromAsset(assetId, point, { render = true, record = true } = 
 async function handleAssetUpload(event) {
   const files = [...event.target.files];
   event.target.value = "";
-  if (!files.length) return;
-  const project = activeProject();
-  if (!project) return;
-  recordHistory();
-  if (!project.assets) project.assets = [];
+  if (!files.length || !activeProject()) return;
   const button = app.querySelector('[data-action="upload-assets"]');
+  const oldLabel = button?.innerHTML;
   if (button) {
     button.disabled = true;
     button.textContent = "Adding…";
@@ -2653,17 +3337,9 @@ async function handleAssetUpload(event) {
   let added = 0;
   try {
     for (const file of files) {
+      if (!isImageFile(file)) continue;
       try {
-        if (!file.type.startsWith("image/") && !/\.(png|jpe?g|webp|gif|svg|avif)$/i.test(file.name)) continue;
-        const imageData = await fileToDataUrl(file);
-        const dimensions = await getImageDimensions(imageData);
-        project.assets.push({
-          id: uid(),
-          name: file.name.replace(/\.[^.]+$/, "") || "Asset",
-          imageData,
-          width: dimensions.width,
-          height: dimensions.height,
-        });
+        rememberItem(await slideApi.uploadLibraryItem({ kind: "asset", file }));
         added += 1;
       } catch (error) {
         console.error(error);
@@ -2671,28 +3347,29 @@ async function handleAssetUpload(event) {
     }
     if (!added) {
       toast("Those files aren’t usable images.");
-      renderEditor();
       return;
     }
-    await putProject(project);
-    toast(`${added} ${added === 1 ? "asset" : "assets"} uploaded`);
-    renderEditor();
+    state.librarySource = "all";
+    toast(`${added} ${added === 1 ? "asset" : "assets"} added to the library`);
   } catch (error) {
     console.error(error);
     toast("One of those files couldn’t be added.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = oldLabel;
+    }
     renderEditor();
   }
 }
 
-function deleteProjectAsset(assetId) {
+/** Takes the asset off every slide here. The library item itself is untouched. */
+function deleteProjectAsset(itemId) {
   const project = activeProject();
-  if (!project?.assets) return;
-  const asset = project.assets.find((item) => item.id === assetId);
-  if (!asset) return;
+  if (!project || !state.library.has(itemId)) return;
   recordHistory();
-  project.assets = project.assets.filter((item) => item.id !== assetId);
   project.slides.forEach((slide) => {
-    slide.overlays = (slide.overlays || []).filter((overlay) => overlay.assetId !== assetId);
+    slide.overlays = (slide.overlays || []).filter((overlay) => overlay.itemId !== itemId);
   });
   setLayerSelection(selectedLayerKeys());
   scheduleSave();
@@ -2895,7 +3572,7 @@ function beginCropResize(event, box, handle) {
   event.preventDefault();
   event.stopPropagation();
   const overlay = selectedOverlay();
-  const asset = overlay ? projectAsset(overlay.assetId) : null;
+  const asset = overlay ? projectAsset(overlay.itemId) : null;
   if (!overlay || !asset) return;
   recordHistory();
   try { box.setPointerCapture(event.pointerId); } catch { /* Window tracking is the fallback. */ }
@@ -2933,7 +3610,7 @@ function beginCropResize(event, box, handle) {
 function beginCropMove(event, box) {
   event.preventDefault();
   const overlay = selectedOverlay();
-  const asset = overlay ? projectAsset(overlay.assetId) : null;
+  const asset = overlay ? projectAsset(overlay.itemId) : null;
   if (!overlay || !asset) return;
   try { box.setPointerCapture(event.pointerId); } catch { /* Window tracking is the fallback. */ }
   const startCrop = overlayCrop(overlay);
@@ -2974,7 +3651,7 @@ function beginOverlayResize(event, box, handle, { preserveAspect = true } = {}) 
   event.preventDefault();
   event.stopPropagation();
   const overlay = selectedOverlay();
-  const asset = overlay ? projectAsset(overlay.assetId) : null;
+  const asset = overlay ? projectAsset(overlay.itemId) : null;
   if (!overlay || !asset) return;
   recordHistory();
   try { box.setPointerCapture(event.pointerId); } catch { /* Window tracking is the fallback. */ }
@@ -3021,7 +3698,7 @@ function beginOverlayRotate(event, box) {
   event.preventDefault();
   event.stopPropagation();
   const overlay = selectedOverlay();
-  const asset = overlay ? projectAsset(overlay.assetId) : null;
+  const asset = overlay ? projectAsset(overlay.itemId) : null;
   if (!overlay || !asset) return;
   recordHistory();
   try { box.setPointerCapture(event.pointerId); } catch { /* Window tracking is the fallback. */ }
@@ -3385,6 +4062,7 @@ async function addSlidesFromFiles(files, { activateFirstNew = false } = {}) {
   if (!project) return;
   recordHistory();
   const button = app.querySelector('[data-action="upload"]');
+  const oldLabel = button?.innerHTML;
   if (button) {
     button.disabled = true;
     button.textContent = "Adding…";
@@ -3393,14 +4071,14 @@ async function addSlidesFromFiles(files, { activateFirstNew = false } = {}) {
   try {
     for (const file of imageFiles) {
       try {
-        const imageData = await fileToDataUrl(file);
-        const dimensions = await getImageDimensions(imageData);
+        const item = rememberItem(await slideApi.uploadLibraryItem({ kind: "background", file }));
         const slide = {
           id: uid(),
           name: file.name.replace(/\.[^.]+$/, "") || "Slide",
-          imageData,
-          width: dimensions.width,
-          height: dimensions.height,
+          backgroundItemId: item.id,
+          imageData: item.url,
+          width: item.width,
+          height: item.height,
           imageScale: 1,
           imageX: 0,
           imageY: 0,
@@ -3427,6 +4105,11 @@ async function addSlidesFromFiles(files, { activateFirstNew = false } = {}) {
     console.error(error);
     toast("One of those images couldn’t be added as a slide.");
     renderEditor();
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = oldLabel;
+    }
   }
 }
 
@@ -3463,7 +4146,7 @@ function loadImage(src) {
   });
 }
 
-async function renderSlideCanvas(slide, width = OUTPUT_WIDTH, height = OUTPUT_HEIGHT) {
+async function renderSlideCanvas(slide, width = OUTPUT_WIDTH, height = outputHeight()) {
   await document.fonts.load(`${TEXT_WEIGHT} 64px "TikTok Sans"`);
   const image = await loadImage(slide.imageData);
   const canvas = document.createElement("canvas");
@@ -3499,12 +4182,7 @@ async function exportActiveSlide() {
   try {
     const blob = await renderSlideBlob();
     if (!blob) throw new Error("Could not create PNG");
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = slideExportName();
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(blob, slideExportName());
     toast("PNG downloaded at full resolution");
   } catch (error) {
     console.error(error);
@@ -3513,6 +4191,43 @@ async function exportActiveSlide() {
     if (exportButton) {
       exportButton.disabled = false;
       exportButton.innerHTML = oldLabel;
+    }
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportAllSlides() {
+  const project = activeProject();
+  if (!project?.slides.length) return;
+  const button = app.querySelector('[data-action="export-all"]');
+  const oldLabel = button?.innerHTML;
+  if (button) button.disabled = true;
+  try {
+    const entries = [];
+    for (const [index, slide] of project.slides.entries()) {
+      if (button) button.textContent = `${index + 1}/${project.slides.length}…`;
+      const blob = await renderSlideBlob(slide);
+      if (!blob) throw new Error(`Could not create PNG for slide ${index + 1}`);
+      entries.push({ name: slideExportName(slide, index), blob });
+    }
+    if (button) button.textContent = "Zipping…";
+    downloadBlob(await createZipBlob(entries), `${safeFilename(project.name)}.zip`);
+    toast(`${entries.length} ${entries.length === 1 ? "slide" : "slides"} downloaded as a ZIP`);
+  } catch (error) {
+    console.error(error);
+    toast("The ZIP couldn’t be created.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = oldLabel;
     }
   }
 }
@@ -3614,7 +4329,7 @@ async function drawSlideLayers(context, slide, canvasWidth, canvasHeight) {
 }
 
 async function drawOneOverlay(context, overlay, canvasWidth, canvasHeight) {
-  const asset = projectAsset(overlay.assetId);
+  const asset = projectAsset(overlay.itemId);
   if (!asset) return;
   const image = await loadImage(asset.imageData);
   const metrics = getOverlayMetrics(overlay, asset);
@@ -3850,7 +4565,7 @@ function handleLayerCopy(event) {
   if (!layers.length) return;
   const copies = layers.flatMap(({ kind, item }) => {
     if (kind === "text") return [{ kind, item: { ...item } }];
-    const asset = projectAsset(item.assetId);
+    const asset = projectAsset(item.itemId);
     return asset ? [{ kind, item: { ...item }, asset: { ...asset } }] : [];
   });
   if (!copies.length) return;
@@ -3892,22 +4607,14 @@ function pasteCopiedLayer(copied) {
   const pastedKeys = [];
   let nextZ = nextLayerZ(slide);
   recordHistory();
-  if (!Array.isArray(project.assets)) project.assets = [];
   if (!Array.isArray(slide.overlays)) slide.overlays = [];
   layers.forEach((layer) => {
     if (layer.kind === "overlay") {
-      let asset = project.assets.find((item) => (
-        (layer.asset.fingerprint && item.fingerprint === layer.asset.fingerprint)
-        || item.imageData === layer.asset.imageData
-      ));
-      if (!asset) {
-        asset = { ...layer.asset, id: uid() };
-        project.assets.push(asset);
-      }
+      const asset = state.library.get(layer.item.itemId) || layer.asset;
       const pasted = constrainOverlay({
         ...layer.item,
         id: uid(),
-        assetId: asset.id,
+        itemId: asset.id,
         x: layer.item.x + offset,
         y: layer.item.y + offset,
         z: nextZ,
@@ -3969,34 +4676,10 @@ function imageFilesFromTransfer(dataTransfer) {
     .filter(isImageFile);
 }
 
-async function fingerprintData(value) {
-  const bytes = new TextEncoder().encode(String(value));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function createAssetFromFile(file, fallbackName = "Pasted image") {
-  const project = activeProject();
-  if (!project) return null;
-  if (!project.assets) project.assets = [];
-  const imageData = await fileToDataUrl(file);
-  const fingerprint = await fingerprintData(imageData);
-  const existing = project.assets.find((asset) => asset.fingerprint === fingerprint || asset.imageData === imageData);
-  if (existing) {
-    if (!existing.fingerprint) existing.fingerprint = fingerprint;
-    return existing;
-  }
-  const dimensions = await getImageDimensions(imageData);
-  const asset = {
-    id: uid(),
-    name: String(file.name || fallbackName).replace(/\.[^.]+$/, "") || fallbackName,
-    imageData,
-    width: dimensions.width,
-    height: dimensions.height,
-    fingerprint,
-  };
-  project.assets.push(asset);
-  return asset;
+  if (!activeProject()) return null;
+  const name = String(file.name || fallbackName).replace(/\.[^.]+$/, "") || fallbackName;
+  return rememberItem(await slideApi.uploadLibraryItem({ kind: "asset", file, name }));
 }
 
 async function handleClipboardPaste(event) {
@@ -4044,39 +4727,14 @@ async function handleClipboardPaste(event) {
 
 async function init() {
   try {
-    state.db = await openDatabase();
-    state.projects = await getAllProjects();
-    state.projects.forEach((project) => {
-      if (!Array.isArray(project.assets)) project.assets = [];
-      project.slides.forEach((slide) => {
-        if (slide.imageScale == null) slide.imageScale = 1;
-        if (slide.imageX == null) slide.imageX = 0;
-        if (slide.imageY == null) slide.imageY = 0;
-        if (!Array.isArray(slide.overlays)) slide.overlays = [];
-        slide.overlays.forEach((overlay, index) => {
-          const asset = project.assets.find((item) => item.id === overlay.assetId);
-          if (overlay.height == null && asset) {
-            const crop = overlayCrop(overlay);
-            overlay.height = overlay.width * (OUTPUT_WIDTH / OUTPUT_HEIGHT) * ((asset.height * crop.h) / (asset.width * crop.w));
-          }
-          if (overlay.z == null) overlay.z = index + 1;
-        });
-        slide.texts.forEach((text, index) => {
-          if (text.outlineWidth == null) text.outlineWidth = DEFAULT_OUTLINE_WIDTH;
-          if (!normalizeHexColor(text.color)) text.color = textColor(text);
-          if (!text.background) text.background = "white";
-          if (!text.backgroundShape) text.backgroundShape = "full";
-          if (!text.align) text.align = "center";
-          if (text.rotation == null) text.rotation = 0;
-          if (text.z == null) text.z = (slide.overlays?.length || 0) + index + 1;
-        });
-      });
-    });
+    await refreshLibrary();
+    state.projects = (await slideApi.listProjects()).map((summary) => ({ ...summary, slides: [] }));
   } catch (error) {
     console.error(error);
     state.projects = [];
-    toast("Browser storage is unavailable. Projects won’t persist.");
+    toast("Can\u2019t reach the Slide Studio server. Start it with npm start.");
   }
+  state.events = slideApi.subscribe(handleServerEvent);
   renderCurrentRoute();
   window.addEventListener("popstate", renderCurrentRoute);
   document.addEventListener("paste", (event) => {
