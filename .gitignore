@@ -1,8 +1,10 @@
+.dev.vars
 .DS_Store
-node_modules/
-*.log
-dist/
-.wrangler/
 .env
 .env.*
-.dev.vars
+.wrangler/
+*.log
+data/
+dist/
+docs/superpowers/
+node_modules/

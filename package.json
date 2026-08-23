@@ -1,26 +1,43 @@
 {
   "name": "slide-studio",
   "version": "1.0.0",
-  "private": true,
-  "description": "Local-first web editor for TikTok slideshow images",
-  "homepage": "https://slides-editor.pages.dev",
+  "description": "Local editor and agent backend for TikTok and Instagram slideshow images",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexgusevski/tiktokslideeditor.git"
+    "url": "git+https://github.com/cestoliv/slideeditor.git"
   },
   "bugs": {
-    "url": "https://github.com/alexgusevski/tiktokslideeditor/issues"
+    "url": "https://github.com/cestoliv/slideeditor/issues"
   },
+  "type": "module",
+  "bin": {
+    "slide-studio": "server.mjs"
+  },
+  "files": [
+    "server/",
+    "server.mjs",
+    "app.js",
+    "api.js",
+    "zip.js",
+    "index.html",
+    "styles.css",
+    "assets/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
-    "build": "node scripts/build.mjs",
-    "preview:cloudflare": "npm run build && wrangler pages dev dist",
-    "deploy:dev": "node scripts/deploy-dev.mjs",
-    "deploy": "node scripts/deploy.mjs"
+    "start:lan": "node server.mjs --host 0.0.0.0",
+    "test": "node --test \"test/**/*.test.mjs\""
   },
-  "devDependencies": {
-    "wrangler": "^4.123.0"
-  }
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "homepage": "https://github.com/cestoliv/slideeditor#readme"
 }

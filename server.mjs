@@ -1,51 +1,39 @@
-import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+#!/usr/bin/env node
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const host = "127.0.0.1";
-const port = Number(process.env.SLIDE_STUDIO_PORT) || 4173;
+const REQUIRED_NODE = 22;
 
-const files = new Map([
-  ["/", ["index.html", "text/html; charset=utf-8"]],
-  ["/index.html", ["index.html", "text/html; charset=utf-8"]],
-  ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
-  ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
-  ["/assets/TikTokSans.ttf", ["assets/TikTokSans.ttf", "font/ttf"]],
-  ["/assets/airdrop.svg", ["assets/airdrop.svg", "image/svg+xml"]],
-  ["/assets/Octicons-mark-github.svg", ["assets/Octicons-mark-github.svg", "image/svg+xml"]],
-  ["/assets/favicon.svg", ["assets/favicon.svg", "image/svg+xml"]],
-]);
+const major = Number(process.versions.node.split(".")[0]);
+if (major < REQUIRED_NODE) {
+  console.error(`Slide Studio needs Node ${REQUIRED_NODE} or newer for node:sqlite. This is Node ${process.versions.node}.`);
+  process.exit(1);
+}
 
-const server = createServer(async (request, response) => {
-  const url = new URL(request.url || "/", `http://${host}:${port}`);
-  const entry = files.get(url.pathname)
-    || (/^\/projects\/[^/]+\/?$/.test(url.pathname) ? files.get("/") : null);
-
-  if (!entry || (request.method !== "GET" && request.method !== "HEAD")) {
-    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Not found");
-    return;
+// A fresh clone has no dependencies yet. Installing them here keeps `npm start`
+// the only command anyone has to run. npx and a global install already have
+// them, and their package directory is read-only, so skip it there.
+const isCheckout = existsSync(join(root, ".git"));
+if (isCheckout && !existsSync(join(root, "node_modules", "@modelcontextprotocol", "sdk"))) {
+  console.log("Installing dependencies, one moment…");
+  const install = spawnSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
+  if (install.status !== 0) {
+    console.error("\nThat install failed. Run `npm install` yourself, then `npm start` again.");
+    process.exit(1);
   }
+  console.log("");
+}
 
-  try {
-    const [relativePath, contentType] = entry;
-    const body = await readFile(join(root, relativePath));
-    response.writeHead(200, {
-      "Content-Type": contentType,
-      "Content-Length": body.byteLength,
-      "Cache-Control": "no-cache",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
-    });
-    response.end(request.method === "HEAD" ? undefined : body);
-  } catch {
-    response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Server error");
-  }
-});
+// Suppress the node:sqlite experimental warning without hiding real warnings.
+const emit = process.emitWarning;
+process.emitWarning = (warning, ...rest) => {
+  const name = typeof rest[0] === "string" ? rest[0] : rest[0]?.type;
+  if (name === "ExperimentalWarning" && String(warning).includes("SQLite")) return;
+  return emit.call(process, warning, ...rest);
+};
 
-server.listen(port, host, () => {
-  console.log(`Slide Studio is running at http://${host}:${port}`);
-});
+const { start } = await import("./server/main.mjs");
+start();
