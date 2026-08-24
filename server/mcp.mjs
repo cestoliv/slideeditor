@@ -13,6 +13,7 @@ const SLIDE_SHAPE = z.object({
 });
 
 const RATIO_SHAPE = z.object({ w: z.number().positive(), h: z.number().positive() });
+const STATUS_SHAPE = z.enum(["draft", "ready", "published"]);
 
 export function createMcpServer({ library, projects, baseUrl }) {
   const server = new McpServer({ name: "slide-studio", version: "2.0.0" });
@@ -21,14 +22,19 @@ export function createMcpServer({ library, projects, baseUrl }) {
     title: "List library images",
     description:
       "List or search the background and asset libraries. Read each item's `description` (what the image shows) " +
-      "and `usage` (when and how to use it) to choose well. Returns ids to pass to create_slideshow.",
+      "and `usage` (when and how to use it) to choose well. Each item also carries `stats`, a record of how often " +
+      "it has been used before. When several items fit the slide equally well, pick the one with the lower " +
+      "`stats.timesUsed`, or the older `stats.lastUsedAt`, so slideshows do not all end up looking the same. " +
+      "Sort by `least-used` to see the neglected ones first. Returns ids to pass to create_slideshow.",
     inputSchema: {
       kind: z.enum(["background", "asset"]).optional().describe("Limit to one library. Omit to search both."),
       query: z.string().optional().describe("Free text matched against name, description, usage and tags."),
+      sort: z.enum(["recent", "least-used", "most-used"]).optional()
+        .describe("Order of results. Use `least-used` to favour items you have not used before. Defaults to relevance when searching, newest otherwise."),
       limit: z.number().int().min(1).max(200).optional(),
     },
-  }, async ({ kind, query, limit }) => {
-    const result = library.list({ kind: kind || null, query: query || "", limit: limit || 50 });
+  }, async ({ kind, query, sort, limit }) => {
+    const result = library.list({ kind: kind || null, query: query || "", limit: limit || 50, sort: sort || "recent" });
     return json({
       total: result.total,
       items: result.items.map((item) => ({
@@ -40,6 +46,7 @@ export function createMcpServer({ library, projects, baseUrl }) {
         tags: item.tags,
         width: item.width,
         height: item.height,
+        stats: item.stats,
       })),
     });
   });
@@ -52,10 +59,17 @@ export function createMcpServer({ library, projects, baseUrl }) {
 
   server.registerTool("list_slideshows", {
     title: "List slideshows",
-    description: "List every slideshow with its id, version, slide count and edit URL.",
-    inputSchema: {},
-  }, async () => json({
-    slideshows: projects.list().map((summary) => ({ ...summary, editUrl: editUrl(baseUrl(), summary.id) })),
+    description:
+      "List slideshows with their id, version, status, slide count and edit URL. Published slideshows are hidden " +
+      "by default, because that work is already posted. Pass status to widen the list.",
+    inputSchema: {
+      status: z.union([z.array(STATUS_SHAPE), z.literal("all")]).optional()
+        .describe("Statuses to include. Defaults to draft and ready. Pass \"all\" for everything."),
+    },
+  }, async ({ status }) => json({
+    slideshows: projects
+      .list({ status: status ?? undefined })
+      .map((summary) => ({ ...summary, editUrl: editUrl(baseUrl(), summary.id) })),
   }));
 
   server.registerTool("get_slideshow", {
@@ -66,7 +80,26 @@ export function createMcpServer({ library, projects, baseUrl }) {
     inputSchema: { id: z.string().describe("Slideshow id.") },
   }, async ({ id }) => {
     const project = projects.require(id);
-    return json({ slideshow: toComposition(project), editUrl: editUrl(baseUrl(), project.id) });
+    return json({
+      slideshow: { ...toComposition(project), status: project.status },
+      editUrl: editUrl(baseUrl(), project.id),
+    });
+  });
+
+  server.registerTool("set_slideshow_status", {
+    title: "Set a slideshow's status",
+    description:
+      "Move a slideshow between draft, ready and published. `draft` is work in progress and is where every new " +
+      "slideshow starts. `ready` means the human has finished adjusting it. `published` means it has been posted, " +
+      "and hides it from the default list. Status is only a label: it never locks editing, and changing it does " +
+      "not bump the version.",
+    inputSchema: {
+      id: z.string().describe("Slideshow id."),
+      status: STATUS_SHAPE.describe("The status to set."),
+    },
+  }, async ({ id, status }) => {
+    const project = projects.setStatus(id, status);
+    return json({ id: project.id, status: project.status, editUrl: editUrl(baseUrl(), project.id) });
   });
 
   server.registerTool("create_slideshow", {
