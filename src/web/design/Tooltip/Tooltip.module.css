@@ -1,0 +1,31 @@
+/*
+ * No legacy counterpart: the old app used the native title attribute. The paint
+ * follows the solid button, ink on paper and paper on ink, so a tooltip reads as
+ * the same object in both themes.
+ */
+
+.content {
+  z-index: var(--z-tooltip);
+  max-width: 28ch;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-white);
+  background: var(--color-ink);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-base);
+}
+
+.content[data-state="delayed-open"] {
+  animation: tooltip-in var(--duration-fast) var(--ease-out) both;
+}
+
+.arrow {
+  fill: var(--color-ink);
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+  }
+}

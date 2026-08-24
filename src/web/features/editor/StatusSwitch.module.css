@@ -1,0 +1,44 @@
+/* Ported from styles.css:2967-2995 and styles.css:3377-3387. */
+
+.switch {
+  display: inline-flex;
+  padding: var(--space-0);
+  gap: var(--space-0);
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-panel);
+}
+
+.option {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+}
+
+.option:hover {
+  color: var(--color-ink);
+}
+
+.option[aria-pressed="true"] {
+  color: var(--color-panel);
+  background: var(--color-ink);
+}
+
+/* styles.css:3378. Keep the control reachable on a phone: shrink it, never hide it. */
+@media (max-width: 560px) {
+  .switch {
+    gap: 0;
+    padding: var(--border-width);
+  }
+
+  .option {
+    padding: var(--space-1) var(--space-1);
+    font-size: var(--font-size-2xs);
+  }
+}

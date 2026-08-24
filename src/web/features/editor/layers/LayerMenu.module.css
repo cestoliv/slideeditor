@@ -1,0 +1,4 @@
+/* No box at all, so the layer inside keeps the stack as its containing block. */
+.trigger {
+  display: contents;
+}

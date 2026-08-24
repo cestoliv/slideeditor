@@ -1,0 +1,11 @@
+/*
+ * styles.css:1570-1576. The stack covers the canvas and takes no pointer events
+ * of its own, so a press on bare canvas reaches the stage under it and the
+ * marquee still works. Each layer turns them back on for itself.
+ */
+
+.stack {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

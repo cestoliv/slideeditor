@@ -1,0 +1,142 @@
+/*
+ * The menu surface and its rows, ported from .layer-menu and .layer-menu-item at
+ * styles.css:2617-2681. DropdownMenu and ContextMenu are the same menu behind two
+ * different triggers, so the paint lives here once and both import it.
+ */
+
+.content {
+  z-index: var(--z-menu);
+  display: grid;
+  /*
+   * --space-2 rather than the legacy 6px, because the shared focus ring extends
+   * 5px past a row and 4px of padding would let it cross the panel's border.
+   */
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-menu);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-raised);
+}
+
+/*
+ * Only the entrance is animated. An exit animation makes Radix hold the element
+ * in the tree until it finishes, which turns every "closes on Escape" assertion
+ * into a race against a timer.
+ */
+.content[data-state="open"] {
+  animation: menu-in var(--duration-fast) var(--ease-out) both;
+}
+
+@keyframes menu-in {
+  from {
+    transform: scale(0.97);
+    opacity: 0;
+  }
+}
+
+.item {
+  /* Menu glyphs are 16px, one step under the 18px a control uses. */
+  --icon-size: var(--icon-size-sm);
+
+  display: flex;
+  gap: var(--space-3);
+  min-height: var(--control-height-menu-item);
+  padding: 0 var(--control-padding-sm);
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+/*
+ * Radix drives the highlight with data-highlighted rather than :hover, so the
+ * pointer and the arrow keys light up the same row. :hover alone would leave a
+ * keyboard user with no visible position.
+ */
+.item[data-highlighted] {
+  background: var(--surface-menu-hover);
+}
+
+.item[data-disabled] {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.danger {
+  color: var(--color-danger);
+}
+
+/*
+ * A row that is a readout rather than a control. Every other row in this file is
+ * something you can pick, so the pointer cursor is right for them and wrong for
+ * this one: an affordance that promises a click nothing handles.
+ */
+.static {
+  cursor: default;
+}
+
+/*
+ * The indicator column is always present, checked or not, so the labels of a
+ * radio group line up instead of shifting by 16px when the selection moves.
+ * Ported from .menu-icon-space at styles.css:2666.
+ */
+.indicator {
+  display: flex;
+  width: var(--icon-size-sm);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.label {
+  flex: 1 1 auto;
+}
+
+.tag {
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-style: normal;
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.separator {
+  height: var(--border-width);
+  margin: var(--space-1) 0;
+  background: var(--color-line-soft);
+}
+
+.groupLabel {
+  padding: var(--space-2) var(--control-padding-sm) var(--space-1);
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+}
+
+/*
+ * The focus rule comes last on purpose. It ties the highlight rule above at
+ * (0,2,0), so source order is what decides which one paints, and a rule added
+ * later cannot quietly shadow the ring.
+ *
+ * The outline is restated rather than left to reset.css because the highlight
+ * rule above ties it too. An earlier version of this file set outline: none on
+ * [data-highlighted], which stripped the cyan half and left menu rows the only
+ * control in the system showing half an indicator.
+ *
+ * Radix drives the highlight with focus, so this paints under the pointer as
+ * well as under the arrow keys. That is right for a menu: focus really is on
+ * the row the pointer is over, and Enter really does activate it.
+ */
+.item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: var(--focus-ring);
+}

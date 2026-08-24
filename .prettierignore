@@ -1,0 +1,8 @@
+dist/
+node_modules/
+package-lock.json
+assets/
+
+# Planning notes and generated docs are not source.
+.superpowers/
+docs/

@@ -1,0 +1,13 @@
+/*
+ * Only the widths differ from the shared menu surface in menu/menu.module.css.
+ * Both values are the two the legacy menu shipped: the full menu and the one or
+ * two row confirmation.
+ */
+
+.content {
+  min-width: var(--menu-min-width); /* styles.css:2620 */
+}
+
+.compact {
+  min-width: var(--menu-min-width-compact); /* styles.css:2630 */
+}

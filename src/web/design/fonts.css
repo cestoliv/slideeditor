@@ -1,0 +1,13 @@
+/*
+ * The font asset binding, and nothing else. Colours, spacing, and element
+ * defaults live in tokens.css and reset.css.
+ *
+ * The @assets alias lets Vite fingerprint the font and emit it into the build.
+ */
+@font-face {
+  font-family: "TikTok Sans";
+  src: url("@assets/TikTokSans.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}

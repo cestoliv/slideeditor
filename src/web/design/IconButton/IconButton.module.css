@@ -1,0 +1,66 @@
+/*
+ * Ported from styles.css:144-166.
+ *
+ * Every live guard is wrapped in :where() so it contributes no specificity. An
+ * unwrapped :not() carries the weight of its argument and can outrank a
+ * :focus-visible rule on the same element.
+ */
+
+.iconButton {
+  display: inline-grid;
+  width: var(--control-size-icon);
+  height: var(--control-size-icon);
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  color: inherit;
+  background: var(--surface-icon);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out),
+    background var(--duration-base) var(--ease-out);
+}
+
+.iconButton:hover:where(:not(:disabled)) {
+  border-color: var(--color-ink);
+  background: var(--color-white);
+  transform: translateY(var(--motion-lift));
+}
+
+.iconButton:active:where(:not(:disabled)) {
+  transform: translateY(0);
+}
+
+.small {
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+}
+
+.danger {
+  border-color: var(--color-danger-line);
+  color: var(--color-danger);
+}
+
+.danger:hover:where(:not(:disabled)) {
+  border-color: var(--color-danger);
+}
+
+/* An image glyph takes the same box as an SVG one. */
+.iconButton img,
+.iconButton svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+/* A flat icon button drops the chrome and keeps only the hit area. */
+.plain {
+  border-color: transparent;
+  background: transparent;
+}
+
+.plain:hover:where(:not(:disabled)) {
+  border-color: transparent;
+  background: var(--surface-hover);
+}

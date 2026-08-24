@@ -1,0 +1,37 @@
+/*
+ * The panel surface. It takes the menu's border and shadow so a popover and a
+ * menu read as the same layer of the interface, and the roomier radius and
+ * padding of a card, because it holds a form rather than a list of commands.
+ */
+
+.content {
+  z-index: var(--z-popover);
+  width: max-content;
+  max-width: min(var(--dialog-width), calc(100vw - var(--space-6)));
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-raised);
+}
+
+/* Entrance only, so a close assertion never has to wait out an exit animation. */
+.content[data-state="open"] {
+  animation: popover-in var(--duration-fast) var(--ease-out) both;
+}
+
+/*
+ * A popover that holds no focusable child takes focus itself, which is every
+ * panel that reports rather than asks. Last in the file, ring first: .content
+ * above paints --shadow-raised and would replace the indicator outright.
+ */
+.content:focus-visible {
+  box-shadow: var(--focus-ring), var(--shadow-raised);
+}
+
+@keyframes popover-in {
+  from {
+    transform: scale(0.97);
+    opacity: 0;
+  }
+}

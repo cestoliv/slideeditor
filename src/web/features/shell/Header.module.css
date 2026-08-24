@@ -1,0 +1,131 @@
+/*
+ * Ported from styles.css:188-260. Every colour, gap, radius and duration comes
+ * from tokens.css; the two lengths left as literals are the bar's own height
+ * and the brand mark's geometry, which are structural rather than spacing.
+ */
+
+.header {
+  display: flex;
+  gap: var(--space-4);
+  /* styles.css:190. The editor sizes its workspace against this. */
+  min-height: 72px;
+  padding: 0 var(--space-5);
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: var(--border-width) solid var(--color-line);
+  background: var(--surface-header);
+  backdrop-filter: blur(var(--blur-panel));
+}
+
+/*
+ * The dashboard bar can centre its middle column absolutely. The editor bar
+ * cannot: its actions grow past the midpoint and collide, so the title takes a
+ * track of its own and shrinks instead (styles.css:270-284).
+ */
+.editor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.editor .center {
+  min-width: 0;
+  justify-content: center;
+}
+
+.brand {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+
+/*
+ * The logo: an ink slab tipped off true, with the cyan and warm red edges the
+ * whole app is built on. Its size is the mark's own, not a step on the space
+ * scale (styles.css:213-221).
+ */
+.mark {
+  width: 29px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: var(--color-ink);
+  transform: rotate(-4deg);
+  box-shadow: var(--shadow-pop);
+}
+
+.copy {
+  display: grid;
+  text-align: left;
+  line-height: 0.9;
+}
+
+.copy strong {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.copy small {
+  margin-top: var(--space-0);
+  color: var(--color-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+}
+
+.center,
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/*
+ * The repository link. IconButton has no asChild arm, so an anchor cannot take
+ * its treatment and this has to repeat the box. Every declaration below mirrors
+ * IconButton.module.css:9-30 exactly, hover lift included: the first review
+ * caught this copy missing the lift within one task of being written, which is
+ * the drift duplication always causes. Delete it the day IconButton grows an
+ * asChild arm.
+ */
+.github {
+  display: inline-grid;
+  width: var(--control-size-icon);
+  height: var(--control-size-icon);
+  flex: 0 0 auto;
+  place-items: center;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+  color: inherit;
+  background: var(--surface-icon);
+  text-decoration: none;
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out),
+    background var(--duration-base) var(--ease-out);
+}
+
+.github:hover {
+  border-color: var(--color-ink);
+  background: var(--color-white);
+  transform: translateY(var(--motion-lift));
+}
+
+.github:active {
+  transform: translateY(0);
+}
+
+/*
+ * Masked rather than drawn, so the mark takes the theme's ink instead of
+ * needing the filter: invert(1) that styles.css:3139 used in dark.
+ */
+.githubMark {
+  display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  background: currentcolor;
+  mask: url("@assets/Octicons-mark-github.svg") center / contain no-repeat;
+}

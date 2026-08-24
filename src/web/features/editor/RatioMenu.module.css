@@ -1,0 +1,55 @@
+/* Ported from styles.css:1078-1092 and styles.css:2687-2733. */
+
+/*
+ * The anchor wraps the trigger without changing the readout's layout: the
+ * popover has to point at the button, and the button is inside a DropdownMenu
+ * trigger that owns its own ref.
+ */
+.anchor {
+  display: inline-flex;
+}
+
+.trigger {
+  padding: var(--space-0) var(--space-2);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.trigger:hover,
+.trigger[data-state="open"] {
+  border-color: var(--color-line);
+  color: var(--color-ink);
+  background: var(--surface-canvas-action);
+}
+
+.custom {
+  min-width: var(--menu-min-width);
+}
+
+.form {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.fields {
+  display: grid;
+  gap: var(--space-2);
+  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+}
+
+.note {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-base);
+}

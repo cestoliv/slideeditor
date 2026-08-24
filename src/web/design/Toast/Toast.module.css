@@ -1,0 +1,76 @@
+/* Ported from .toast at styles.css:3065-3080. */
+
+/*
+ * F8 is Radix's hotkey for reaching toasts from anywhere, and it lands here on
+ * the list before the next Tab reaches a toast. It keeps the shared ring: an
+ * outline: none here is a keypress that moves focus with nothing to show for it.
+ */
+.viewport {
+  position: fixed;
+  z-index: var(--z-toast);
+  right: var(--space-5);
+  bottom: var(--space-5);
+  display: flex;
+  width: min(var(--dialog-width), calc(100vw - var(--space-6)));
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border-radius: var(--radius-pill);
+  list-style: none;
+}
+
+.toast {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  align-items: center;
+  border: var(--border-width) solid var(--color-ink);
+  border-radius: var(--radius-pill);
+  color: var(--color-white);
+  background: var(--color-ink);
+  box-shadow: var(--shadow-pop-soft);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.toast[data-state="open"] {
+  animation: toast-in var(--duration-slow) var(--ease-out) both;
+}
+
+.danger {
+  border-color: var(--color-danger-line);
+  color: var(--color-danger);
+  background: var(--surface-danger);
+}
+
+.message {
+  flex: 1 1 auto;
+}
+
+.action {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-weight: var(--font-weight-bold);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/*
+ * Radix gives every toast tabIndex 0, so the pill is a real stop for a keyboard
+ * user reaching an action inside it. Last in the file and ring first, because
+ * .toast and .danger above both paint their own shadow or border.
+ */
+.toast:focus-visible {
+  box-shadow: var(--focus-ring), var(--shadow-pop-soft);
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateY(var(--space-2));
+    opacity: 0;
+  }
+}

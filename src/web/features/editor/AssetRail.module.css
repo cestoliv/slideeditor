@@ -1,0 +1,212 @@
+/*
+ * Ported from styles.css:535-600, 719-745 and 754-870. Every colour, space and
+ * radius is a token.
+ */
+
+.rail {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: var(--border-width) solid var(--color-line);
+  background: var(--surface-rail);
+  backdrop-filter: blur(18px);
+}
+
+/* styles.css:576-593. The same heading the slide rail carries. */
+.heading {
+  display: flex;
+  padding: var(--space-5) var(--space-4) var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.heading h2 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: -0.01em;
+}
+
+.heading span {
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* styles.css:2913-2938. Two halves of one pill. */
+.scope {
+  display: flex;
+  margin: 0 var(--space-3) var(--space-2);
+  overflow: hidden;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+}
+
+.scopeButton {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  color: var(--color-muted);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-heavy);
+  cursor: pointer;
+}
+
+.scopeButton[aria-pressed="true"] {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+}
+
+.search {
+  margin: 0 var(--space-3) var(--space-2);
+}
+
+/* styles.css:741-752. Two tiles across, scrolling under the trash. */
+.grid {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-4);
+  overflow-y: auto;
+  align-content: start;
+  grid-template-columns: 1fr 1fr;
+}
+
+.empty {
+  margin: var(--space-1) var(--space-0) 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  grid-column: 1 / -1;
+}
+
+.item {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+  cursor: grab;
+}
+
+.item:hover {
+  border-color: var(--color-ink);
+}
+
+.item[data-dragging="true"] {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+
+.item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+/* styles.css:781-793. Beside the pointer, over everything, untouchable. */
+.preview {
+  position: fixed;
+  z-index: var(--z-popover);
+  width: auto;
+  height: auto;
+  max-width: 240px;
+  max-height: 240px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* styles.css:835-859. */
+.trash {
+  display: flex;
+  min-height: var(--control-height-sm);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  align-items: center;
+  justify-content: center;
+  border: var(--border-width) dashed var(--color-line);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  background: var(--surface-empty);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-heavy);
+  text-align: center;
+}
+
+.trash svg {
+  width: var(--space-3);
+  height: var(--space-3);
+  flex: 0 0 auto;
+}
+
+/*
+ * Hot from either drag: `data-hot` is the rail's own HTML5 drag, and
+ * `data-asset-trash-hot` is written by layers/trash.ts when an overlay is
+ * dragged off the canvas with the pointer.
+ */
+.trash[data-hot="true"],
+.trash[data-asset-trash-hot] {
+  border-color: var(--color-ink);
+  border-style: solid;
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-accent) 22%, var(--surface-empty));
+}
+
+/* styles.css:719-739. */
+.actions {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-top: var(--border-width) solid var(--color-line);
+}
+
+.actions button,
+.actions a {
+  width: 100%;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+/*
+ * styles.css:3259-3297. Narrow, the rail keeps only its tiles: one column, the
+ * headings and labels collapse to nothing, and the trash keeps its glyph alone.
+ */
+@media (max-width: 780px) {
+  .heading {
+    justify-content: center;
+  }
+
+  .heading h2,
+  .heading span,
+  .empty,
+  .actions span {
+    font-size: 0;
+  }
+
+  .grid {
+    padding: var(--space-1) var(--space-0) var(--space-2);
+    grid-template-columns: 1fr;
+  }
+
+  .trash {
+    min-height: var(--space-6);
+    margin: 0 var(--space-0) var(--space-2);
+    padding: 0;
+  }
+
+  .trash span {
+    display: none;
+  }
+}

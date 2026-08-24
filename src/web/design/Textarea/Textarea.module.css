@@ -1,0 +1,49 @@
+/* Ported from styles.css:2114-2131. */
+
+.textarea {
+  width: 100%;
+  min-height: var(--control-height-textarea);
+  padding: var(--space-3);
+  resize: vertical;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  background: var(--color-white);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+/*
+ * A text control matches :focus-visible on every focus, pointer included, so
+ * there is no second branch to write and the legacy cyan-only glow is gone with
+ * it. Every control in the system now shows the same ring, and the outline is
+ * what forced-colors mode paints.
+ */
+.textarea:focus-visible {
+  border-color: var(--color-ink);
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: var(--focus-ring);
+}
+
+.textarea:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.invalid {
+  border-color: var(--color-danger);
+}
+
+/*
+ * "You are here" and "this is wrong" are two signals, and focus must not eat the
+ * second one. The shared ink ring still says where focus is; the border keeps
+ * saying the value is bad, which is exactly when the user is trying to fix it.
+ * This ties .textarea:focus-visible at (0,2,0) and follows it, so order decides.
+ */
+.invalid:focus-visible {
+  border-color: var(--color-danger);
+}

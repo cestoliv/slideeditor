@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    // These aliases are for `src/web` only. `tsc` type checks them everywhere but
+    // rewrites none of them, so an alias inside `src/server` or `src/shared`
+    // builds clean and then dies with ERR_MODULE_NOT_FOUND in the shipped binary.
+    // Those two roots import each other relatively, and eslint.config.js enforces it.
+    //
+    // Under moduleResolution nodenext every alias import carries the `.js`
+    // extension, so write `@web/features/editor/store.js`, never `.../store`.
+    "paths": {
+      "@shared": ["./src/shared/index.ts"],
+      "@shared/*": ["./src/shared/*"],
+      "@server/*": ["./src/server/*"],
+      "@web/*": ["./src/web/*"],
+      "@assets/*": ["./assets/*"]
+    }
+  },
+  "include": ["src", "tests", "*.config.ts"]
+}

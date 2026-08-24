@@ -1,0 +1,39 @@
+/* Ported from styles.css:2998-3023. */
+
+.badge {
+  display: inline-block;
+  padding: var(--space-0) var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-2xs);
+  font-style: normal;
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+/* Neutral is the legacy published status, which is also the plain chip. */
+.neutral {
+  color: var(--color-status-published);
+  background: var(--surface-status-published);
+}
+
+.accent {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+}
+
+.warning {
+  color: var(--color-status-draft);
+  background: var(--surface-status-draft);
+}
+
+.success {
+  color: var(--color-status-ready);
+  background: var(--surface-status-ready);
+}
+
+.danger {
+  color: var(--color-danger);
+  background: var(--surface-danger);
+}
