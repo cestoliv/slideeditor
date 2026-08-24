@@ -266,10 +266,33 @@ button:disabled {
   justify-content: center;
 }
 
+/*
+ * The dashboard header has room to centre the title absolutely. The editor
+ * header does not: its actions grow past the midpoint and collide. A three
+ * column grid keeps the title centred and lets it shrink instead.
+ */
 .project-identity {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+}
+
+.app-header--editor {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.app-header--editor .project-identity {
+  position: static;
+  min-width: 0;
+  justify-content: center;
+  transform: none;
+}
+
+.app-header--editor .project-title-input {
+  width: 100%;
+  min-width: 0;
 }
 
 .project-title-input {
@@ -2941,6 +2964,104 @@ a.button {
   }
 }
 
+/* Slideshow status */
+.status-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+}
+
+.status-option {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.status-option:hover {
+  color: var(--ink);
+}
+
+.status-option.is-active {
+  color: var(--panel);
+  background: var(--ink);
+}
+
+.status-badge {
+  padding: 2px 8px;
+  margin-left: 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.status-badge--draft {
+  color: #7a6a2e;
+  background: #f4e9c1;
+}
+
+.status-badge--ready {
+  color: #1d5b3f;
+  background: #c8ecd8;
+}
+
+.status-badge--published {
+  color: #4a4a52;
+  background: #e0e0e4;
+}
+
+.section-heading-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.published-toggle {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.published-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-badge--draft {
+    color: #f0e3b0;
+    background: #4a411f;
+  }
+
+  .status-badge--ready {
+    color: #bfe9d3;
+    background: #1e4634;
+  }
+
+  .status-badge--published {
+    color: #c9c9d0;
+    background: #3a3a40;
+  }
+}
+
 .toast {
   position: fixed;
   z-index: 100;
@@ -3254,6 +3375,31 @@ a.button {
 }
 
 @media (max-width: 560px) {
+  /* Keep the control reachable on a phone: shrink it, never hide it. */
+  .status-switch {
+    gap: 0;
+    padding: 2px;
+  }
+
+  .status-option {
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+
+  .app-header--editor {
+    gap: 8px;
+    padding: 0 10px;
+  }
+
+  .app-header--editor .header-actions {
+    gap: 6px;
+  }
+
+  /* The repository link is a nicety; the editor controls are not. */
+  .app-header--editor .github-link {
+    display: none;
+  }
+
   .header-actions [data-action="export"],
   .header-actions [data-action="export-all"] {
     width: 42px;

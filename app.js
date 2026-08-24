@@ -14,6 +14,11 @@ const INSTAGRAM_MIN_RATIO = 3 / 4;
 const INSTAGRAM_MAX_RATIO = 1.91;
 const CUSTOM_RATIO_MIN = 0.4;
 const CUSTOM_RATIO_MAX = 2.5;
+const SLIDESHOW_STATUSES = [
+  { id: "draft", label: "Draft" },
+  { id: "ready", label: "Ready" },
+  { id: "published", label: "Published" },
+];
 const PREVIEW_CHROMES = [
   { id: "tiktok", label: "TikTok" },
   { id: "instagram-feed", label: "Instagram feed" },
@@ -68,6 +73,7 @@ const state = {
   libraryKind: "background",
   librarySearchTimer: null,
   librarySource: "project",
+  showPublished: false,
   events: null,
   saveInFlight: false,
   saveQueued: false,
@@ -924,6 +930,26 @@ function showPreviewMenu(event) {
   positionLayerMenu(menu, rect.right + 8, rect.top);
 }
 
+async function setSlideshowStatus(status) {
+  const project = activeProject();
+  if (!project || project.status === status) return;
+  const previous = project.status;
+  project.status = status;
+  app.querySelectorAll('[data-action="set-status"]').forEach((button) => {
+    const active = button.dataset.status === status;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  try {
+    await slideApi.setProjectStatus(project.id, status);
+  } catch (error) {
+    console.error(error);
+    project.status = previous;
+    renderEditor();
+    toast("Couldn’t change the status.");
+  }
+}
+
 function setPreviewChrome(chromeId) {
   state.previewVisible = Boolean(chromeId);
   // A null choice keeps the overlay following the ratio's suggestion.
@@ -1093,6 +1119,18 @@ async function reloadAfterConflict(projectId) {
 
 /** An agent write reaches an open editor through the server's event stream. */
 function handleServerEvent(event) {
+  if (event?.type === "project.status") {
+    const project = state.projects.find((item) => item.id === event.projectId);
+    if (project) project.status = event.status;
+    if (event.projectId === state.activeProjectId) {
+      app.querySelectorAll('[data-action="set-status"]').forEach((button) => {
+        const active = button.dataset.status === event.status;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+    }
+    return;
+  }
   if (event?.type === "project.changed" && event.projectId === state.activeProjectId) {
     const project = activeProject();
     if (project && event.version > project.version && !state.saveInFlight) {
@@ -1168,6 +1206,12 @@ function renderHeader({ editor = false } = {}) {
       <div class="header-actions">
         ${editor ? `
           <button class="icon-button mobile-edit-button" type="button" data-action="toggle-inspector" aria-label="Toggle text controls">${icon("edit")}</button>
+          <div class="status-switch" role="group" aria-label="Slideshow status">
+            ${SLIDESHOW_STATUSES.map((status) => `
+              <button class="status-option ${project.status === status.id ? "is-active" : ""}" type="button"
+                data-action="set-status" data-status="${status.id}" aria-pressed="${project.status === status.id}">${status.label}</button>
+            `).join("")}
+          </div>
           <button class="button button--quiet share-button" type="button" data-action="share" aria-label="AirDrop current slide" title="AirDrop current slide" ${activeSlide() ? "" : "disabled"}>
             ${icon("airdrop")} <span>AirDrop</span>
           </button>
@@ -1211,7 +1255,13 @@ function renderDashboard() {
       <section>
         <div class="section-heading">
           <h2>Your projects</h2>
-          <span>${sortedProjects.length} ${sortedProjects.length === 1 ? "project" : "projects"}</span>
+          <div class="section-heading-actions">
+            <label class="published-toggle">
+              <input type="checkbox" data-action="toggle-published" ${state.showPublished ? "checked" : ""} />
+              <span>Show published</span>
+            </label>
+            <span>${sortedProjects.length} ${sortedProjects.length === 1 ? "project" : "projects"}</span>
+          </div>
         </div>
         <div class="project-grid">
           <button class="new-project-card" type="button" data-action="new-project">
@@ -1228,7 +1278,9 @@ function renderDashboard() {
                   ${cover ? `<img src="${cover}" alt="" />` : `<span class="project-preview-empty">No photos yet</span>`}
                 </span>
                 <span class="project-meta">
-                  <strong>${escapeHtml(project.name)}</strong>
+                  <strong>${escapeHtml(project.name)}<em class="status-badge status-badge--${project.status || "draft"}">${
+                    (SLIDESHOW_STATUSES.find((s) => s.id === (project.status || "draft")) || SLIDESHOW_STATUSES[0]).label
+                  }</em></strong>
                   <span>${slideCount} ${slideCount === 1 ? "slide" : "slides"} · ${formatDate(project.updatedAt)}</span>
                 </span>
               </button>
@@ -1313,13 +1365,31 @@ function renderLibraryCard(item) {
           <input type="text" data-field="tags" value="${escapeHtml(item.tags.join(", "))}" placeholder="travel, warm" />
         </label>
         <div class="library-card-footer">
-          <span class="library-meta">${item.width} × ${item.height}</span>
+          <span class="library-meta">${item.width} × ${item.height} · ${describeUsage(item.stats)}</span>
           <span class="library-status" data-status></span>
           <button class="button button--quiet is-danger" type="button" data-action="library-delete">${icon("trash")}<span>Delete</span></button>
         </div>
       </div>
     </article>
   `;
+}
+
+/** Plain language, because the number alone does not say whether it is a lot. */
+function describeUsage(stats) {
+  if (!stats?.timesUsed) return "never used";
+  const uses = `${stats.timesUsed} ${stats.timesUsed === 1 ? "use" : "uses"}`;
+  const shows = `${stats.slideshowCount} ${stats.slideshowCount === 1 ? "slideshow" : "slideshows"}`;
+  return `${uses} across ${shows} · last used ${relativeDate(stats.lastUsedAt)}`;
+}
+
+function relativeDate(timestamp) {
+  if (!timestamp) return "never";
+  const days = Math.floor((Date.now() - timestamp) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  return `${months} ${months === 1 ? "month" : "months"} ago`;
 }
 
 function bindLibraryAdmin(kind) {
@@ -2035,7 +2105,8 @@ async function renderCurrentRoute() {
 
 async function refreshProjectList() {
   try {
-    state.projects = (await slideApi.listProjects()).map((summary) => {
+    const status = state.showPublished ? "all" : null;
+    state.projects = (await slideApi.listProjects({ status })).map((summary) => {
       const known = state.projects.find((item) => item.id === summary.id);
       return { ...(known || {}), ...summary, slides: known?.slides || [] };
     });
@@ -2057,6 +2128,11 @@ async function createProject() {
 }
 
 function bindDashboardEvents() {
+  app.querySelector('[data-action="toggle-published"]')?.addEventListener("change", async (event) => {
+    state.showPublished = event.currentTarget.checked;
+    await refreshProjectList();
+    renderDashboard();
+  });
   app.querySelectorAll('[data-action="new-project"]').forEach((button) => button.addEventListener("click", createProject));
   app.querySelectorAll("[data-project-id]").forEach((button) => {
     button.addEventListener("click", () => openProject(button.dataset.projectId));
@@ -2124,6 +2200,9 @@ function bindEditorEvents() {
     clearLayerSelection();
     state.mobileInspectorOpen = true;
     renderEditor();
+  });
+  app.querySelectorAll('[data-action="set-status"]').forEach((button) => {
+    button.addEventListener("click", () => setSlideshowStatus(button.dataset.status));
   });
   app.querySelector('[data-action="preview-menu"]')?.addEventListener("click", showPreviewMenu);
   app.querySelector('[data-action="ratio-menu"]')?.addEventListener("click", showRatioMenu);

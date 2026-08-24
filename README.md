@@ -54,6 +54,8 @@ access token. Back up that one directory and you have backed up everything.
   `/library/backgrounds` and `/library/assets`
 - Every item carries a description of what the image shows and guidance on when
   to use it. An agent reads both to choose well.
+- Every item also tracks how often it has been used and when it was last used,
+  so an agent can favour the ones it has been ignoring
 - Full-text search across name, description, usage, and tags
 - Identical images are stored once, whatever they are named
 - Deleting an item in use warns you which slideshows it would break
@@ -80,6 +82,16 @@ access token. Back up that one directory and you have backed up everything.
 - Downloads the selected slide as a 1080-pixel-wide PNG
 - Downloads every slide at once as a ZIP
 - Shares one slide or every slide through the system share sheet
+
+### Status
+
+Each slideshow is `draft`, `ready`, or `published`. New ones start as `draft`.
+Set it from the switch in the editor header, or let an agent set it.
+
+Published slideshows are hidden from the dashboard and from the agent's default
+list, because that work is already posted. Tick **Show published** to see them.
+The status is a label, not a lock: you can still edit a published slideshow, and
+doing so does not change its status.
 
 ## For agents
 
@@ -109,12 +121,13 @@ HTTP.
 
 | Tool | Purpose |
 |---|---|
-| `list_library` | List or search backgrounds and assets |
+| `list_library` | List or search backgrounds and assets, with usage stats |
 | `get_library_item` | Read one item, including its usage guidance |
-| `list_slideshows` | List slideshows with ids, versions, and edit URLs |
-| `get_slideshow` | Read one slideshow's composition |
+| `list_slideshows` | List slideshows with ids, versions, status, and edit URLs |
+| `get_slideshow` | Read one slideshow's composition and status |
 | `create_slideshow` | Draft a slideshow. Returns the edit URL. |
 | `update_slideshow` | Edit an existing one, guarded by its version |
+| `set_slideshow_status` | Move a slideshow between draft, ready, and published |
 
 ### 4. How to draft a slideshow
 
@@ -123,6 +136,17 @@ slide needs, not a filename. Every item carries a `description` of what the
 image shows and a `usage` note saying when to use it. Read both. An item whose
 usage says "opening slide for travel posts" belongs on slide 1 of a travel
 slideshow and nowhere else.
+
+Then vary. Every item also carries `stats`:
+
+```json
+"stats": { "timesUsed": 12, "slideshowCount": 4, "firstUsedAt": 0, "lastUsedAt": 0 }
+```
+
+When several items fit the slide equally well, take the one with the lower
+`timesUsed`, or the older `lastUsedAt`. Sort by `least-used` to see the
+neglected ones first. Without this, every slideshow ends up using the same three
+images.
 
 Then call `create_slideshow`. Each slide takes one `background` id, any number of
 `assets` ids, and any number of `texts` lines in reading order:
@@ -168,7 +192,13 @@ Slides whose composition you leave untouched keep the exact layout the human
 gave them. On a slide you do change, any asset or text line that is still there
 keeps its position too. So a small edit stays small.
 
-### 6. What to do when a tool fails
+### 6. Status
+
+`list_slideshows` hides published slideshows by default. Pass `status: "all"` to
+see everything. Leave new drafts as `draft`: `ready` is the human's call once
+they have adjusted the layout, and `published` means they have posted it.
+
+### 7. What to do when a tool fails
 
 - **`No library item with id …`** — the id is wrong or the item was deleted.
   Search again.
@@ -207,18 +237,21 @@ The MCP tools are a thin wrapper over these routes, which you can call directly.
 
 ```
 GET    /api/health
-GET    /api/library?kind=&q=&limit=&offset=
+GET    /api/library?kind=&q=&sort=&limit=&offset=
 GET    /api/library/:id
 POST   /api/library
 PATCH  /api/library/:id
 DELETE /api/library/:id          409 when in use, unless force=1
-GET    /api/projects
+GET    /api/projects?status=
 POST   /api/projects
 GET    /api/projects/:id
 PUT    /api/projects/:id         guarded by version
+PATCH  /api/projects/:id/status
 DELETE /api/projects/:id
+GET    /api/slideshows?status=   hides published unless asked
 POST   /api/slideshows           returns editUrl
 PUT    /api/slideshows/:id       guarded by version
+PATCH  /api/slideshows/:id/status
 GET    /api/events               server-sent events
 GET    /media/:file
 ```

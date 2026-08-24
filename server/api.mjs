@@ -12,6 +12,7 @@ export function createApi({ library, projects, events, baseUrl }) {
       query: context.query.get("q") || "",
       limit: context.query.get("limit"),
       offset: context.query.get("offset"),
+      sort: context.query.get("sort") || "recent",
     })],
 
     ["GET", /^\/api\/library\/([^/]+)$/, (context) => {
@@ -33,7 +34,7 @@ export function createApi({ library, projects, events, baseUrl }) {
     ["DELETE", /^\/api\/library\/([^/]+)$/, (context) =>
       library.remove(context.params[0], { force: context.query.get("force") === "1" })],
 
-    ["GET", /^\/api\/projects$/, () => ({ projects: projects.list() })],
+    ["GET", /^\/api\/projects$/, (context) => ({ projects: projects.list({ status: context.query.get("status") ?? undefined }) })],
 
     ["POST", /^\/api\/projects$/, async (context) => {
       const body = await context.json();
@@ -49,13 +50,20 @@ export function createApi({ library, projects, events, baseUrl }) {
 
     ["DELETE", /^\/api\/projects\/([^/]+)$/, (context) => projects.remove(context.params[0])],
 
-    ["GET", /^\/api\/slideshows$/, () => ({
-      slideshows: projects.list().map((summary) => ({ ...summary, editUrl: editUrl(baseUrl(), summary.id) })),
+    ["PATCH", /^\/api\/projects\/([^/]+)\/status$/, async (context) => {
+      const body = await context.json();
+      return { project: projects.setStatus(context.params[0], body.status) };
+    }],
+
+    ["GET", /^\/api\/slideshows$/, (context) => ({
+      slideshows: projects
+        .list({ status: context.query.get("status") ?? undefined })
+        .map((summary) => ({ ...summary, editUrl: editUrl(baseUrl(), summary.id) })),
     })],
 
     ["GET", /^\/api\/slideshows\/([^/]+)$/, (context) => {
       const project = projects.require(context.params[0]);
-      return { slideshow: toComposition(project), editUrl: editUrl(baseUrl(), project.id) };
+      return { slideshow: { ...toComposition(project), status: project.status }, editUrl: editUrl(baseUrl(), project.id) };
     }],
 
     ["POST", /^\/api\/slideshows$/, async (context) => {
@@ -64,6 +72,12 @@ export function createApi({ library, projects, events, baseUrl }) {
       const document = composeDocument({ ratio: body.ratio, slides, library });
       const project = projects.create({ name: body.name || "Agent slideshow", document });
       return { id: project.id, version: project.version, editUrl: editUrl(baseUrl(), project.id), slideCount: project.slides.length };
+    }],
+
+    ["PATCH", /^\/api\/slideshows\/([^/]+)\/status$/, async (context) => {
+      const body = await context.json();
+      const project = projects.setStatus(context.params[0], body.status);
+      return { id: project.id, status: project.status, editUrl: editUrl(baseUrl(), project.id) };
     }],
 
     ["PUT", /^\/api\/slideshows\/([^/]+)$/, async (context) => {

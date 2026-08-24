@@ -3,6 +3,26 @@ import { extensionForType, imageDimensions } from "./media.mjs";
 
 const KINDS = new Set(["background", "asset"]);
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const SORTS = new Set(["recent", "least-used", "most-used"]);
+
+// Cumulative, so a deleted slideshow does not reset an item's history.
+const STATS_JOIN = `
+  LEFT JOIN (
+    SELECT item_id,
+           SUM(placements)    AS times_used,
+           COUNT(*)           AS slideshow_count,
+           MIN(first_used_at) AS first_used_at,
+           MAX(last_used_at)  AS last_used_at
+    FROM item_use_history GROUP BY item_id
+  ) AS stats ON stats.item_id = item.id
+`;
+
+const ORDER_BY = {
+  "recent": "item.updated_at DESC",
+  // NULL means never used, which is exactly what a varying agent wants first.
+  "least-used": "COALESCE(stats.times_used, 0) ASC, COALESCE(stats.last_used_at, 0) ASC, item.updated_at DESC",
+  "most-used": "COALESCE(stats.times_used, 0) DESC, item.updated_at DESC",
+};
 
 export class HttpError extends Error {
   constructor(status, message, details = null) {
@@ -18,16 +38,21 @@ export class LibraryService {
     this.media = media;
   }
 
-  list({ kind = null, query = "", limit = 50, offset = 0 } = {}) {
+  list({ kind = null, query = "", limit = 50, offset = 0, sort = "recent" } = {}) {
     const size = clampInteger(limit, 1, 200, 50);
     const skip = clampInteger(offset, 0, 100000, 0);
     if (kind && !KINDS.has(kind)) throw new HttpError(400, `Unknown kind: ${kind}`);
+    const order = SORTS.has(sort) ? sort : "recent";
 
     const term = String(query || "").trim();
     if (!term) {
-      const rows = kind
-        ? this.db.prepare(`SELECT * FROM library_item WHERE kind = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?`).all(kind, size, skip)
-        : this.db.prepare(`SELECT * FROM library_item ORDER BY updated_at DESC LIMIT ? OFFSET ?`).all(size, skip);
+      const where = kind ? "WHERE item.kind = ?" : "";
+      const parameters = kind ? [kind, size, skip] : [size, skip];
+      const rows = this.db.prepare(`
+        SELECT item.*, stats.times_used, stats.slideshow_count, stats.first_used_at, stats.last_used_at
+        FROM library_item AS item ${STATS_JOIN} ${where}
+        ORDER BY ${ORDER_BY[order]} LIMIT ? OFFSET ?
+      `).all(...parameters);
       return { items: rows.map(toItem), total: this.count(kind) };
     }
 
@@ -42,12 +67,16 @@ export class LibraryService {
 
     const where = kind ? "AND item.kind = ?" : "";
     const parameters = kind ? [match, kind, size, skip] : [match, size, skip];
+    // Relevance wins by default; an explicit sort overrides it.
+    const ordering = order === "recent" ? "rank" : ORDER_BY[order];
     const rows = this.db.prepare(`
-      SELECT item.*, bm25(library_search) AS rank
+      SELECT item.*, bm25(library_search) AS rank,
+             stats.times_used, stats.slideshow_count, stats.first_used_at, stats.last_used_at
       FROM library_search
       JOIN library_item AS item ON item.rowid = library_search.rowid
+      ${STATS_JOIN}
       WHERE library_search MATCH ? ${where}
-      ORDER BY rank LIMIT ? OFFSET ?
+      ORDER BY ${ordering} LIMIT ? OFFSET ?
     `).all(...parameters);
     return { items: rows.map(toItem), total: rows.length };
   }
@@ -60,7 +89,10 @@ export class LibraryService {
   }
 
   get(id) {
-    const row = this.db.prepare("SELECT * FROM library_item WHERE id = ?").get(id);
+    const row = this.db.prepare(`
+      SELECT item.*, stats.times_used, stats.slideshow_count, stats.first_used_at, stats.last_used_at
+      FROM library_item AS item ${STATS_JOIN} WHERE item.id = ?
+    `).get(id);
     return row ? toItem(row) : null;
   }
 
@@ -159,6 +191,12 @@ function toItem(row) {
     height: row.height,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    stats: {
+      timesUsed: row.times_used || 0,
+      slideshowCount: row.slideshow_count || 0,
+      firstUsedAt: row.first_used_at || null,
+      lastUsedAt: row.last_used_at || null,
+    },
   };
 }
 

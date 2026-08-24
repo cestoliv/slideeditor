@@ -62,6 +62,33 @@ const MIGRATIONS = [
 
   CREATE INDEX project_item_use_item ON project_item_use (item_id);
   `,
+  `
+  ALTER TABLE project ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','ready','published'));
+
+  CREATE INDEX project_status ON project (status, updated_at DESC);
+
+  -- Cumulative, unlike project_item_use. project_id carries no foreign key on
+  -- purpose: the history outlives the slideshow, so deleting old drafts cannot
+  -- make a heavily used item look untouched.
+  CREATE TABLE item_use_history (
+    item_id       TEXT NOT NULL REFERENCES library_item(id) ON DELETE CASCADE,
+    project_id    TEXT NOT NULL,
+    placements    INTEGER NOT NULL,
+    first_used_at INTEGER NOT NULL,
+    last_used_at  INTEGER NOT NULL,
+    PRIMARY KEY (item_id, project_id)
+  ) STRICT;
+
+  CREATE INDEX item_use_history_item ON item_use_history (item_id);
+
+  -- Seed from what is already in use, so an existing library does not read as
+  -- never used the moment stats appear.
+  INSERT INTO item_use_history (item_id, project_id, placements, first_used_at, last_used_at)
+  SELECT use.item_id, use.project_id, 1, project.updated_at, project.updated_at
+  FROM project_item_use AS use
+  JOIN project ON project.id = use.project_id;
+  `,
 ];
 
 export function openDb(databasePath) {

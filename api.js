@@ -67,10 +67,11 @@
   window.slideApi = {
     health: () => call("/api/health"),
 
-    listLibrary: ({ kind = null, query = "", limit = 200 } = {}) => {
+    listLibrary: ({ kind = null, query = "", limit = 200, sort = null } = {}) => {
       const search = new URLSearchParams();
       if (kind) search.set("kind", kind);
       if (query) search.set("q", query);
+      if (sort) search.set("sort", sort);
       search.set("limit", String(limit));
       return call(`/api/library?${search}`);
     },
@@ -87,7 +88,10 @@
     deleteLibraryItem: (id, { force = false } = {}) =>
       call(`/api/library/${encodeURIComponent(id)}${force ? "?force=1" : ""}`, { method: "DELETE" }),
 
-    listProjects: () => call("/api/projects").then((r) => r.projects),
+    listProjects: ({ status = null } = {}) =>
+      call(`/api/projects${status ? `?status=${encodeURIComponent(status)}` : ""}`).then((r) => r.projects),
+    setProjectStatus: (id, status) =>
+      call(`/api/projects/${encodeURIComponent(id)}/status`, { method: "PATCH", body: { status } }).then((r) => r.project),
     getProject: (id) => call(`/api/projects/${encodeURIComponent(id)}`).then((r) => r.project),
     createProject: (name, document) => call("/api/projects", { method: "POST", body: { name, document } }).then((r) => r.project),
     saveProject: (id, { name, version, document }) =>
