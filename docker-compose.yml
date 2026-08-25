@@ -1,7 +1,13 @@
 services:
   slide-studio:
-    build: .
-    image: slide-studio:latest
+    # Built and published by CI on every merge to main. There is deliberately
+    # no `build:` key: the server holds this file and nothing else, so it has
+    # no build context, and Compose would try to build rather than pull.
+    #
+    # To roll back, replace `latest` with an immutable `sha-<short>` tag.
+    image: ghcr.io/cestoliv/slideeditor:latest
+    # `docker compose up -d` alone would keep running whatever it pulled first.
+    pull_policy: always
     restart: unless-stopped
     env_file: .env
     environment:
