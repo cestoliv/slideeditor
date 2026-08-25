@@ -1,15 +1,19 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { isAllowedHost, isAuthorized } from "../auth.js";
+import { isAllowedHost } from "../auth/host.js";
+import { SESSION_COOKIE } from "../auth/cookie.js";
+import { bearerFrom, guardFor, isOriginAllowed } from "../auth/identity.js";
+import type { Guard, Identity } from "../auth/identity.js";
 
 export interface SecurityOptions {
   allowedHosts: readonly string[];
-  token: string;
 }
 
-/** The two guards server/main.mjs:75-84 ran before anything else touched a request. */
+const CHALLENGE = 'Bearer realm="slide-studio"';
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 export function registerSecurity(
   app: FastifyInstance,
-  { allowedHosts, token }: SecurityOptions,
+  { allowedHosts }: SecurityOptions,
 ): void {
   app.addHook("onRequest", async (request, reply) => {
     if (isAllowedHost(request.headers.host, allowedHosts)) return;
@@ -17,38 +21,57 @@ export function registerSecurity(
   });
 
   app.addHook("onRequest", async (request, reply) => {
-    if (!needsToken(request)) return;
-    const authorized = isAuthorized(
-      {
-        remoteAddress: request.socket.remoteAddress,
-        authorization: request.headers.authorization,
-        url: request.url,
-      },
-      token,
-    );
-    if (authorized) return;
-    return reply
-      .code(401)
-      .header("WWW-Authenticate", "Bearer")
-      .send({ error: "Send Authorization: Bearer <token>." });
+    request.identity = resolve(app, request);
+    const guard = guardOf(request);
+    if (guard === "none") return;
+    if (app.authMode === "open") return;
+
+    const identity = request.identity;
+    if (identity === null) {
+      return reply
+        .code(401)
+        .header("WWW-Authenticate", CHALLENGE)
+        .send({ error: "Sign in, or send Authorization: Bearer <token>." });
+    }
+    // A valid credential of the wrong kind is a 403: retrying with the same
+    // credential can never succeed, so a challenge would be a lie.
+    if (guard !== "any" && guard !== identity.kind) {
+      return reply
+        .code(403)
+        .send({ error: `This endpoint needs a ${guard} credential.` });
+    }
+    if (
+      identity.kind === "session" &&
+      !SAFE_METHODS.has(request.method) &&
+      !isOriginAllowed(request.headers.origin, request.headers.host)
+    ) {
+      return reply.code(403).send({ error: "This request came from another origin." });
+    }
   });
 }
 
-/**
- * The agent surface. The editor's own files and /media stay open to the browser.
- *
- * Fastify routes the decoded path, so `/%61pi/projects` reaches the projects
- * route while the raw target says nothing about `/api`. Reading only the raw
- * target let that request past this guard. The route the request actually
- * matched is what decides, and the raw target still counts too, so an `/api`
- * path that matches no route stays a 401 rather than becoming a 404 that tells
- * an unauthenticated caller which routes exist.
- */
-function needsToken(request: FastifyRequest): boolean {
-  return isGuarded(request.routeOptions.url) || isGuarded(request.url);
+/** A bearer beats a cookie, so an agent sending both is treated as an agent. */
+function resolve(app: FastifyInstance, request: FastifyRequest): Identity | null {
+  const secret = bearerFrom(request.headers.authorization);
+  if (secret) {
+    const token = app.tokens.resolve(secret);
+    if (token) return { kind: "token", id: token.id };
+  }
+  const cookie = request.cookies[SESSION_COOKIE];
+  if (cookie) {
+    const session = app.sessions.resolve(cookie);
+    if (session) return { kind: "session", id: session.id };
+  }
+  return app.authMode === "open" ? { kind: "open" } : null;
 }
 
-function isGuarded(target: string | undefined): boolean {
-  const path = (target ?? "").split("?")[0] ?? "";
-  return path.startsWith("/api/") || path === "/mcp";
+/**
+ * Fastify routes the decoded path, so `/%61pi/projects` reaches the projects
+ * route while the raw target says nothing about `/api`. Both are consulted, and
+ * the stricter answer wins, so an encoded path cannot pick a weaker guard.
+ */
+function guardOf(request: FastifyRequest): Guard {
+  const byRoute = guardFor(request.routeOptions.url ?? "");
+  const byTarget = guardFor(request.url);
+  return byRoute === "none" ? byTarget : byRoute;
 }

@@ -26,71 +26,11 @@ import type { SaveFn } from "../features/editor/persistence.js";
  */
 
 /**
- * The sessionStorage key api.js used, so a session opened before the rewrite
- * keeps its token. This names where the token is kept, not the token itself.
+ * Fires whenever any request comes back 401. session.ts listens, so a cookie
+ * that expired or was revoked mid-session sends the whole app back to the
+ * login screen no matter which request was the one that discovered it.
  */
-const STORAGE_KEY = "slide-studio-access";
-const TOKEN_QUERY_KEY = "token";
-
-/**
- * The token this tab already holds. Exported because the module reads it once
- * at load, which no test can reach: a reload keeping its token has to be
- * provable through adoptTokenFromUrl rather than taken on trust.
- */
-export function storedToken(): string | null {
-  try {
-    return sessionStorage.getItem(STORAGE_KEY);
-  } catch {
-    // A private window can refuse storage. An in-memory token still works.
-    return null;
-  }
-}
-
-let accessToken: string | null = storedToken();
-
-export function getAccessToken(): string | null {
-  return accessToken;
-}
-
-export function setAccessToken(token: string | null): void {
-  accessToken = token;
-  try {
-    if (token === null) sessionStorage.removeItem(STORAGE_KEY);
-    else sessionStorage.setItem(STORAGE_KEY, token);
-  } catch {
-    // As above: storage is a convenience across reloads, never the source.
-  }
-}
-
-/**
- * Takes `?token=` off the address bar and keeps it for the session.
- *
- * The README opens the editor from another machine as
- * `http://<ip>:4173/?token=<token>`. A token left in the URL survives in the
- * history, in a bookmark, in a shared screenshot, and in the Referer of any
- * link the page follows, so it is read once and the address is rewritten.
- * Only the token goes: api.js:16 replaced the whole search string and dropped
- * every other parameter the opener had put there.
- */
-export function adoptTokenFromUrl(): string | null {
-  const url = new URL(window.location.href);
-  const presented = url.searchParams.get(TOKEN_QUERY_KEY);
-  if (!presented) {
-    // Nothing in the URL, so fall back to what this tab already holds. A
-    // reload inside the tab must not send the reader back for a second
-    // `?token=`, and the module-load read alone cannot be tested.
-    accessToken ??= storedToken();
-    return accessToken;
-  }
-  setAccessToken(presented);
-  url.searchParams.delete(TOKEN_QUERY_KEY);
-  window.history.replaceState(
-    window.history.state,
-    "",
-    `${url.pathname}${url.search}${url.hash}`,
-  );
-  return presented;
-}
+export const authEvents = new EventTarget();
 
 /*
  * A slideshow that names a library item. Declared in @shared/schema, which the
@@ -122,7 +62,24 @@ const libraryRemoveSchema = z.object({
 const projectListSchema = z.object({ projects: z.array(projectSummarySchema) });
 const projectRemoveSchema = z.object({ removed: z.string() });
 
+const sessionSchema = z.object({
+  authenticated: z.boolean(),
+  mode: z.enum(["open", "required"]),
+});
+const tokenSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  prefix: z.string(),
+  createdAt: z.number(),
+  lastUsedAt: z.number().nullable(),
+  expiresAt: z.number().nullable(),
+});
+const tokenListSchema = z.object({ tokens: z.array(tokenSchema) });
+const tokenCreateSchema = z.object({ token: tokenSchema, secret: z.string() });
+
 export type Health = z.infer<typeof healthSchema>;
+export type SessionState = z.infer<typeof sessionSchema>;
+export type AccessToken = z.infer<typeof tokenSchema>;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -187,22 +144,25 @@ type CallOptions = {
 
 async function call(path: string, options: CallOptions = {}): Promise<unknown> {
   if (!path.startsWith("/")) {
-    // The bearer rides every request, so a path that could resolve against
-    // another origin never gets as far as fetch.
+    // The session rides only requests this origin makes, so a path that could
+    // resolve against another origin never gets as far as fetch.
     throw new TypeError(`An API path has to be same-origin and absolute: ${path}`);
   }
   const hasBody = options.body !== undefined;
   const headers = new Headers();
   if (hasBody) headers.set("Content-Type", "application/json");
-  if (accessToken !== null) headers.set("Authorization", `Bearer ${accessToken}`);
 
   const response = await fetch(path, {
     method: options.method ?? "GET",
     headers,
+    // The session rides in a HttpOnly cookie, which script cannot read and
+    // therefore cannot leak. Nothing here holds a credential any more.
+    credentials: "same-origin",
     ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
   });
   const payload = readPayload(await response.text());
   if (!response.ok) {
+    if (response.status === 401) authEvents.dispatchEvent(new Event("unauthorized"));
     throw new ApiError(response.status, errorMessage(payload, response.status), payload);
   }
   return payload;
@@ -390,6 +350,36 @@ export const api = {
         body: { status },
       }),
     );
+  },
+
+  async session(): Promise<SessionState> {
+    return sessionSchema.parse(await call("/api/auth/session"));
+  },
+
+  async login(password: string): Promise<void> {
+    await call("/api/auth/login", { method: "POST", body: { password } });
+  },
+
+  async logout(): Promise<void> {
+    await call("/api/auth/logout", { method: "POST" });
+  },
+
+  async changePassword(current: string, next: string): Promise<void> {
+    await call("/api/auth/password", { method: "POST", body: { current, next } });
+  },
+
+  async listTokens(): Promise<{ tokens: AccessToken[] }> {
+    return tokenListSchema.parse(await call("/api/auth/tokens"));
+  },
+
+  async createToken(name: string): Promise<{ token: AccessToken; secret: string }> {
+    return tokenCreateSchema.parse(
+      await call("/api/auth/tokens", { method: "POST", body: { name } }),
+    );
+  },
+
+  async deleteToken(id: string): Promise<void> {
+    await call(`/api/auth/tokens/${segment(id)}`, { method: "DELETE" });
   },
 };
 

@@ -1,5 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
-import { setAccessToken } from "./api.js";
+import { expect, it, vi } from "vitest";
 import { subscribeToServerEvents } from "./events.js";
 import type { EventStream, ServerEvent, StreamStatus } from "./events.js";
 
@@ -80,20 +79,9 @@ function escapedErrors(body: () => void): string[] {
   return escaped;
 }
 
-afterEach(() => {
-  setAccessToken(null);
-});
-
-it("opens the stream with no token when it has none", () => {
+it("opens the stream at the events path", () => {
   const { stream, stop } = openStream(() => {});
   expect(stream.url).toBe("/api/events");
-  stop();
-});
-
-it("passes the token in the query, because EventSource cannot set a header", () => {
-  setAccessToken("lan secret/1");
-  const { stream, stop } = openStream(() => {});
-  expect(stream.url).toBe("/api/events?token=lan%20secret%2F1");
   stop();
 });
 

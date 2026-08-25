@@ -29,7 +29,7 @@ function tableNames(db: DatabaseSync): string[] {
 
 it("applies every migration on a fresh database", () => {
   const db = openDb(join(dir, "test.db"));
-  expect(userVersion(db)).toBe(3);
+  expect(userVersion(db)).toBe(5);
   const tables = tableNames(db);
   expect(tables).toContain("item_use_history");
   expect(tables).toContain("library_item");
@@ -41,7 +41,7 @@ it("applies every migration on a fresh database", () => {
 it("is idempotent when reopened", () => {
   openDb(join(dir, "test.db")).close();
   const db = openDb(join(dir, "test.db"));
-  expect(userVersion(db)).toBe(3);
+  expect(userVersion(db)).toBe(5);
   db.close();
 });
 
@@ -97,7 +97,7 @@ it("seeds usage history from existing project use", () => {
 
   const db = openDb(file);
 
-  expect(userVersion(db), "the upgrade runs on open").toBe(3);
+  expect(userVersion(db), "the upgrade runs on open").toBe(5);
   const history = db.prepare("SELECT * FROM item_use_history").all();
   expect(history.length).toBe(1);
   const row = history[0] ?? {};
@@ -155,7 +155,7 @@ it("adds the caption columns to a database that already holds slideshows", () =>
 
   const db = openDb(file);
 
-  expect(userVersion(db), "the upgrade runs on open").toBe(3);
+  expect(userVersion(db), "the upgrade runs on open").toBe(5);
   const row = db.prepare("SELECT * FROM project WHERE id = ?").get("project-1") ?? {};
   expect(Object.keys(row), "the two caption columns are there to be written").toContain(
     "description",

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,7 +80,7 @@ export interface TestApp {
 export function createTestApp(): TestApp {
   const directory = mkdtempSync(join(tmpdir(), "slide-studio-test-"));
   const paths = dataPaths(directory);
-  const db = openDb(paths.database);
+  const db = openDb(paths.database, paths.token);
   const media = new MediaStore(paths.media);
   const events = new EventBus();
   const library = new LibraryService(db, media);
@@ -102,13 +103,14 @@ export function createTestApp(): TestApp {
  * nothing else in its afterEach.
  */
 export async function makeTempApp(
-  options: { allowedHosts?: string[] } = {},
+  options: { allowedHosts?: string[]; password?: string } = {},
 ): Promise<FastifyInstance> {
   const directory = mkdtempSync(join(tmpdir(), "slide-studio-app-"));
   const app = await buildApp({
     dataDir: directory,
     baseUrl: () => "http://127.0.0.1:4173",
     ...(options.allowedHosts ? { allowedHosts: options.allowedHosts } : {}),
+    ...(options.password ? { password: options.password } : {}),
   });
   app.addHook("onClose", () => {
     rmSync(directory, { recursive: true, force: true });
@@ -160,3 +162,12 @@ export async function catchError(fn: () => unknown): Promise<unknown> {
   }
   return undefined;
 }
+
+/**
+ * The password the auth tests sign in with. Generated per run rather than
+ * written into the file: no test should depend on one particular string, and a
+ * fixed literal in a constant named PASSWORD is indistinguishable from a real
+ * credential to anything reading the diff. Comfortably over the 12 character
+ * minimum the password routes enforce.
+ */
+export const fixturePassword = `fixture-${randomBytes(12).toString("hex")}`;

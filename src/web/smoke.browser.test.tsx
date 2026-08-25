@@ -22,9 +22,9 @@ vi.mock("./app/api.js", async (importOriginal) => ({
     createProject: () => Promise.reject(new Error("not part of this test")),
     deleteProject: (id: string) => Promise.resolve({ removed: id }),
     listLibrary: () => Promise.resolve({ items: [], total: 0 }),
+    session: () => Promise.resolve({ authenticated: true, mode: "open" }),
   },
   isUnauthorized: () => false,
-  getAccessToken: () => null,
 }));
 
 vi.mock("./app/events.js", () => ({

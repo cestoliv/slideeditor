@@ -65,9 +65,9 @@ vi.mock("./api.js", async (importOriginal) => ({
         },
       }),
     listLibrary: () => Promise.resolve({ items: [], total: 0 }),
+    session: () => Promise.resolve({ authenticated: true, mode: "open" }),
   },
   isUnauthorized: () => false,
-  getAccessToken: () => null,
 }));
 
 /*

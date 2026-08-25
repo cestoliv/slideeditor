@@ -2,6 +2,8 @@ import { BrowserRouter } from "react-router";
 import { ToastProvider, Tooltip } from "./design/index.js";
 import { ProjectsProvider } from "./app/projects.js";
 import { AppRoutes } from "./app/router.js";
+import { useSession } from "./app/session.js";
+import { LoginScreen } from "./features/auth/LoginScreen.js";
 
 /*
  * The app root. The slideshow list and its live stream sit above the router, so
@@ -12,11 +14,29 @@ export function App() {
     <BrowserRouter>
       <Tooltip.Provider>
         <ToastProvider>
-          <ProjectsProvider>
-            <AppRoutes />
-          </ProjectsProvider>
+          <Gate />
         </ToastProvider>
       </Tooltip.Provider>
     </BrowserRouter>
+  );
+}
+
+/**
+ * Nothing renders until the session probe answers. Showing the editor and then
+ * replacing it with a login form reads as a crash, and ProjectsProvider would
+ * have fired a request that 401s on the way, so it sits inside the gate rather
+ * than above it.
+ */
+function Gate() {
+  const { state, refresh } = useSession();
+  if (state.status === "loading") return null;
+  if (state.status === "unreachable") {
+    return <p role="alert">Slide Studio is not answering.</p>;
+  }
+  if (!state.session.authenticated) return <LoginScreen onSignedIn={refresh} />;
+  return (
+    <ProjectsProvider>
+      <AppRoutes />
+    </ProjectsProvider>
   );
 }

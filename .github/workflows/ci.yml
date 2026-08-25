@@ -39,3 +39,42 @@ jobs:
       - run: npm test
 
       - run: npm run test:coverage
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t slide-studio:ci .
+      # Asserts a failure: the container must refuse to run unconfigured. A
+      # container that starts here would be an unauthenticated editor on a
+      # published port.
+      #
+      # `timeout` is what makes the assertion clean. Without it a broken
+      # interlock leaves the server running in the foreground, so this step
+      # hangs until the job's own timeout rather than reporting why it failed.
+      - name: Refuses to start with no password
+        run: |
+          docker run -d --name ss-nopass slide-studio:ci
+          sleep 10
+          running=$(docker inspect -f '{{.State.Running}}' ss-nopass)
+          code=$(docker inspect -f '{{.State.ExitCode}}' ss-nopass)
+          docker logs ss-nopass
+          docker rm -f ss-nopass >/dev/null
+          if [ "$running" = "true" ]; then
+            echo "FAIL: kept running with no password instead of refusing" && exit 1
+          fi
+          if [ "$code" -eq 0 ]; then
+            echo "FAIL: exited cleanly instead of refusing" && exit 1
+          fi
+          echo "Refused to start as expected (exit $code)."
+      - name: Serves health and guards the API
+        run: |
+          # Generated per run rather than written into the file. Nothing here
+          # depends on a particular value, and a fixed one in the repository is
+          # indistinguishable from a real credential.
+          pw="ci-$(openssl rand -hex 12)"
+          docker run -d --name ss -p 4173:4173 -e SLIDE_STUDIO_PASSWORD="$pw" slide-studio:ci
+          for i in $(seq 1 30); do curl -sf localhost:4173/api/health && break; sleep 1; done
+          curl -sf localhost:4173/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:4173/api/projects)" = "401"
+          docker rm -f ss

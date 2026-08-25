@@ -1,13 +1,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import fastifyCookie from "@fastify/cookie";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { ComposeError } from "../shared/compose/index.js";
+import { openData } from "./db/open.js";
 import { HttpError } from "./errors.js";
 import { registerMcp } from "./mcp/server.js";
 import { registerClient } from "./plugins/client.js";
 import { registerSecurity } from "./plugins/security.js";
 import { registerServices } from "./plugins/services.js";
+import { authRoutes } from "./routes/auth.js";
 import { eventRoutes } from "./routes/events.js";
 import { healthRoutes } from "./routes/health.js";
 import { libraryRoutes } from "./routes/library.js";
@@ -22,6 +25,9 @@ export type AppOptions = {
   allowedHosts?: string[];
   baseUrl?: () => string;
   logger?: boolean;
+  password?: string;
+  trustProxy?: boolean;
+  bindHost?: string;
 };
 
 // Matches MAX_BODY_BYTES in server/api.mjs:4. A 25MB image arrives base64, so
@@ -43,20 +49,42 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     process.env["SLIDE_STUDIO_DATA"] ||
     join(homedir(), ".slide-studio");
   const baseUrl = options.baseUrl ?? (() => DEFAULT_BASE_URL);
+  // A container has no command line to put a secret on (it would leak into the
+  // process list), so the environment is how it supplies this. The option
+  // still wins, the same as dataDir above, so a test can set one without
+  // touching process.env.
+  const password = options.password || process.env["SLIDE_STUDIO_PASSWORD"] || undefined;
 
-  const app = Fastify({ logger: options.logger ?? false, bodyLimit: MAX_BODY_BYTES });
+  const app = Fastify({
+    logger: options.logger ?? false,
+    bodyLimit: MAX_BODY_BYTES,
+    // Behind Caddy the scheme and the client address arrive in headers. Off by
+    // default, so a directly exposed server never believes a forged one.
+    trustProxy: options.trustProxy ?? false,
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   registerBodyParser(app);
   registerErrorHandler(app);
   registerJsonHeaders(app);
 
-  registerServices(app, { dataDir, baseUrl });
+  // Migrated (and backed up, for both the database and the layout) before any
+  // route or service can see the data directory.
+  const { db, paths } = await openData(dataDir);
+  registerServices(app, {
+    db,
+    paths,
+    baseUrl,
+    ...(password ? { password } : {}),
+    ...(options.bindHost ? { bindHost: options.bindHost } : {}),
+  });
+  // Registered before registerSecurity, whose guard reads request.cookies.
+  await app.register(fastifyCookie);
   registerSecurity(app, {
     allowedHosts: options.allowedHosts ?? DEFAULT_ALLOWED_HOSTS,
-    token: app.token,
   });
 
+  authRoutes(app);
   healthRoutes(app);
   libraryRoutes(app);
   projectRoutes(app);

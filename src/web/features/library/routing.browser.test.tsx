@@ -68,9 +68,9 @@ vi.mock("../../app/api.js", async (importOriginal) => ({
         ],
         total: 2,
       }),
+    session: () => Promise.resolve({ authenticated: true, mode: "open" }),
   },
   isUnauthorized: () => false,
-  getAccessToken: () => null,
 }));
 
 const noStream: Subscribe = () => () => {};

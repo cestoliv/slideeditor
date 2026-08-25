@@ -277,7 +277,7 @@ export function LibraryAdmin({
           <div className={styles.problem} role="alert">
             <p className={styles.problemText}>
               {isUnauthorized(error)
-                ? "This browser is not authorised. Open the editor again with the token appended to the address, as ?token=<token>. The server prints the token on start and stores it at ~/.slide-studio/token."
+                ? "This browser is not signed in."
                 : "Can’t reach the Slide Studio server. Start it with npm start."}
             </p>
             {/*

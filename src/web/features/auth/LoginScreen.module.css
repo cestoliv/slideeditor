@@ -1,0 +1,56 @@
+/*
+ * The one screen that has to work with nothing else on the page: no header,
+ * no library, no slideshow. Centered on the paper the way a system dialog
+ * would be, rather than dressed up as a full page.
+ */
+
+.screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: var(--color-paper);
+}
+
+.card {
+  width: min(360px, 100%);
+}
+
+.mark {
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-warm));
+}
+
+.title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.intro {
+  margin: 0 0 var(--space-5);
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+}
+
+.submit {
+  width: 100%;
+}

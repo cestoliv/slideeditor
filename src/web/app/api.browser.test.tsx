@@ -1,14 +1,6 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Project } from "@shared/schema/index.js";
-import {
-  ApiError,
-  adoptTokenFromUrl,
-  api,
-  getAccessToken,
-  persistProject,
-  setAccessToken,
-  storedToken,
-} from "./api.js";
+import { ApiError, api, persistProject } from "./api.js";
 
 const realFetch = globalThis.fetch;
 const startingUrl = window.location.href;
@@ -90,13 +82,8 @@ function liveProject(): Project {
   };
 }
 
-beforeEach(() => {
-  setAccessToken(null);
-});
-
 afterEach(() => {
   globalThis.fetch = realFetch;
-  setAccessToken(null);
   window.history.replaceState({}, "", startingUrl);
 });
 
@@ -120,68 +107,105 @@ it("falls back to the status when the body names no error", async () => {
   expect((error as ApiError).message).toBe("Request failed with 500");
 });
 
-it("sends no Authorization header before it has seen a token", async () => {
+it("sends the session cookie, and no other, on every request", async () => {
   const calls = stubFetch(() => json({ ok: true, name: "slide-studio" }));
   await api.health();
+  expect(calls[0]?.init?.credentials).toBe("same-origin");
   expect(headerOf(calls[0], "Authorization")).toBeNull();
 });
 
-it("adds the bearer token once it has seen one in the URL", async () => {
-  window.history.replaceState({}, "", "/?token=lan-secret");
-  adoptTokenFromUrl();
-  const calls = stubFetch(() => json({ ok: true, name: "slide-studio" }));
-  await api.health();
-  expect(headerOf(calls[0], "Authorization")).toBe("Bearer lan-secret");
-});
-
-it("takes the token out of the address bar and leaves the rest of the query", async () => {
-  window.history.replaceState({}, "", "/?token=lan-secret&keep=me");
-  adoptTokenFromUrl();
-  expect(window.location.search).toBe("?keep=me");
-  expect(getAccessToken()).toBe("lan-secret");
-});
-
-it("keeps the token for the next page load", async () => {
-  window.history.replaceState({}, "", "/?token=lan-secret");
-  adoptTokenFromUrl();
-  expect(sessionStorage.getItem("slide-studio-access")).toBe("lan-secret");
-});
-
-it("finds the token a previous page load left behind", async () => {
-  // The reload case: this tab kept the token in sessionStorage, and the
-  // address it comes back to no longer carries `?token=`. Nothing but storage
-  // knows the token at this point, so the bearer can only come from there.
-  setAccessToken(null);
-  sessionStorage.setItem("slide-studio-access", "survived-a-reload");
-  window.history.replaceState({}, "", "/projects/p1");
-  adoptTokenFromUrl();
-  expect(getAccessToken()).toBe("survived-a-reload");
-
-  const calls = stubFetch(() => json({ ok: true, name: "slide-studio" }));
-  await api.health();
-  expect(headerOf(calls[0], "Authorization")).toBe("Bearer survived-a-reload");
-});
-
-it("reads nothing back when storage never held a token", async () => {
-  setAccessToken(null);
-  expect(storedToken()).toBeNull();
-});
-
-it("leaves the token alone when the URL carries none", async () => {
-  setAccessToken("already-known");
-  window.history.replaceState({}, "", "/projects/p1");
-  adoptTokenFromUrl();
-  expect(getAccessToken()).toBe("already-known");
-});
-
-it("keeps a hostile id from carrying the token to another origin", async () => {
-  setAccessToken("lan-secret");
+it("keeps a hostile id from resolving against another origin", async () => {
   const calls = stubFetch(() => json({ project: storedProject() }));
-  // The bearer rides every request, so no id may build a cross-origin one.
+  // credentials: "same-origin" already keeps the cookie off a cross-origin
+  // request, but a path that could still be *resolved* against one is refused
+  // outright rather than trusted to fail safely at the network layer.
   await api.getProject("../../https://evil.example/steal");
   const asked = new URL(calls[0]?.url ?? "", window.location.origin);
   expect(asked.origin).toBe(window.location.origin);
   expect(asked.pathname.startsWith("/api/projects/")).toBe(true);
+});
+
+it("reports whether this browser is signed in", async () => {
+  stubFetch(() => json({ authenticated: true, mode: "required" }));
+  await expect(api.session()).resolves.toEqual({ authenticated: true, mode: "required" });
+});
+
+it("posts a login and expects nothing back but the cookie", async () => {
+  const calls = stubFetch(() => new Response(null, { status: 204 }));
+  await api.login("hunter2hunter2");
+  expect(calls[0]?.url).toBe("/api/auth/login");
+  expect(calls[0]?.init?.method).toBe("POST");
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    password: "hunter2hunter2",
+  });
+});
+
+it("throws the server's refusal on a wrong password", async () => {
+  stubFetch(() => json({ error: "That password is not right." }, 401));
+  await expect(api.login("wrong")).rejects.toThrow("That password is not right.");
+});
+
+it("posts a logout", async () => {
+  const calls = stubFetch(() => new Response(null, { status: 204 }));
+  await api.logout();
+  expect(calls[0]?.url).toBe("/api/auth/logout");
+  expect(calls[0]?.init?.method).toBe("POST");
+});
+
+it("changes the password", async () => {
+  const calls = stubFetch(() => new Response(null, { status: 204 }));
+  await api.changePassword("old-password", "a-new-password-1");
+  expect(calls[0]?.url).toBe("/api/auth/password");
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    current: "old-password",
+    next: "a-new-password-1",
+  });
+});
+
+it("lists tokens, without ever expecting a secret on them", async () => {
+  stubFetch(() =>
+    json({
+      tokens: [
+        {
+          id: "t1",
+          name: "laptop",
+          prefix: "sst_abcd",
+          createdAt: 1,
+          lastUsedAt: null,
+          expiresAt: null,
+        },
+      ],
+    }),
+  );
+  const { tokens } = await api.listTokens();
+  expect(tokens[0]?.name).toBe("laptop");
+});
+
+it("creates a token and hands back the one-time secret", async () => {
+  const calls = stubFetch(() =>
+    json({
+      token: {
+        id: "t1",
+        name: "laptop",
+        prefix: "sst_abcd",
+        createdAt: 1,
+        lastUsedAt: null,
+        expiresAt: null,
+      },
+      secret: "sst_thesecretvalue",
+    }),
+  );
+  const { secret } = await api.createToken("laptop");
+  expect(calls[0]?.url).toBe("/api/auth/tokens");
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ name: "laptop" });
+  expect(secret).toBe("sst_thesecretvalue");
+});
+
+it("deletes a token by its escaped id", async () => {
+  const calls = stubFetch(() => json({ removed: "t1" }));
+  await api.deleteToken("t1");
+  expect(calls[0]?.url).toBe("/api/auth/tokens/t1");
+  expect(calls[0]?.init?.method).toBe("DELETE");
 });
 
 it("parses a library list through the shared schema", async () => {

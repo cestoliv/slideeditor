@@ -42,6 +42,34 @@ const chromium = () => ({
   screenshotFailures: false,
 });
 
+/*
+ * Everything the browser projects must have pre-bundled before the first test
+ * runs, rather than whenever Vite happens to discover it.
+ *
+ * Discovering a dependency mid-run triggers a re-optimisation, which reloads
+ * the page and leaves two copies of React alive: the one the reloaded module
+ * graph holds and the one the already-running renderer holds. React reads its
+ * dispatcher off the copy that has none, so every hook throws
+ * `Cannot read properties of null (reading 'useContext')` from whichever
+ * component calls one first.
+ *
+ * This only bites on a cold cache, so a warm local `node_modules/.vite` hides
+ * it and CI fails on every clean checkout. Listing them makes the bundling
+ * happen up front on both.
+ */
+const browserDeps = {
+  include: [
+    "react",
+    "react/jsx-dev-runtime",
+    "react-dom",
+    "react-dom/client",
+    "react-router",
+    "vitest-browser-react",
+    "radix-ui",
+    "zod",
+  ],
+};
+
 export default defineConfig({
   test: {
     coverage: {
@@ -92,6 +120,7 @@ export default defineConfig({
       {
         plugins: [react()],
         resolve: { alias: webAlias },
+        optimizeDeps: browserDeps,
         test: {
           name: "web",
           include: ["src/web/**/*.browser.test.tsx"],
@@ -100,6 +129,7 @@ export default defineConfig({
       },
       {
         resolve: { alias: webAlias },
+        optimizeDeps: browserDeps,
         server: { proxy: { "/api": e2eTarget, "/media": e2eTarget, "/mcp": e2eTarget } },
         test: {
           name: "e2e",

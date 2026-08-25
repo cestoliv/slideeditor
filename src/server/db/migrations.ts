@@ -107,4 +107,50 @@ export const MIGRATIONS: string[] = [
   -- of the field is to be copied out in one piece.
   ALTER TABLE project ADD COLUMN hashtags TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- Accounts. This server had none until now: it trusted the loopback address
+  -- and a shared token file, which inverts the moment it sits behind a proxy
+  -- where no request arrives from loopback.
+
+  -- One row, always. One person owns this server.
+  CREATE TABLE auth_credential (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    password_hash TEXT NOT NULL,
+    updated_at    INTEGER NOT NULL
+  ) STRICT;
+
+  -- \`id\` holds a SHA-256 of the cookie value rather than the value, so reading
+  -- this table grants no session.
+  CREATE TABLE auth_session (
+    id           TEXT PRIMARY KEY,
+    created_at   INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    user_agent   TEXT NOT NULL DEFAULT '',
+    ip           TEXT NOT NULL DEFAULT ''
+  ) STRICT;
+
+  CREATE INDEX auth_session_expires ON auth_session (expires_at);
+
+  -- \`hash\` holds a SHA-256 of the secret, for the same reason. \`prefix\` names a
+  -- token in a list the person can no longer read the secret out of.
+  CREATE TABLE auth_token (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    hash         TEXT NOT NULL UNIQUE,
+    prefix       TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    last_used_at INTEGER,
+    expires_at   INTEGER
+  ) STRICT;
+  `,
+  `
+  -- The data directory has a layout, and until now no version. A release that
+  -- reorganises media/ would otherwise have to guess what it is looking at.
+  -- Highest applied filesystem migration, one row per version.
+  CREATE TABLE fs_migration (
+    version    INTEGER PRIMARY KEY,
+    applied_at INTEGER NOT NULL
+  ) STRICT;
+  `,
 ];

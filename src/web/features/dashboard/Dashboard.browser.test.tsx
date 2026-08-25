@@ -307,30 +307,18 @@ it("keeps the focus ring out of a clipping ancestor", async () => {
   }
 });
 
-it("says the browser is unauthorised rather than blaming the server", async () => {
+it("says the browser is not signed in rather than blaming the server", async () => {
   const screen = await mount({
-    listProjects: () =>
-      Promise.reject(new ApiError(401, "Send Authorization: Bearer <token>.", {})),
+    listProjects: () => Promise.reject(new ApiError(401, "Session expired.", {})),
     createProject: () => Promise.resolve({ project: project("p-new") }),
     deleteProject: (id: string) => Promise.resolve({ removed: id }),
   });
   await expect
-    .element(screen.getByText("This browser is not authorised", { exact: false }))
+    .element(screen.getByText("This browser is not signed in", { exact: false }))
     .toBeVisible();
   await expect
     .element(screen.getByText("Start it with npm start", { exact: false }))
     .not.toBeInTheDocument();
-  // The recovery has to name what the reader can actually do. bannerLines
-  // (src/server/cli.ts:66-78) prints the base URL and the token on two separate
-  // lines, so no printed address carries the token and telling them to find one
-  // sends them hunting for something that does not exist. README:229-230 has
-  // the real instruction: append it yourself.
-  await expect
-    .element(screen.getByText("?token=<token>", { exact: false }))
-    .toBeVisible();
-  await expect
-    .element(screen.getByText("~/.slide-studio/token", { exact: false }))
-    .toBeVisible();
 });
 
 it("keeps the slideshows on screen when a later refresh fails", async () => {
