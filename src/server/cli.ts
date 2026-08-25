@@ -2,12 +2,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
+import type { AuthMode } from "./auth/mode.js";
+import { CredentialStore } from "./auth/credentials.js";
+import { SessionStore } from "./auth/sessions.js";
+import { dataPaths, openDb } from "./db/open.js";
 
 export interface CliOptions {
   port: number;
   host: string;
   dataDir: string;
   allowedHosts: string[];
+  trustProxy: boolean;
+  publicUrl: string | null;
+  resetPassword: string | null;
 }
 
 const DEFAULT_PORT = 4173;
@@ -28,6 +35,9 @@ export function parseFlags(argv: string[]): CliOptions {
   let port = envPort();
   let dataDir = process.env["SLIDE_STUDIO_DATA"] || join(homedir(), ".slide-studio");
   const allowedHosts: string[] = [];
+  let trustProxy = process.env["SLIDE_STUDIO_TRUST_PROXY"] === "1";
+  let publicUrlOverride = process.env["SLIDE_STUDIO_PUBLIC_URL"] || null;
+  let resetPassword: string | null = null;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
@@ -41,12 +51,26 @@ export function parseFlags(argv: string[]): CliOptions {
     else if (flag === "--data") dataDir = requireValue(flag, value);
     else if (flag === "--allowed-host")
       allowedHosts.push(requireValue(flag, value).toLowerCase());
+    else if (flag === "--trust-proxy") {
+      trustProxy = true;
+      // A bare switch consumes no value, so the index must not advance.
+      continue;
+    } else if (flag === "--public-url") publicUrlOverride = requireValue(flag, value);
+    else if (flag === "--reset-password") resetPassword = requireValue(flag, value);
     // An argument naming no flag is skipped, and so is the value it may be.
     else continue;
     if (inline === undefined) index += 1;
   }
 
-  return { port, host, dataDir, allowedHosts: hostList(host, allowedHosts) };
+  return {
+    port,
+    host,
+    dataDir,
+    allowedHosts: hostList(host, allowedHosts),
+    trustProxy,
+    publicUrl: publicUrlOverride,
+    resetPassword,
+  };
 }
 
 /** The name a person types to reach this server (server/main.mjs:64). */
@@ -54,27 +78,34 @@ export function publicHost(host: string): string {
   return WILDCARD_HOSTS.has(host) ? "localhost" : host;
 }
 
-/** The base every URL the server hands out is built from (server/main.mjs:65). */
+/**
+ * The base every URL the server hands out is built from (server/main.mjs:65).
+ * An explicit override wins over the bind address, which is the only way a
+ * server behind a reverse proxy can advertise the name the proxy answers to
+ * rather than the loopback address it actually listens on.
+ */
 export function publicUrl(options: CliOptions): string {
+  if (options.publicUrl) return options.publicUrl.replace(/\/+$/, "");
   return `http://${publicHost(options.host)}:${options.port}`;
 }
 
 /**
- * What the old entry printed on startup (server/main.mjs:157-164). The token
- * lines are for the person who opened this server to a network, so they only
- * appear when the bind is not loopback.
+ * What the old entry printed on startup (server/main.mjs:157-164), adapted for
+ * password auth: an open server has no credential to hand out, so it warns
+ * instead of printing a token.
  */
-export function bannerLines(options: CliOptions, token: string): string[] {
+export function bannerLines(options: CliOptions, mode: AuthMode): string[] {
   const base = publicUrl(options);
   const lines = [
     `Slide Studio is running at ${base}`,
     `MCP endpoint: ${base}/mcp`,
     `Data directory: ${options.dataDir}`,
   ];
-  if (options.host !== DEFAULT_HOST) {
-    lines.push(`Remote access token: ${token}`);
-    lines.push("Requests from other machines must send: Authorization: Bearer <token>");
-  }
+  lines.push(
+    mode === "open"
+      ? "No password set, so this server trusts anyone who can reach it."
+      : "Sign in with your password. Agents need a token from Settings.",
+  );
   return lines;
 }
 
@@ -85,6 +116,8 @@ export async function startServer(options: CliOptions): Promise<FastifyInstance>
     dataDir: options.dataDir,
     allowedHosts: options.allowedHosts,
     baseUrl: () => base,
+    trustProxy: options.trustProxy,
+    bindHost: options.host,
   });
   await app.listen({ port: options.port, host: options.host });
   return app;
@@ -92,9 +125,35 @@ export async function startServer(options: CliOptions): Promise<FastifyInstance>
 
 export async function main(argv: string[]): Promise<void> {
   const options = parseFlags(argv);
+  if (options.resetPassword !== null) {
+    resetPassword(options.dataDir, options.resetPassword);
+    return;
+  }
   const app = await startServer(options);
   // Fastify's default logger is a no-op, so the banner goes to the console.
-  for (const line of bannerLines(options, app.token)) console.log(line);
+  for (const line of bannerLines(options, app.authMode)) console.log(line);
+}
+
+/**
+ * The way back in for someone who forgot the password. It needs shell access
+ * to the data directory, which is the right bar for a recovery path, and it
+ * never opens a socket, so it works even against a server that refuses to
+ * start (server/main.mjs has no equivalent: the old design had no password).
+ */
+function resetPassword(dataDir: string, password: string): void {
+  if (password.length < 12) {
+    throw new Error("A password needs at least 12 characters.");
+  }
+  const paths = dataPaths(dataDir);
+  const db = openDb(paths.database, paths.token);
+  try {
+    new CredentialStore(db).setPassword(password);
+    // Every browser signed in under the old password loses its session.
+    new SessionStore(db).revokeAll();
+  } finally {
+    db.close();
+  }
+  console.log(`Password updated for ${dataDir}. Every existing session is signed out.`);
 }
 
 /**

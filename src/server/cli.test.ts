@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
-import { bannerLines, parseFlags, startServer } from "./cli.js";
+import { bannerLines, parseFlags, publicUrl, startServer } from "./cli.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -88,26 +88,58 @@ it("ignores an argument that names no flag", () => {
 });
 
 it("prints the URL, the endpoint and the data directory", () => {
-  const lines = bannerLines(parseFlags(["--data", "/tmp/x"]), "secret-token");
+  const lines = bannerLines(parseFlags(["--data", "/tmp/x"]), "open");
   expect(lines).toEqual([
     "Slide Studio is running at http://127.0.0.1:4173",
     "MCP endpoint: http://127.0.0.1:4173/mcp",
     "Data directory: /tmp/x",
+    "No password set, so this server trusts anyone who can reach it.",
   ]);
 });
 
-it("adds the token to the banner when the host is not loopback", () => {
+it("tells a signed-in server apart from an open one", () => {
   const lines = bannerLines(
     parseFlags(["--host", "0.0.0.0", "--data", "/tmp/x"]),
-    "secret-token",
+    "required",
   );
   expect(lines).toEqual([
     "Slide Studio is running at http://localhost:4173",
     "MCP endpoint: http://localhost:4173/mcp",
     "Data directory: /tmp/x",
-    "Remote access token: secret-token",
-    "Requests from other machines must send: Authorization: Bearer <token>",
+    "Sign in with your password. Agents need a token from Settings.",
   ]);
+});
+
+it("reads the new flags in both spellings", () => {
+  expect(parseFlags(["--trust-proxy"]).trustProxy).toBe(true);
+  expect(parseFlags([]).trustProxy).toBe(false);
+  expect(parseFlags(["--public-url", "https://s.example.com"]).publicUrl).toBe(
+    "https://s.example.com",
+  );
+  expect(parseFlags(["--public-url=https://s.example.com"]).publicUrl).toBe(
+    "https://s.example.com",
+  );
+  expect(parseFlags(["--reset-password", "a-much-longer-one"]).resetPassword).toBe(
+    "a-much-longer-one",
+  );
+});
+
+it("reads the new environment variables", () => {
+  process.env["SLIDE_STUDIO_TRUST_PROXY"] = "1";
+  process.env["SLIDE_STUDIO_PUBLIC_URL"] = "https://env.example.com";
+  try {
+    expect(parseFlags([]).trustProxy).toBe(true);
+    expect(parseFlags([]).publicUrl).toBe("https://env.example.com");
+  } finally {
+    delete process.env["SLIDE_STUDIO_TRUST_PROXY"];
+    delete process.env["SLIDE_STUDIO_PUBLIC_URL"];
+  }
+});
+
+it("prefers an explicit public URL over the bind address", () => {
+  expect(publicUrl({ ...parseFlags([]), publicUrl: "https://s.example.com" })).toBe(
+    "https://s.example.com",
+  );
 });
 
 it("serves the API and the MCP endpoint once started", async () => {

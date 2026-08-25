@@ -1,7 +1,9 @@
+.superpowers/
 .dev.vars
 .DS_Store
 .env
 .env.*
+!.env.example
 .wrangler/
 *.log
 data/

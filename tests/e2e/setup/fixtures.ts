@@ -1,4 +1,4 @@
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 import { page } from "vitest/browser";
 import { createElement } from "react";
 import { cleanup, render } from "vitest-browser-react";
@@ -303,7 +303,14 @@ export async function openApp(path: string): Promise<void> {
   await page.viewport(EDITOR_VIEWPORT.width, EDITOR_VIEWPORT.height);
   window.history.pushState({}, "", path);
   await libraryCache.refresh();
-  render(createElement(App));
+  const screen = await render(createElement(App));
+  // App gates its first render on a session probe, so the container is empty
+  // until that answers (the Gate in src/web/App.tsx).
+  await vi.waitFor(() => {
+    if (screen.container.childElementCount === 0) {
+      throw new Error("the app has not rendered past its session gate");
+    }
+  });
 }
 
 /** What one call to `downloadBlob` handed the browser. */

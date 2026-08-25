@@ -1,0 +1,22 @@
+services:
+  slide-studio:
+    build: .
+    image: slide-studio:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Caddy terminates TLS, so the scheme and client address arrive in headers.
+      SLIDE_STUDIO_TRUST_PROXY: "1"
+    volumes:
+      - slide-studio-data:/data
+    # Published on loopback only: Caddy reaches it from this host, nothing else
+    # can. Publishing on 0.0.0.0 would put the editor on the internet directly,
+    # beside the proxy rather than behind it.
+    ports:
+      - "127.0.0.1:4173:4173"
+    # If Caddy also runs in Docker, drop the `ports` block above and instead
+    # join Caddy's external network here, so Caddy reaches this service by
+    # name over the Docker network instead of via a published host port.
+
+volumes:
+  slide-studio-data:

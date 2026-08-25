@@ -1,8 +1,10 @@
 import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router";
+import { TokenSettings } from "../features/auth/TokenSettings.js";
 import { Dashboard } from "../features/dashboard/Dashboard.js";
 import { Editor } from "../features/editor/Editor.js";
 import { LibraryAdmin } from "../features/library/LibraryAdmin.js";
+import { Header } from "../features/shell/Header.js";
 import { NotFound } from "../features/shell/NotFound.js";
 
 /*
@@ -37,6 +39,7 @@ export function AppRoutes() {
       <Route path="/projects/:id" element={<EditorRoute />} />
       <Route path="/library" element={<Navigate to="/library/backgrounds" replace />} />
       <Route path="/library/:kind" element={<LibraryRoute />} />
+      <Route path="/settings" element={<SettingsRoute />} />
       {Gallery === null ? null : (
         <Route
           path="/design"
@@ -59,6 +62,15 @@ function EditorRoute() {
   // if it ever becomes reachable.
   if (id === undefined) return <NotFound />;
   return <Editor projectId={id} />;
+}
+
+function SettingsRoute() {
+  return (
+    <>
+      <Header />
+      <TokenSettings />
+    </>
+  );
 }
 
 function LibraryRoute() {

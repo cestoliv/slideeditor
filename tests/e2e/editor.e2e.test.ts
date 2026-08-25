@@ -80,12 +80,31 @@ it("moves a text layer and keeps the move after a reload", async () => {
   await userEvent.dragAndDrop(layer, stage());
 
   const moved = await boxOf(layer);
+  // The stage is measured again rather than reused from before the gesture.
+  // The assertion is about where the layer sits inside the stage, so a stage
+  // that shifted underneath (a scrollbar appearing, a font swapping, the
+  // window differing from the viewport asked for) would otherwise be read as
+  // the drag having missed.
+  const frameAfter = await boxOf(stage());
+  const centre = {
+    x: frameAfter.left + frameAfter.width / 2,
+    y: frameAfter.top + frameAfter.height / 2,
+  };
   // Two pixels, because the browser dispatches the press and the release on
   // whole device pixels while the layer's centre sits wherever the layout put
   // it. The travel asserted above is a hundred times that, so the tolerance
   // cannot swallow a drag that went nowhere or went somewhere else.
-  expect(Math.abs(moved.left + moved.width / 2 - target.x)).toBeLessThan(2);
-  expect(Math.abs(moved.top + moved.height / 2 - target.y)).toBeLessThan(2);
+  //
+  // The message carries the geometry: a bare "expected 5.49 to be less than 2"
+  // says a drag missed but not whether the layer or the stage was the thing
+  // that moved, and this only reproduces on some machines.
+  const where =
+    `stage before ${JSON.stringify(frame)} after ${JSON.stringify(frameAfter)}; ` +
+    `layer start ${JSON.stringify(start)} moved ${JSON.stringify(moved)}; ` +
+    `window ${String(window.innerWidth)}x${String(window.innerHeight)} ` +
+    `documentElement ${String(document.documentElement.clientWidth)}x${String(document.documentElement.clientHeight)}`;
+  expect(Math.abs(moved.left + moved.width / 2 - centre.x), where).toBeLessThan(2);
+  expect(Math.abs(moved.top + moved.height / 2 - centre.y), where).toBeLessThan(2);
 
   // The move is only real once the server holds it. Polling the document is the
   // signal the save landed, which no wait on the clock could stand in for.

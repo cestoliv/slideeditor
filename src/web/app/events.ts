@@ -1,6 +1,5 @@
 import { serverEventSchema } from "@shared/schema/index.js";
 import type { ServerEvent } from "@shared/schema/index.js";
-import { getAccessToken } from "./api.js";
 
 /*
  * The server-sent event stream, so an open editor learns when an agent changes
@@ -57,13 +56,9 @@ export function subscribeToServerEvents(
   options: SubscribeOptions = {},
 ): () => void {
   const create = options.create ?? ((url: string) => new EventSource(url));
-  const token = getAccessToken();
-  // EventSource cannot set a header, so a remote page passes the token in the
-  // query string. src/server/auth.ts:33-35 accepts it there for this reason
-  // alone, and this is the one URL in the client that ever carries it.
-  const url =
-    token === null ? EVENTS_PATH : `${EVENTS_PATH}?token=${encodeURIComponent(token)}`;
-  const stream = create(url);
+  // A same-origin request carries the session cookie regardless of
+  // EventSource's withCredentials, which only governs cross-origin ones.
+  const stream = create(EVENTS_PATH);
 
   const onMessage = (event: Event): void => {
     // EventTarget hands over the base type, and only a message frame has data.

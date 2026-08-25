@@ -36,17 +36,22 @@ runs reuse npm's cache and start straight away.
 
 To work on the code instead, see [Working on the code](#working-on-the-code).
 
-Data lives in `~/.slide-studio`: a SQLite database, the image files, and the
-access token. Back up that one directory and you have backed up everything.
+Data lives in `~/.slide-studio`: a SQLite database and the image files. Back up
+that one directory and you have backed up everything.
 
-| Flag             | Default           | Purpose                                                            |
-| ---------------- | ----------------- | ------------------------------------------------------------------ |
-| `--port`         | `4173`            | Port to listen on                                                  |
-| `--host`         | `127.0.0.1`       | Interface to bind. Use `0.0.0.0` to reach it from another machine. |
-| `--data`         | `~/.slide-studio` | Data directory                                                     |
-| `--allowed-host` | none              | Extra hostname to accept, repeatable                               |
+| Flag               | Default           | Purpose                                                            |
+| ------------------ | ----------------- | ------------------------------------------------------------------ |
+| `--port`           | `4173`            | Port to listen on                                                  |
+| `--host`           | `127.0.0.1`       | Interface to bind. Use `0.0.0.0` to reach it from another machine. |
+| `--data`           | `~/.slide-studio` | Data directory                                                     |
+| `--allowed-host`   | none              | Extra hostname to accept, repeatable                               |
+| `--trust-proxy`    | off               | Trust the scheme and client address a reverse proxy forwards       |
+| `--public-url`     | none              | URL to advertise instead of one built from `--host` and `--port`   |
+| `--reset-password` | none              | Set a new password and sign out every existing session             |
 
-`SLIDE_STUDIO_PORT` and `SLIDE_STUDIO_DATA` work as environment variables too.
+`SLIDE_STUDIO_PORT`, `SLIDE_STUDIO_DATA`, `SLIDE_STUDIO_PASSWORD`,
+`SLIDE_STUDIO_TRUST_PROXY`, and `SLIDE_STUDIO_PUBLIC_URL` work as environment
+variables too.
 
 ## What it does
 
@@ -118,6 +123,9 @@ claude mcp add --transport http slide-studio http://127.0.0.1:4173/mcp
 
 For another MCP client, point it at `http://127.0.0.1:4173/mcp` over Streamable
 HTTP.
+
+If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
+[Authentication](#authentication).
 
 ### 3. Tools
 
@@ -231,26 +239,107 @@ they have adjusted the layout, and `published` means they have posted it.
   images at `/library/backgrounds` and `/library/assets`, with a description and
   a usage note on each. Do not invent ids.
 
-## From another machine
+## Authentication
+
+Running locally with no password set needs no configuration. The server binds
+`127.0.0.1` by default, so nothing outside your machine can reach it, and
+`npx slide-studio` works exactly as described above.
+
+Set `SLIDE_STUDIO_PASSWORD` to turn on the login screen everywhere, including
+on your own machine. The variable only seeds the password on first run. After
+that, change it from the Settings screen and the stored password wins, even if
+the environment variable still holds the old value.
+
+If you bind a public address with no password set, the server refuses to
+start and names the variable to set:
 
 ```bash
 npx github:cestoliv/slideeditor --host 0.0.0.0
 ```
 
-The server prints a token on first start and stores it at
-`~/.slide-studio/token`. Every request from another machine must carry it:
+Agents authenticate with a personal access token instead of a password.
+Create one from the Settings screen, then register the MCP server with it:
 
 ```bash
 claude mcp add --transport http slide-studio http://<your-ip>:4173/mcp \
-  --header "Authorization: Bearer <token>"
+  --header "Authorization: Bearer sst_..."
 ```
 
-Requests from the machine itself skip the token, so the local editor needs no
-setup. To open the editor from another machine, append the token once:
-`http://<your-ip>:4173/?token=<token>`.
+For another MCP client, send the same header on every request.
 
-This is a single-user tool with one shared token. It suits a home or office
-network. Do not expose it to the open internet.
+Running `--reset-password` signs out every existing session immediately. To
+set a new password, run it with the same `--data` directory the server uses:
+
+```bash
+npx github:cestoliv/slideeditor --reset-password <new-password>
+```
+
+Passwords need at least 12 characters. The Settings screen and
+`--reset-password` both enforce it.
+
+### Behind a reverse proxy
+
+A reverse proxy that terminates TLS needs `SLIDE_STUDIO_TRUST_PROXY=1`.
+Without it, the server never sees the request as HTTPS, so it does not mark
+the session cookie `Secure`.
+
+## Deploying with Docker
+
+Build and run it with Compose:
+
+```bash
+docker compose up -d --build
+```
+
+This builds the image, starts the container, and publishes it on
+`127.0.0.1:4173`, ready for a reverse proxy on the same host to reach. The
+container expects to sit behind a TLS-terminating proxy. `docker-compose.yml`
+already sets `SLIDE_STUDIO_TRUST_PROXY=1` for it.
+
+Set `SLIDE_STUDIO_PASSWORD` in `.env` before you start it. See
+`.env.example` for the full list of variables Compose reads.
+
+Without a password, the container refuses to start and names the variable to
+set. The compose file publishes the port, so an unauthenticated server there
+would be reachable from outside your machine.
+
+### Backups
+
+The server snapshots the database with `VACUUM INTO` right before it applies a
+pending database migration. It never snapshots on an ordinary restart.
+Snapshots land in `<data>/backups/db/`, named
+`slide-studio-v<fromVersion>-<timestamp>.db`.
+
+The server also archives your media directory once, before the first pending
+filesystem migration. Archives land in `<data>/backups/fs/` as `.tar.gz`
+files. No filesystem migration ships yet, so in practice `<data>/backups/fs/`
+stays absent until a future release adds one.
+
+`SLIDE_STUDIO_BACKUP_KEEP` sets how many snapshots of each kind to keep. It
+defaults to `5`. Set it to `0` to keep every one. Set
+`SLIDE_STUDIO_SKIP_BACKUP` to skip both kinds of backup entirely.
+
+These backups guard migrations only. Back up the `<data>` volume yourself,
+with a real backup strategy, for everything else.
+
+### Restoring a snapshot
+
+Restoring overwrites the live database with the snapshot's contents. Stop the
+container first.
+
+```bash
+docker compose stop slide-studio
+docker compose run --rm --entrypoint sh slide-studio -c \
+  "cp /data/backups/db/slide-studio-v4-2026-08-25T12-00-00.000Z.db /data/slide-studio.db"
+docker compose start slide-studio
+```
+
+Replace the filename with the snapshot you want to restore. `docker compose
+run` reuses the same volume as the service, so it works without knowing the
+volume's actual name.
+
+A media archive restores the same way. Extract its `.tar.gz` over
+`<data>/media` before you start the container again.
 
 ## HTTP API
 
