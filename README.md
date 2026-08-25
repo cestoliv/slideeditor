@@ -285,23 +285,56 @@ the session cookie `Secure`.
 
 ## Deploying with Docker
 
-Build and run it with Compose:
+CI publishes the image to `ghcr.io/cestoliv/slideeditor` on every merge to
+`main`. The server pulls it, so the server needs no clone, no toolchain, and no
+build.
+
+Copy two files onto the server, `docker-compose.yml` and your own `.env`, then:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-This builds the image, starts the container, and publishes it on
-`127.0.0.1:4173`, ready for a reverse proxy on the same host to reach. The
-container expects to sit behind a TLS-terminating proxy. `docker-compose.yml`
-already sets `SLIDE_STUDIO_TRUST_PROXY=1` for it.
+This starts the container and publishes it on `127.0.0.1:4173`, ready for a
+reverse proxy on the same host to reach. The container expects to sit behind a
+TLS-terminating proxy. `docker-compose.yml` already sets
+`SLIDE_STUDIO_TRUST_PROXY=1` for it.
 
-Set `SLIDE_STUDIO_PASSWORD` in `.env` before you start it. See
-`.env.example` for the full list of variables Compose reads.
+Set `SLIDE_STUDIO_PASSWORD` in `.env` before you start it. See `.env.example`
+for the full list of variables Compose reads.
 
 Without a password, the container refuses to start and names the variable to
 set. The compose file publishes the port, so an unauthenticated server there
 would be reachable from outside your machine.
+
+The image is built for `linux/amd64`.
+
+### Updating and rolling back
+
+To update, pull and recreate:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Every build also publishes an immutable `sha-<short>` tag, taken from the commit
+it was built from. `latest` moves, so roll back by pinning one of those instead.
+Edit the `image:` line in `docker-compose.yml`:
+
+```yaml
+image: ghcr.io/cestoliv/slideeditor:sha-2ceda85
+```
+
+Then run `docker compose up -d` again. To find the tag you want, read the
+commit list on `main`, or list what the registry holds:
+
+```bash
+docker run --rm gcr.io/go-containerregistry/crane ls ghcr.io/cestoliv/slideeditor
+```
+
+To build the image yourself rather than pull it, run `docker build -t
+ghcr.io/cestoliv/slideeditor:latest .` from a clone.
 
 ### Backups
 
