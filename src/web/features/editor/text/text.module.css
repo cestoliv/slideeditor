@@ -1,0 +1,46 @@
+/*
+ * Ported from styles.css:1737-1930. Every position here is set inline from the
+ * TextLayout, so this file only carries what does not vary with the layout.
+ */
+
+.visual {
+  position: absolute;
+  inset: 0;
+}
+
+/* styles.css:1909. One rounded panel behind the whole box. */
+.fullBackground {
+  position: absolute;
+  inset: 0;
+}
+
+/*
+ * styles.css:1899. No viewBox, so one SVG user unit is one CSS pixel and the
+ * pill coordinates the layout returned can be written straight into the path.
+ */
+.pills {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.block {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* styles.css:1803. One wrapped line, already broken, so it never wraps again. */
+.line {
+  display: block;
+  white-space: pre;
+}
+
+/* styles.css:1860. The stroke reaches outside the line's own box. */
+.outlineLine {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}

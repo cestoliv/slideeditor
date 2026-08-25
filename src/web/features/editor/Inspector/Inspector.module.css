@@ -1,0 +1,438 @@
+/*
+ * Ported from styles.css:2068-2456 and styles.css:536-539.
+ *
+ * The lengths left raw are the panel's own geometry: the column's width, and
+ * the height of each swatch tile. None of them is a step on the spacing scale,
+ * and rounding them onto one would resize the tiles whenever the scale is
+ * retuned. Everything that is a step, a radius or a colour reads a token.
+ *
+ * The style, tone and shape previews paint slide content rather than app
+ * chrome, so they read --color-editor-ink and --color-editor-white, which do
+ * not follow the theme. A white "Aa" that flipped to dark in dark mode would be
+ * previewing something the slide will never render.
+ */
+
+.inspector {
+  min-height: 0;
+  overflow-y: auto;
+  border-left: var(--border-width) solid var(--color-line);
+  background: var(--surface-rail);
+  backdrop-filter: blur(var(--blur-panel));
+}
+
+/*
+ * styles.css:3305-3320. Below this the panel leaves the grid and becomes a
+ * sheet over the canvas, because a 294px column and a usable stage do not both
+ * fit on a phone. It hides rather than shrinking, and the header's toggle is
+ * what brings it back.
+ *
+ * styles.css wrote left: 132px, which cleared the two rails it had at that
+ * width. Only the slide rail exists so far and it keeps its full width, because
+ * the rules that let styles.css narrow it belong to the rail's own task, so the
+ * sheet starts where that rail ends.
+ */
+@media (max-width: 780px) {
+  .inspector {
+    position: fixed;
+    z-index: var(--z-raised);
+    right: 0;
+    bottom: 0;
+    left: 190px;
+    display: none;
+    max-height: 62vh;
+    border-top: var(--border-width) solid var(--color-line);
+    border-left: 0;
+    box-shadow: 0 calc(var(--space-5) * -1) var(--space-7)
+      color-mix(in srgb, var(--color-ink) 16%, transparent);
+  }
+
+  .inspector.mobileOpen {
+    display: block;
+  }
+}
+
+.header {
+  display: flex;
+  min-height: 62px;
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: var(--border-width) solid var(--color-line-soft);
+}
+
+.header h2 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-heavy);
+}
+
+.body {
+  display: grid;
+  padding: var(--space-4);
+  gap: var(--space-5);
+}
+
+.group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+}
+
+.label output {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+}
+
+/* styles.css:2446-2450. A slider and the number that says what it reads. */
+.rangeRow {
+  display: grid;
+  gap: var(--space-3);
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) 56px;
+}
+
+.assetName {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  display: grid;
+  padding: var(--space-7) var(--space-5);
+  gap: var(--space-3);
+  place-items: center;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  text-align: center;
+}
+
+.empty span {
+  display: grid;
+  width: var(--space-7);
+  height: var(--space-7);
+  place-items: center;
+  border: var(--border-width) dashed var(--color-line);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-heavy);
+}
+
+.empty p {
+  margin: 0;
+}
+
+/* The swatch tiles. styles.css:2132-2137, 2340-2344, 2372-2376 and 2422-2426. */
+.options {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.options3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.options2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.option {
+  display: grid;
+  min-width: 0;
+  padding: var(--space-2) var(--space-1);
+  gap: var(--space-1);
+  place-items: center;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  background: var(--color-white);
+  cursor: pointer;
+}
+
+.option:hover {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+}
+
+/*
+ * styles.css:2155-2157 wrote `2px 2px 0 var(--cyan)`, which is --shadow-pop
+ * without its warm half. The active tile is the same mark the app uses for a
+ * chosen thing everywhere else, so it takes the token rather than a private
+ * copy of half of it.
+ */
+.option[aria-pressed="true"] {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-pop-soft);
+}
+
+.option small {
+  align-self: end;
+  color: var(--color-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.styleOption {
+  min-height: 76px;
+}
+
+.alignOption {
+  min-height: var(--control-height-md);
+}
+
+.toneOption {
+  min-height: 48px;
+  padding: var(--space-1) var(--space-2);
+  gap: var(--space-2);
+  grid-auto-flow: column;
+  justify-content: start;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+}
+
+.shapeOption {
+  min-height: 88px;
+}
+
+/* styles.css:2159-2183. The three text styles, previewed on a neutral ground. */
+.stylePreview {
+  display: grid;
+  min-width: 47px;
+  min-height: 31px;
+  padding: var(--space-0) var(--space-1);
+  place-items: center;
+  color: var(--color-editor-white);
+  background: color-mix(in srgb, var(--color-editor-ink) 45%, var(--color-editor-white));
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+}
+
+.stylePreviewOutline {
+  -webkit-text-stroke: var(--border-width-strong) var(--color-editor-ink);
+  paint-order: stroke fill;
+}
+
+.stylePreviewBoxed {
+  border-radius: var(--radius-sm);
+  color: var(--color-editor-ink);
+  background: var(--color-editor-white);
+  box-shadow: inset 0 0 0 var(--border-width) var(--color-line);
+}
+
+/* styles.css:2404-2419. The two box tones, painted as the slide paints them. */
+.toneSwatch {
+  display: grid;
+  width: var(--space-6);
+  height: var(--space-5);
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-heavy);
+}
+
+.toneSwatchWhite {
+  border: var(--border-width) solid var(--color-line);
+  color: var(--color-editor-ink);
+  background: var(--color-editor-white);
+}
+
+.toneSwatchBlack {
+  color: var(--color-editor-white);
+  background: var(--color-editor-ink);
+}
+
+/* styles.css:2452-2477. Per-line pills against one full box. */
+.shapePreview {
+  display: grid;
+  place-items: center;
+  color: var(--color-editor-ink);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-heavy);
+}
+
+.shapePreviewLines {
+  gap: var(--space-0);
+}
+
+.shapePreviewLines i {
+  padding: var(--space-0) var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-line-soft);
+  font-style: normal;
+}
+
+.shapePreviewFull {
+  width: 76px;
+  height: var(--control-height-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-line-soft);
+}
+
+/* styles.css:2191-2223. The eight preset swatches. */
+.presets {
+  display: grid;
+  gap: var(--space-1);
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.preset {
+  position: relative;
+  width: 100%;
+  padding: 0;
+  aspect-ratio: 1;
+  border: var(--border-width) solid var(--surface-canvas-action-line);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 var(--border-width)
+    color-mix(in srgb, var(--color-editor-white) 34%, transparent);
+  cursor: pointer;
+}
+
+.preset:hover {
+  transform: scale(1.08);
+}
+
+.preset[aria-pressed="true"]::after {
+  position: absolute;
+  inset: calc(var(--space-1) * -1);
+  border: var(--border-width-strong) solid var(--color-ink);
+  border-radius: inherit;
+  content: "";
+}
+
+/* styles.css:2225-2231. The wheel beside the two readouts. */
+.custom {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 68px minmax(0, 1fr);
+}
+
+.wheel {
+  display: grid;
+  min-width: 0;
+  padding: var(--space-1);
+  gap: var(--space-0);
+  place-items: center;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  background: var(--color-white);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  text-align: center;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.wheel:focus-within {
+  border-color: var(--color-ink);
+  box-shadow: var(--shadow-pop-soft);
+}
+
+.wheel input {
+  width: var(--space-7);
+  height: var(--space-7);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.wheel input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.wheel input::-webkit-color-swatch {
+  border: var(--border-width) solid var(--color-line);
+  border-radius: 50%;
+}
+
+.values {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.valueRow {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  align-items: center;
+  grid-template-columns: 25px minmax(0, 1fr) auto;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+}
+
+.valueRow:focus-within {
+  border-color: var(--color-ink);
+}
+
+.valueRow label {
+  padding-left: var(--space-1);
+  color: var(--color-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-heavy);
+  text-transform: uppercase;
+  cursor: text;
+}
+
+.valueRow input {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-1);
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.copy {
+  align-self: stretch;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-left: var(--border-width) solid var(--color-line-soft);
+  color: var(--color-muted);
+  background: var(--surface-hover);
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-heavy);
+  cursor: pointer;
+}
+
+.copy:hover {
+  color: var(--color-ink);
+  background: var(--surface-menu-hover);
+}
+
+/* styles.css:2441-2444. */
+.reset {
+  width: 100%;
+}

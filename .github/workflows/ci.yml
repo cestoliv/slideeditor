@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The workflow only reads the repository.
+permissions:
+  contents: read
+
+# A new push to the same branch or pull request cancels the run it supersedes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` runs `prepare`, which builds both halves.
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run check
+
+      # `tsc` rewrites no path alias, so this proves the emitted server resolves
+      # every import under plain Node.
+      - run: npm run check:dist
+
+      - run: npm test
+
+      - run: npm run test:coverage

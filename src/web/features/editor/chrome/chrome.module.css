@@ -1,0 +1,467 @@
+/*
+ * The platform mock-ups, ported from styles.css:1135-1547.
+ *
+ * Two rules govern every value here.
+ *
+ * Lengths are slide-space pixels, not steps on the spacing scale. The canvas
+ * below is authored at OUTPUT_WIDTH and scaled onto the stage, so a 78px avatar
+ * is 78 of the slide's own 1080 pixels. Rounding these onto --space-* would tie
+ * a mock-up of somebody else's app to this app's spacing, and retuning the
+ * scale would redraw TikTok.
+ *
+ * Colours are the four tokens that do not follow the theme: --color-editor-ink,
+ * --color-editor-white, --color-accent and --color-accent-warm. TikTok's UI is
+ * white on a dark scrim in both themes, so a theme-following colour here would
+ * paint a preview of something the platform never shows. The scrims read
+ * --color-editor-ink where styles.css wrote pure black; at 15/255 the
+ * difference is invisible under a 0.66 wash, and it keeps the file free of
+ * literals.
+ */
+
+.overlay {
+  position: absolute;
+  z-index: var(--z-raised);
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.66;
+  pointer-events: none;
+}
+
+.canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--chrome-width);
+  height: var(--chrome-height);
+  color: var(--color-editor-white);
+  font-family: var(--font-family-base);
+  text-shadow: 0 2px 7px color-mix(in srgb, var(--color-editor-ink) 90%, transparent);
+  transform: scale(var(--chrome-scale));
+  transform-origin: top left;
+}
+
+.label {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--color-editor-white) 80%, transparent);
+  border-radius: var(--radius-pill);
+  color: color-mix(in srgb, var(--color-editor-white) 92%, transparent);
+  background: color-mix(in srgb, var(--color-editor-ink) 48%, transparent);
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: 0.1em;
+  text-shadow: none;
+}
+
+/* Keep the badge clear of the chrome that sits at the top edge. */
+.instagramFeed .label {
+  top: 152px;
+}
+
+.instagramStory .label {
+  top: 148px;
+}
+
+/* TikTok */
+.ttTopbar {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  display: flex;
+  gap: 38px;
+  align-items: center;
+  font-size: 36px;
+  transform: translateX(-50%);
+}
+
+.ttTopbar span:first-child {
+  opacity: 0.74;
+}
+
+.ttTopbar strong {
+  position: relative;
+}
+
+.ttTopbar strong::after {
+  position: absolute;
+  right: 12px;
+  bottom: -12px;
+  left: 12px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-editor-white);
+  content: "";
+}
+
+.ttSearch {
+  position: absolute;
+  top: -20px;
+  left: calc(100% + 250px);
+  font-size: 62px;
+  font-weight: 400;
+}
+
+.ttSideActions {
+  position: absolute;
+  right: 22px;
+  bottom: 312px;
+  display: flex;
+  width: 98px;
+  flex-direction: column;
+  gap: 28px;
+  align-items: center;
+}
+
+.ttAvatar {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  margin-bottom: 6px;
+  border: 4px solid var(--color-editor-white);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-editor-white) 32%, transparent);
+}
+
+.ttAvatar b {
+  position: absolute;
+  right: 15px;
+  bottom: -14px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-accent-warm);
+  font-size: 30px;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.ttAction {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.ttAction > span {
+  display: grid;
+  width: 78px;
+  height: 68px;
+  place-items: center;
+  font-size: 66px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.ttAction small {
+  font-size: 25px;
+  font-weight: 700;
+}
+
+.ttBubble {
+  position: relative;
+  -webkit-text-stroke: 6px var(--color-editor-white);
+  color: transparent;
+}
+
+/*
+ * styles.css:1279-1285 reached for !important here, because `.tt-action > span`
+ * above ties these on a higher specificity. Naming the parent wins the same
+ * argument without one.
+ */
+.ttAction > .ttBookmark {
+  font-size: 70px;
+}
+
+.ttAction > .ttShare {
+  font-size: 72px;
+}
+
+.ttDisc {
+  display: grid;
+  width: 80px;
+  height: 80px;
+  margin-top: 3px;
+  place-items: center;
+  border: 18px solid
+    color-mix(in srgb, var(--color-editor-ink) 92%, var(--color-editor-white));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-editor-ink) 55%, var(--color-editor-white));
+  font-size: 24px;
+}
+
+.ttCaption {
+  position: absolute;
+  right: 158px;
+  bottom: 158px;
+  left: 24px;
+  font-size: 31px;
+  line-height: 1.32;
+}
+
+.ttCaption strong {
+  font-size: 34px;
+}
+
+.ttCaption p {
+  margin: 10px 0;
+}
+
+.ttCaption span {
+  font-weight: 650;
+}
+
+.ttBottomNav {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  height: 115px;
+  padding: 11px 25px 9px;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  background: color-mix(in srgb, var(--color-editor-ink) 86%, transparent);
+  text-shadow: none;
+}
+
+.ttBottomNav span {
+  display: grid;
+  gap: 3px;
+  place-items: center;
+  font-size: 21px;
+  font-weight: 650;
+}
+
+.ttBottomNav b {
+  font-size: 44px;
+  line-height: 1;
+}
+
+.ttBottomNav .ttCreate {
+  display: grid;
+  width: 90px;
+  height: 55px;
+  justify-self: center;
+  border-radius: 12px;
+  color: var(--color-editor-ink);
+  background: var(--color-editor-white);
+  box-shadow:
+    -10px 0 0 var(--color-accent),
+    10px 0 0 var(--color-accent-warm);
+  font-size: 48px;
+  line-height: 1;
+}
+
+/* Instagram feed */
+.igHeader {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  height: 132px;
+  padding: 0 26px;
+  gap: 20px;
+  align-items: center;
+  background: linear-gradient(
+    color-mix(in srgb, var(--color-editor-ink) 82%, transparent),
+    color-mix(in srgb, var(--color-editor-ink) 62%, transparent) 72%,
+    transparent
+  );
+}
+
+.igAvatar {
+  width: 78px;
+  height: 78px;
+  flex: 0 0 auto;
+  border: 4px solid var(--color-editor-white);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-editor-white) 32%, transparent);
+}
+
+.igHandle {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.igHandle strong {
+  font-size: 32px;
+  font-weight: 720;
+}
+
+.igHandle small {
+  font-size: 25px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.igMore {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.igClose {
+  font-size: 40px;
+  font-weight: 500;
+}
+
+.igCounter {
+  position: absolute;
+  top: 158px;
+  right: 26px;
+  padding: 8px 20px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-editor-ink) 62%, transparent);
+  font-size: 27px;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+.igFooter {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 26px 26px 22px;
+  background: linear-gradient(
+    transparent,
+    color-mix(in srgb, var(--color-editor-ink) 66%, transparent) 34%,
+    color-mix(in srgb, var(--color-editor-ink) 86%, transparent)
+  );
+}
+
+.igActions {
+  display: flex;
+  gap: 30px;
+  align-items: center;
+  font-size: 58px;
+  line-height: 1;
+}
+
+.igBubble {
+  -webkit-text-stroke: 6px var(--color-editor-white);
+  color: transparent;
+}
+
+.igDots {
+  display: flex;
+  gap: 12px;
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.igDots i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-editor-white) 45%, transparent);
+}
+
+.igDots i.igDotCurrent {
+  background: var(--color-editor-white);
+}
+
+.igSave {
+  margin-left: auto;
+  font-size: 54px;
+}
+
+.igDots + .igSave {
+  margin-left: 0;
+}
+
+.igCaption {
+  margin-top: 18px;
+  font-size: 30px;
+  line-height: 1.34;
+}
+
+.igCaption strong {
+  font-weight: 720;
+}
+
+.igCaption b {
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+/* Instagram Stories. All of it genuinely covers the photo. */
+.igStoryProgress {
+  position: absolute;
+  top: 22px;
+  right: 24px;
+  left: 24px;
+  display: flex;
+  gap: 8px;
+}
+
+.igStoryProgress i {
+  height: 7px;
+  flex: 1 1 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-editor-white) 40%, transparent);
+}
+
+.igStoryProgress i.igStoryDone {
+  background: var(--color-editor-white);
+}
+
+.igStoryProgress i.igStoryCurrent {
+  flex-grow: 1;
+  background: linear-gradient(
+    90deg,
+    var(--color-editor-white) 42%,
+    color-mix(in srgb, var(--color-editor-white) 40%, transparent) 42%
+  );
+}
+
+.igStoryHeader {
+  position: absolute;
+  top: 52px;
+  right: 24px;
+  left: 24px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.igStoryHeader .igAvatar {
+  width: 66px;
+  height: 66px;
+  border-width: 3px;
+}
+
+.igStoryHeader .igHandle {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+}
+
+.igStoryReply {
+  position: absolute;
+  right: 24px;
+  bottom: 34px;
+  left: 24px;
+  display: flex;
+  gap: 26px;
+  align-items: center;
+  font-size: 52px;
+  line-height: 1;
+}
+
+.igStoryField {
+  display: flex;
+  height: 92px;
+  padding: 0 34px;
+  flex: 1 1 auto;
+  align-items: center;
+  border: 3px solid color-mix(in srgb, var(--color-editor-white) 80%, transparent);
+  border-radius: var(--radius-pill);
+  font-size: 30px;
+  font-weight: 600;
+}

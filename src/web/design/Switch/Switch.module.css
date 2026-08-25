@@ -1,0 +1,56 @@
+/*
+ * No legacy switch to port, so the geometry is derived: the thumb is one icon
+ * wide and the track is a --space-1 border of padding around it, which lands a
+ * switch at the same visual weight as a glyph next to it.
+ */
+
+.track {
+  position: relative;
+  width: var(--switch-width);
+  height: var(--switch-height);
+  flex: 0 0 auto;
+  padding: 0;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-white);
+  cursor: pointer;
+  transition:
+    background var(--duration-base) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out);
+}
+
+.track[data-state="checked"] {
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+}
+
+.track:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.thumb {
+  display: block;
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
+  transform: translateX(var(--space-1));
+  border-radius: var(--radius-pill);
+  background: var(--color-ink);
+  transition: transform var(--duration-base) var(--ease-out);
+  will-change: transform;
+}
+
+/*
+ * The thumb travels the track's inner width. Writing the distance as a
+ * calc of the two tokens means retuning either one cannot leave the thumb
+ * hanging over the edge.
+ */
+.thumb[data-state="checked"] {
+  transform: translateX(
+    calc(
+      var(--switch-width) - var(--switch-thumb-size) - var(--space-1) -
+        var(--border-width) * 2
+    )
+  );
+  background: var(--color-white);
+}

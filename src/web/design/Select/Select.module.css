@@ -1,0 +1,65 @@
+/*
+ * The trigger is the Input control wearing a chevron, because a select and a
+ * text field sitting in the same form must line up on one baseline. The list
+ * itself is the shared menu surface from menu/menu.module.css.
+ */
+
+.trigger {
+  --icon-size: var(--icon-size-sm);
+
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  background: var(--color-white);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+.trigger[data-placeholder] {
+  color: var(--color-muted);
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.trigger:hover:where(:not(:disabled)) {
+  border-color: var(--color-ink);
+}
+
+/* The list matches the trigger's width so the options sit under their control. */
+.content {
+  min-width: var(--radix-select-trigger-width);
+}
+
+/*
+ * The focus rules come last on purpose. Both tie the hover rule above at
+ * (0,2,0), so source order decides which one paints.
+ */
+.trigger:focus-visible {
+  border-color: var(--color-ink);
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * "You are here" and "this is wrong" are two signals, and focus must not eat the
+ * second. Matches the same rule on Input.
+ */
+.invalid,
+.invalid:hover,
+.invalid:focus-visible {
+  border-color: var(--color-danger);
+}

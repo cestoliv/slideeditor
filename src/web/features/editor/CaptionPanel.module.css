@@ -1,0 +1,24 @@
+/*
+ * The caption panel. Popover.module.css already draws the surface, so this
+ * only lays the two fields and their copy buttons out down the panel.
+ */
+
+.panel {
+  display: grid;
+  width: min(var(--dialog-width), calc(100vw - var(--space-6)));
+  gap: var(--space-3);
+}
+
+/* The buttons take their own width, so a copy target reads as a control rather
+ * than as a bar across the panel. */
+.copy {
+  justify-self: start;
+}
+
+/*
+ * A caption is a paragraph, and the reader is reading it back before posting
+ * rather than glancing at it, so the field fills the panel.
+ */
+.description {
+  width: 100%;
+}

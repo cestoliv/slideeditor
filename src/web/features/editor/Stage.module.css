@@ -1,0 +1,241 @@
+/*
+ * Ported from styles.css:863-1120. Every colour, space and radius is a token.
+ */
+
+.workspace {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: radial-gradient(
+    circle at 50% 48%,
+    var(--surface-workspace-center),
+    var(--surface-workspace-edge) 45%,
+    transparent 72%
+  );
+}
+
+/* styles.css:956-964. The paper dots, under everything and untouchable. */
+.workspace::before {
+  position: absolute;
+  inset: 0;
+  opacity: 0.26;
+  background-image: radial-gradient(
+    var(--surface-workspace-dot) calc(var(--border-width) / 2),
+    transparent calc(var(--border-width) / 2)
+  );
+  background-size: var(--space-2) var(--space-2);
+  content: "";
+  pointer-events: none;
+}
+
+.inner {
+  position: relative;
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  padding: var(--space-6);
+  overflow: visible;
+  place-items: center;
+}
+
+.composition {
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+}
+
+.stageWrap {
+  position: relative;
+  filter: drop-shadow(
+    0 var(--space-5) var(--space-6) color-mix(in srgb, var(--color-ink) 18%, transparent)
+  );
+}
+
+.frame {
+  position: relative;
+}
+
+/* styles.css:986-999. The full photo, greyed, behind the frame while panning. */
+.ghost {
+  position: absolute;
+  z-index: var(--z-base);
+  display: none;
+  max-width: none;
+  filter: grayscale(1) saturate(0) brightness(0.92) contrast(0.76);
+  opacity: 0.52;
+  pointer-events: none;
+  user-select: none;
+}
+
+.adjusting .ghost {
+  display: block;
+}
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  /*
+   * styles.css:1019 painted this #232323. It reads as slide content and is not:
+   * getImageLayout covers the canvas at every zoom, so a photo never leaves a
+   * gap for it to show through, and renderSlideCanvas (app.js:4228-4238) draws
+   * onto a fresh canvas without filling it, so this colour reaches no export.
+   * What it actually paints is the moment before the photo has loaded, and the
+   * broken state where a slide's background is missing from the library. That
+   * is chrome, and --surface-empty is the token the app already uses for a
+   * surface with no picture on it yet.
+   */
+  /*
+   * Opaque, where --surface-empty is a 0.72 wash. The stage sits over the
+   * workspace's radial gradient, so a translucent ground would let that show
+   * through the moment before a photo paints, and a screenshot of the stage
+   * would carry it. --color-panel is the same neutral without the alpha.
+   */
+  background: var(--color-panel);
+  user-select: none;
+  touch-action: none;
+}
+
+.stage.grabbable {
+  cursor: grab;
+}
+
+.stage.grabbing {
+  cursor: grabbing;
+}
+
+.image {
+  position: absolute;
+  display: block;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.layerStack {
+  position: absolute;
+  inset: 0;
+}
+
+/* styles.css:1041-1048. The layers step back while the photo is being placed. */
+.adjusting .layerStack {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.marquee {
+  position: absolute;
+  z-index: var(--z-raised);
+  display: none;
+  border: var(--border-width) solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  box-shadow:
+    0 0 0 var(--border-width) color-mix(in srgb, var(--color-ink) 62%, transparent),
+    inset 0 0 0 var(--border-width)
+      color-mix(in srgb, var(--color-white) 45%, transparent);
+  pointer-events: none;
+}
+
+.marquee.visible {
+  display: block;
+}
+
+/*
+ * styles.css:905 wrote z-index 8, which is not a rung on any scale. It is also
+ * not needed here: the column is positioned and comes after the stage in the
+ * document, so it already paints over it, and the marquee comes after the
+ * column and paints over that. A rung nothing can observe is a rung no test can
+ * defend, so it is gone rather than translated.
+ */
+.actions {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* styles.css:1069-1078. The readouts hang under the stage's bottom right. */
+.dimensions {
+  position: absolute;
+  right: 0;
+  bottom: calc(var(--space-5) * -1);
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--color-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  white-space: nowrap;
+}
+
+.zoomControls {
+  display: inline-flex;
+  padding-left: var(--space-2);
+  overflow: hidden;
+  align-items: center;
+  border-left: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+  letter-spacing: normal;
+}
+
+.zoomButton,
+.zoomLevel {
+  height: var(--space-5);
+  padding: 0;
+  border: var(--border-width) solid var(--color-line);
+  color: var(--color-ink);
+  background: var(--surface-canvas-action);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-heavy);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoomButton {
+  width: var(--space-5);
+}
+
+.zoomLevel {
+  padding: 0 var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.zoomButton:first-child {
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+
+.zoomButton:last-child {
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+/* renderEmptyStage, app.js:1682-1693. The upload button is Task 15's. */
+.empty {
+  display: grid;
+  max-width: 34ch;
+  padding: var(--space-7);
+  gap: var(--space-2);
+  place-items: center;
+  border: var(--border-width) dashed var(--color-line);
+  border-radius: var(--radius-card);
+  color: var(--color-muted);
+  background: var(--surface-empty);
+  text-align: center;
+}
+
+.empty h2 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: var(--font-size-lg);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.empty p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}

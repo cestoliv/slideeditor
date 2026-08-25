@@ -1,0 +1,63 @@
+/*
+ * No legacy rules to port. The list is the pill rail the segmented controls in
+ * the old inspector were reaching for, built from the token scale.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.list {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-quiet);
+}
+
+.trigger {
+  min-height: var(--control-height-sm);
+  padding: 0 var(--control-padding-md);
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+  background: transparent;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--duration-base) var(--ease-out),
+    background var(--duration-base) var(--ease-out);
+}
+
+.trigger:hover:where(:not([data-state="active"], :disabled)) {
+  color: var(--color-ink);
+  background: var(--surface-hover);
+}
+
+.trigger[data-state="active"] {
+  color: var(--color-white);
+  background: var(--color-ink);
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.content:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * The focus rule is last on purpose. It ties the hover and active rules above at
+ * (0,2,0), so source order is what decides, and a rule added later cannot
+ * silently drop the ring.
+ */
+.trigger:focus-visible {
+  box-shadow: var(--focus-ring);
+}

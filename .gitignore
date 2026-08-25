@@ -8,3 +8,5 @@ data/
 dist/
 docs/superpowers/
 node_modules/
+coverage/
+.vitest-attachments/

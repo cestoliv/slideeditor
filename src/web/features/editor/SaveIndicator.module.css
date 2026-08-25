@@ -1,0 +1,39 @@
+/*
+ * Modest on purpose: this sits in the header beside the slideshow's name and
+ * has to be readable without competing with it.
+ */
+
+.indicator {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: currentcolor;
+}
+
+/* Only the state worth acting on takes a colour of its own. */
+.indicator[data-tone="unsaved"] {
+  color: var(--color-danger);
+}
+
+.indicator[data-tone="busy"] .dot {
+  animation: pulse var(--duration-slow) ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}

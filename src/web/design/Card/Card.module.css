@@ -1,0 +1,44 @@
+/* Ported from styles.css:425-443. */
+
+.card {
+  position: relative;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-panel);
+  text-align: left;
+}
+
+.paddingSm {
+  padding: var(--space-3);
+}
+
+.paddingMd {
+  padding: var(--space-4);
+}
+
+.paddingLg {
+  padding: var(--space-5);
+}
+
+.interactive {
+  cursor: pointer;
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    box-shadow var(--duration-slow) var(--ease-out),
+    border-color var(--duration-slow) var(--ease-out);
+}
+
+.interactive:hover {
+  border-color: var(--color-ink);
+  box-shadow: var(--shadow-raised);
+  transform: translateY(var(--motion-lift-strong));
+}
+
+/*
+ * A Card is a div today and takes no focus, but Task 11 may give one a tabindex
+ * or a role. This ties the hover rule's specificity and follows it, so the ring
+ * survives that change instead of being shadowed by the raised shadow above.
+ */
+.interactive:focus-visible {
+  box-shadow: var(--focus-ring), var(--shadow-raised);
+}

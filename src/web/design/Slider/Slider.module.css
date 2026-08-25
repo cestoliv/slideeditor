@@ -1,0 +1,46 @@
+/* Ported from input[type="range"] at styles.css:2494-2512. */
+
+.root {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: var(--slider-thumb-size);
+  align-items: center;
+  touch-action: none;
+  user-select: none;
+}
+
+.track {
+  position: relative;
+  height: var(--slider-track-height);
+  flex: 1 1 auto;
+  border-radius: var(--radius-pill);
+  background: var(--color-line);
+}
+
+/*
+ * The filled portion. The native input had no equivalent, so a restyled range
+ * gave no sense of where the value sat until you found the thumb.
+ */
+.range {
+  position: absolute;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-ink);
+}
+
+.thumb {
+  display: block;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
+  /* The one deliberate heavy border in the system, ported from styles.css:2507. */
+  border: var(--border-width-strong) solid var(--color-ink);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  cursor: ew-resize;
+}
+
+.thumb[data-disabled] {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}

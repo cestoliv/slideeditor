@@ -1,0 +1,13 @@
+/*
+ * The widths, as in DropdownMenu. Everything else comes from the shared surface
+ * in menu/menu.module.css, because a right click and a button press must not
+ * open two menus that look different.
+ */
+
+.content {
+  min-width: var(--menu-min-width); /* styles.css:2620 */
+}
+
+.compact {
+  min-width: var(--menu-min-width-compact); /* styles.css:2630 */
+}

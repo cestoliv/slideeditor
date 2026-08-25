@@ -1,0 +1,27 @@
+/*
+ * Ported from styles.css:1737-1801.
+ */
+
+.outside,
+.inside {
+  position: absolute;
+  inset: 0;
+}
+
+.outside {
+  filter: grayscale(1) saturate(0) brightness(0.9) contrast(0.78);
+  opacity: 0.56;
+  pointer-events: none;
+}
+
+.inside {
+  z-index: var(--z-raised);
+}
+
+/* styles.css:1798. The glyphs take the press that starts an edit, nothing else. */
+.hitArea {
+  position: absolute;
+  z-index: var(--z-raised);
+  cursor: text;
+  pointer-events: auto;
+}

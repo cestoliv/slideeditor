@@ -1,0 +1,368 @@
+/*
+ * The single source of every colour, space, radius, and duration in the app.
+ * A component reads a token and never writes a literal, so light and dark stay
+ * one override block instead of a rule in every stylesheet.
+ *
+ * Values carry the styles.css line they were lifted from, so the port stays
+ * auditable until the old stylesheet goes away.
+ */
+
+:root {
+  color-scheme: light; /* styles.css:10 */
+
+  /* The face itself is declared in fonts.css, which owns the asset binding. */
+  --font-family-base:
+    "TikTok Sans", system-ui, -apple-system, sans-serif; /* styles.css:11 */
+
+  /* Palette */
+  --color-ink: #151515; /* styles.css:12 */
+  --color-muted: #706f6a; /* styles.css:13 */
+  --color-paper: #f2f1ed; /* styles.css:14 */
+  --color-panel: #fbfaf7; /* styles.css:15 */
+  --color-line: #d8d6cf; /* styles.css:16 */
+  --color-line-soft: #e7e5de; /* styles.css:17 */
+  --color-white: #fff; /* styles.css:18 */
+  --color-accent: #25f4ee; /* styles.css:19 */
+  --color-accent-warm: #fe2c55; /* styles.css:20 */
+  --color-danger: #a7213a; /* styles.css:21 */
+  --color-danger-line: #d7a7ae; /* styles.css:22 */
+
+  /* Cyan and warm red never flip, so anything painted on them needs a fixed ink. */
+  --color-on-accent: #151515;
+
+  /*
+   * A danger surface. styles.css only ever had a danger *border* colour, so
+   * painting text on --color-danger-line reached 3.4:1 and failed AA. This tint
+   * carries --color-danger at 5.6:1 in light and 7.8:1 in dark.
+   */
+  --surface-danger: #f7dde2;
+
+  /*
+   * Project status, promoted out of the hardcoded .status-badge rules so a
+   * feature never has to write these six pairs itself.
+   */
+  --color-status-draft: #756628; /* styles.css:3011, darkened from #7a6a2e to clear 4.5:1 */
+  --surface-status-draft: #f4e9c1; /* styles.css:3012 */
+  --color-status-ready: #1d5b3f; /* styles.css:3016 */
+  --surface-status-ready: #c8ecd8; /* styles.css:3017 */
+  --color-status-published: #4a4a52; /* styles.css:3021 */
+  --surface-status-published: #e0e0e4; /* styles.css:3022 */
+
+  /* The editor stage paints slide content, which must not follow the theme. */
+  --color-editor-ink: #151515; /* styles.css:38 */
+  --color-editor-white: #fff; /* styles.css:39 */
+
+  /* Washes and translucent surfaces */
+  --surface-grid: rgba(21, 21, 21, 0.025); /* styles.css:23 */
+  --surface-header: rgba(242, 241, 237, 0.88); /* styles.css:24 */
+  --surface-rail: rgba(251, 250, 247, 0.84); /* styles.css:25 */
+  --surface-quiet: rgba(255, 255, 255, 0.52); /* styles.css:26 */
+  --surface-icon: rgba(255, 255, 255, 0.7); /* styles.css:27 */
+  --surface-card: rgba(251, 250, 247, 0.52); /* styles.css:28 */
+  --surface-hover: rgba(21, 21, 21, 0.04); /* styles.css:29 */
+  --surface-menu-hover: rgba(21, 21, 21, 0.06); /* styles.css:30 */
+  --surface-workspace-center: rgba(255, 255, 255, 0.88); /* styles.css:31 */
+  --surface-workspace-edge: rgba(238, 237, 231, 0.82); /* styles.css:32 */
+  --surface-workspace-dot: rgba(21, 21, 21, 0.22); /* styles.css:33 */
+  --surface-canvas-action: rgba(251, 250, 247, 0.94); /* styles.css:34 */
+  --surface-canvas-action-line: rgba(21, 21, 21, 0.22); /* styles.css:35 */
+  --surface-canvas-action-shadow: rgba(21, 21, 21, 0.1); /* styles.css:36 */
+  --surface-empty: rgba(251, 250, 247, 0.72); /* styles.css:37 */
+  --surface-backdrop: rgba(21, 21, 21, 0.48); /* styles.css:2558 */
+
+  /* Spacing. --space-0 is the half step the badge and other tight chips need. */
+  --space-0: 2px; /* styles.css:2999 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Radii */
+  --radius-sm: 8px; /* styles.css:2867 */
+  --radius-control: 11px; /* styles.css:2120 */
+  --radius-md: 14px; /* styles.css:40 */
+  --radius-card: 18px; /* styles.css:431 */
+  --radius-lg: 22px;
+  --radius-pill: 999px; /* styles.css:107 */
+
+  /* Control geometry. Sizes live here so every control lines up on one baseline. */
+  --control-height-md: 42px; /* styles.css:105 */
+  --control-height-sm: 30px; /* styles.css:2898 */
+  --control-padding-md: 18px; /* styles.css:106 */
+  --control-padding-sm: 10px; /* styles.css:2899 */
+  --control-size-icon: 38px; /* styles.css:145 */
+  --control-height-textarea: 104px; /* styles.css:2116 */
+  --icon-size: 18px; /* styles.css:163 */
+  --opacity-disabled: 0.5; /* styles.css:101 */
+
+  /*
+   * The paper grid pitch. It reads 24px like --space-5 and is deliberately not
+   * that token, so retuning the spacing scale cannot redraw the page.
+   */
+  --grid-pitch: 24px; /* styles.css:64 */
+
+  /* Type */
+  --font-size-2xs: 10px; /* styles.css:3003 */
+  --font-size-xs: 12px;
+  --font-size-sm: 14px; /* styles.css:109 */
+  --font-size-md: 16px;
+  --font-size-lg: 20px;
+  --font-size-xl: 28px;
+  --font-size-2xl: 40px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 650; /* styles.css:3036 */
+  --font-weight-bold: 700; /* styles.css:110 */
+  --font-weight-heavy: 750; /* styles.css:3005 */
+  --line-height-base: 1.35; /* styles.css:2124 */
+  --letter-spacing-caps: 0.05em; /* styles.css:2862 */
+
+  /* Elevation */
+  --shadow-raised: 0 20px 54px rgba(26, 24, 20, 0.1); /* styles.css:41 */
+  --shadow-pop:
+    4px 4px 0 var(--color-accent), -2px -2px 0 var(--color-accent-warm); /* styles.css:127 */
+  --shadow-pop-hover:
+    6px 6px 0 var(--color-accent), -3px -3px 0 var(--color-accent-warm); /* styles.css:131 */
+  --shadow-pop-modal:
+    9px 9px 0 var(--color-accent), -6px -5px 0 var(--color-accent-warm),
+    var(--shadow-raised); /* styles.css:2569 */
+
+  /*
+   * The focus indicator. The cyan ring is the port of styles.css:85-88 and is
+   * unchanged, but cyan on paper is 1.2:1 and a keyboard user cannot see it. The
+   * companion ring frames the cyan in ink, which reads at 16:1 or better on
+   * every surface in both themes. reset.css owns the only rule that draws it.
+   */
+  --focus-ring-width: 2px; /* styles.css:86 */
+  --focus-ring-offset: 2px; /* styles.css:87 */
+  --color-focus-ring: var(--color-accent); /* styles.css:86 */
+  --color-focus-ring-contrast: var(--color-ink);
+  --focus-ring: 0 0 0 calc(var(--focus-ring-offset) + var(--focus-ring-width) + 1px)
+    var(--color-focus-ring-contrast);
+
+  /* Blur */
+  --blur-backdrop: 8px; /* styles.css:2559 */
+  --blur-panel: 18px; /* styles.css:196 */
+
+  /*
+   * One stacking scale. Radix portals to the end of <body> and resolves most
+   * ordering on its own, but a component that still needs a z-index takes a rung
+   * from here. Values invented per component is how stacking bugs start.
+   */
+  --z-base: 0;
+  --z-raised: 20; /* styles.css:1003 */
+  --z-overlay: 50; /* styles.css:2553 */
+  --z-menu: 80; /* styles.css:2619 */
+  --z-popover: 90; /* styles.css:783 */
+  --z-tooltip: 95; /* invented: the legacy app has no tooltip, and one sits over a popover */
+  --z-toast: 100; /* styles.css:3067 */
+  --z-drag: 9999; /* styles.css:703 */
+
+  /*
+   * Task 10b appends from here. The overlays and form controls needed geometry
+   * the first half never had to name, and a length written into a component is a
+   * length the next component gets wrong.
+   */
+
+  /*
+   * Border widths. Every border in the app's chrome is a hairline; the slider
+   * thumb is the one deliberate exception. --border-width exists mainly so the
+   * switch's thumb travel can subtract the track's own borders by name: that
+   * calc is the one place where changing a border silently moves something else.
+   */
+  --border-width: 1px;
+  --border-width-strong: 2px; /* styles.css:2507 */
+
+  /* Menu surfaces, ported from the five hand-rolled menus at app.js:641-932. */
+  --menu-min-width: 214px; /* styles.css:2620 */
+  --menu-min-width-compact: 132px; /* styles.css:2630 */
+  --radius-menu: 12px; /* styles.css:2622 */
+  --control-height-menu-item: 36px; /* styles.css:2635 */
+  --icon-size-sm: 16px; /* styles.css:2653 */
+
+  /* Dialog geometry */
+  --dialog-width: 440px; /* styles.css:2564 */
+  --dialog-width-compact: 400px; /* styles.css:2587 */
+  --letter-spacing-tight: -0.045em; /* styles.css:2576 */
+  --line-height-relaxed: 1.5; /* styles.css:2582 */
+
+  /* The toast carries a cyan edge only, with no warm red on the other corner. */
+  --shadow-pop-soft: 3px 3px 0 var(--color-accent); /* styles.css:3078 */
+
+  /* Slider geometry */
+  --slider-track-height: 4px; /* styles.css:2496 */
+  --slider-thumb-size: 18px; /* styles.css:2505 */
+
+  /*
+   * The switch has no legacy counterpart, so its geometry is derived rather than
+   * ported. The thumb matches --icon-size and the track is one --space-1 of
+   * padding around it, which keeps a switch the same visual weight as a glyph.
+   */
+  --switch-width: 42px;
+  --switch-height: 26px;
+  --switch-thumb-size: 18px;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-base: 160ms; /* styles.css:112 */
+  --duration-slow: 260ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-lift: -1px; /* styles.css:117 */
+  --motion-lift-strong: -4px; /* styles.css:442 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark; /* styles.css:3105 */
+
+    --color-ink: #f4f5f0; /* styles.css:3106 */
+    --color-muted: #b9bbb3; /* styles.css:3107 */
+    --color-paper: #121310; /* styles.css:3108 */
+    --color-panel: #1c1d19; /* styles.css:3109 */
+    --color-line: #72756c; /* styles.css:3110 */
+    --color-line-soft: #3b3d37; /* styles.css:3111 */
+    --color-white: #242520; /* styles.css:3112 */
+    --color-danger: #ff9caf; /* styles.css:3113 */
+    --color-danger-line: #995463; /* styles.css:3114 */
+
+    --surface-grid: rgba(255, 255, 255, 0.04); /* styles.css:3115 */
+    --surface-header: rgba(18, 19, 16, 0.9); /* styles.css:3116 */
+    --surface-rail: rgba(28, 29, 25, 0.88); /* styles.css:3117 */
+    --surface-quiet: rgba(255, 255, 255, 0.06); /* styles.css:3118 */
+    --surface-icon: rgba(255, 255, 255, 0.08); /* styles.css:3119 */
+    --surface-card: rgba(28, 29, 25, 0.7); /* styles.css:3120 */
+    --surface-hover: rgba(255, 255, 255, 0.08); /* styles.css:3121 */
+    --surface-menu-hover: rgba(255, 255, 255, 0.09); /* styles.css:3122 */
+    --surface-workspace-center: rgba(55, 57, 51, 0.74); /* styles.css:3123 */
+    --surface-workspace-edge: rgba(25, 26, 23, 0.9); /* styles.css:3124 */
+    --surface-workspace-dot: rgba(255, 255, 255, 0.22); /* styles.css:3125 */
+    --surface-canvas-action: rgba(31, 32, 28, 0.95); /* styles.css:3126 */
+    --surface-canvas-action-line: rgba(255, 255, 255, 0.28); /* styles.css:3127 */
+    --surface-canvas-action-shadow: rgba(0, 0, 0, 0.38); /* styles.css:3128 */
+    --surface-empty: rgba(28, 29, 25, 0.78); /* styles.css:3129 */
+    --surface-backdrop: rgba(0, 0, 0, 0.7); /* styles.css:3197 */
+    --surface-danger: #3d1a21;
+
+    --color-status-draft: #f0e3b0; /* styles.css:3050 */
+    --surface-status-draft: #4a411f; /* styles.css:3051 */
+    --color-status-ready: #bfe9d3; /* styles.css:3055 */
+    --surface-status-ready: #1e4634; /* styles.css:3056 */
+    --color-status-published: #c9c9d0; /* styles.css:3060 */
+    --surface-status-published: #3a3a40; /* styles.css:3061 */
+
+    --shadow-raised: 0 20px 58px rgba(0, 0, 0, 0.44); /* styles.css:3130 */
+  }
+}
+
+/*
+ * styles.css:3434 crushed every animation with !important. Zeroing the duration
+ * tokens instead reaches the same place through the scale, so a component that
+ * reads a token needs no reduced-motion rule of its own.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+    --motion-lift: 0px;
+    --motion-lift-strong: 0px;
+  }
+}
+
+/*
+ * Theme pinning, added by Task 10b.
+ *
+ * Everything above follows the operating system through prefers-color-scheme,
+ * which is what the app wants and what the gallery cannot use: light and dark
+ * have to sit side by side on one screen there, and a media query has no subtree
+ * form. These two blocks pin a theme on any element and its descendants.
+ *
+ * The values repeat the ones above because plain CSS cannot apply one
+ * declaration block from two selectors. gallery/theme.browser.test.tsx pins each
+ * theme and asserts the pair actually differs, so a value added above and
+ * forgotten here shows up as a failure rather than as a wrong colour in the
+ * gallery. If tokens.css is ever restructured, light-dark() collapses all three
+ * blocks into one.
+ */
+
+[data-theme="light"] {
+  color-scheme: light; /* styles.css:10 */
+  --color-ink: #151515; /* styles.css:12 */
+  --color-muted: #706f6a; /* styles.css:13 */
+  --color-paper: #f2f1ed; /* styles.css:14 */
+  --color-panel: #fbfaf7; /* styles.css:15 */
+  --color-line: #d8d6cf; /* styles.css:16 */
+  --color-line-soft: #e7e5de; /* styles.css:17 */
+  --color-white: #fff; /* styles.css:18 */
+  --color-danger: #a7213a; /* styles.css:21 */
+  --color-danger-line: #d7a7ae; /* styles.css:22 */
+  --surface-grid: rgba(21, 21, 21, 0.025); /* styles.css:23 */
+  --surface-header: rgba(242, 241, 237, 0.88); /* styles.css:24 */
+  --surface-rail: rgba(251, 250, 247, 0.84); /* styles.css:25 */
+  --surface-quiet: rgba(255, 255, 255, 0.52); /* styles.css:26 */
+  --surface-icon: rgba(255, 255, 255, 0.7); /* styles.css:27 */
+  --surface-card: rgba(251, 250, 247, 0.52); /* styles.css:28 */
+  --surface-hover: rgba(21, 21, 21, 0.04); /* styles.css:29 */
+  --surface-menu-hover: rgba(21, 21, 21, 0.06); /* styles.css:30 */
+  --surface-workspace-center: rgba(255, 255, 255, 0.88); /* styles.css:31 */
+  --surface-workspace-edge: rgba(238, 237, 231, 0.82); /* styles.css:32 */
+  --surface-workspace-dot: rgba(21, 21, 21, 0.22); /* styles.css:33 */
+  --surface-canvas-action: rgba(251, 250, 247, 0.94); /* styles.css:34 */
+  --surface-canvas-action-line: rgba(21, 21, 21, 0.22); /* styles.css:35 */
+  --surface-canvas-action-shadow: rgba(21, 21, 21, 0.1); /* styles.css:36 */
+  --surface-empty: rgba(251, 250, 247, 0.72); /* styles.css:37 */
+  --surface-backdrop: rgba(21, 21, 21, 0.48); /* styles.css:2558 */
+  --surface-danger: #f7dde2;
+  --color-status-draft: #756628; /* styles.css:3011, darkened from #7a6a2e to clear 4.5:1 */
+  --surface-status-draft: #f4e9c1; /* styles.css:3012 */
+  --color-status-ready: #1d5b3f; /* styles.css:3016 */
+  --surface-status-ready: #c8ecd8; /* styles.css:3017 */
+  --color-status-published: #4a4a52; /* styles.css:3021 */
+  --surface-status-published: #e0e0e4; /* styles.css:3022 */
+  --shadow-raised: 0 20px 54px rgba(26, 24, 20, 0.1); /* styles.css:41 */
+}
+
+[data-theme="dark"] {
+  color-scheme: dark; /* styles.css:3105 */
+
+  --color-ink: #f4f5f0; /* styles.css:3106 */
+  --color-muted: #b9bbb3; /* styles.css:3107 */
+  --color-paper: #121310; /* styles.css:3108 */
+  --color-panel: #1c1d19; /* styles.css:3109 */
+  --color-line: #72756c; /* styles.css:3110 */
+  --color-line-soft: #3b3d37; /* styles.css:3111 */
+  --color-white: #242520; /* styles.css:3112 */
+  --color-danger: #ff9caf; /* styles.css:3113 */
+  --color-danger-line: #995463; /* styles.css:3114 */
+
+  --surface-grid: rgba(255, 255, 255, 0.04); /* styles.css:3115 */
+  --surface-header: rgba(18, 19, 16, 0.9); /* styles.css:3116 */
+  --surface-rail: rgba(28, 29, 25, 0.88); /* styles.css:3117 */
+  --surface-quiet: rgba(255, 255, 255, 0.06); /* styles.css:3118 */
+  --surface-icon: rgba(255, 255, 255, 0.08); /* styles.css:3119 */
+  --surface-card: rgba(28, 29, 25, 0.7); /* styles.css:3120 */
+  --surface-hover: rgba(255, 255, 255, 0.08); /* styles.css:3121 */
+  --surface-menu-hover: rgba(255, 255, 255, 0.09); /* styles.css:3122 */
+  --surface-workspace-center: rgba(55, 57, 51, 0.74); /* styles.css:3123 */
+  --surface-workspace-edge: rgba(25, 26, 23, 0.9); /* styles.css:3124 */
+  --surface-workspace-dot: rgba(255, 255, 255, 0.22); /* styles.css:3125 */
+  --surface-canvas-action: rgba(31, 32, 28, 0.95); /* styles.css:3126 */
+  --surface-canvas-action-line: rgba(255, 255, 255, 0.28); /* styles.css:3127 */
+  --surface-canvas-action-shadow: rgba(0, 0, 0, 0.38); /* styles.css:3128 */
+  --surface-empty: rgba(28, 29, 25, 0.78); /* styles.css:3129 */
+  --surface-backdrop: rgba(0, 0, 0, 0.7); /* styles.css:3197 */
+  --surface-danger: #3d1a21;
+
+  --color-status-draft: #f0e3b0; /* styles.css:3050 */
+  --surface-status-draft: #4a411f; /* styles.css:3051 */
+  --color-status-ready: #bfe9d3; /* styles.css:3055 */
+  --surface-status-ready: #1e4634; /* styles.css:3056 */
+  --color-status-published: #c9c9d0; /* styles.css:3060 */
+  --surface-status-published: #3a3a40; /* styles.css:3061 */
+
+  --shadow-raised: 0 20px 58px rgba(0, 0, 0, 0.44); /* styles.css:3130 */
+}

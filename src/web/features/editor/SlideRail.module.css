@@ -1,0 +1,235 @@
+/*
+ * Ported from styles.css:534-731. Every colour, space and radius is a token.
+ * The thumbnail's own aspect comes from the slideshow's ratio, which the rail
+ * publishes as --thumb-aspect the way styles.css:669 read it.
+ */
+
+.rail {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: var(--border-width) solid var(--color-line);
+  background: var(--surface-rail);
+  backdrop-filter: blur(var(--blur-panel));
+}
+
+.heading {
+  display: flex;
+  padding: var(--space-5) var(--space-4) var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.heading h2 {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-heavy);
+}
+
+.count {
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+}
+
+.list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-4);
+  overflow-y: auto;
+}
+
+.slide {
+  position: relative;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-control);
+  cursor: grab;
+}
+
+.slide:hover {
+  background: var(--surface-hover);
+}
+
+.slide.active {
+  border-color: var(--color-ink);
+  background: var(--color-white);
+  box-shadow: var(--space-0) var(--space-0) 0 var(--color-accent);
+}
+
+.slide.dragging {
+  opacity: 0.42;
+  cursor: grabbing;
+}
+
+/* styles.css:633-653. The line the drop would land on. */
+.slide.dropBefore::before,
+.slide.dropAfter::after {
+  position: absolute;
+  z-index: var(--z-raised);
+  right: var(--space-1);
+  left: var(--space-1);
+  height: var(--space-0);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  box-shadow: 0 0 0 var(--border-width) var(--color-ink);
+  content: "";
+  pointer-events: none;
+}
+
+.slide.dropBefore::before {
+  top: calc(var(--space-1) * -1);
+}
+
+.slide.dropAfter::after {
+  bottom: calc(var(--space-1) * -1);
+}
+
+.open {
+  display: grid;
+  width: 100%;
+  padding: var(--space-2);
+  gap: var(--space-2);
+  align-items: start;
+  grid-template-columns: var(--space-5) minmax(0, 1fr);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: inherit;
+}
+
+.number {
+  padding-top: var(--space-0);
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-line);
+  aspect-ratio: var(--thumb-aspect, 9 / 16);
+  pointer-events: none;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+
+/* styles.css:683-699. The spinner that stands in until the first draw lands. */
+.pending {
+  position: absolute;
+  display: grid;
+  inset: 0;
+  overflow: hidden;
+  place-items: center;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-panel) 78%, var(--color-ink)),
+    var(--color-panel)
+  );
+}
+
+.pending span {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  border: var(--border-width-strong) solid
+    color-mix(in srgb, var(--color-ink) 22%, transparent);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-pill);
+  animation: spin var(--duration-slow) linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.menu {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}
+
+.footer {
+  padding: var(--space-3);
+  border-top: var(--border-width) solid var(--color-line-soft);
+}
+
+.footer button {
+  width: 100%;
+}
+
+/*
+ * The narrow rail, ported from styles.css:3259-3299.
+ *
+ * At 68px there is room for the picture and nothing else, so every label goes
+ * and the row becomes one column instead of a number beside a thumbnail. The
+ * old app used `font-size: 0` to collapse its labels, which leaves them in the
+ * accessibility tree at zero pixels; `display: none` takes them out of both.
+ * Nothing is lost by that: the rail is named by its own aria-label, and each
+ * slide's number is already in its button's accessible name.
+ */
+@media (max-width: 780px) {
+  .heading {
+    padding: var(--space-3) var(--space-1) var(--space-2);
+    justify-content: center;
+  }
+
+  .heading h2,
+  .count,
+  .number {
+    display: none;
+  }
+
+  .list {
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-1) var(--space-3);
+  }
+
+  .open {
+    padding: var(--space-1);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /*
+   * app.js drew no trigger here at all: its menu was a right-click and nothing
+   * else, which is unreachable from a keyboard. Keeping one costs a corner of
+   * the thumbnail, so it shrinks and tucks in tight. This is fit and finish
+   * rather than a fix: a 68px rail still gives each row a picture some 120px
+   * tall, so the trigger clears the middle of the row at either size, and the
+   * test that pins the row's own tap target passes with this rule removed.
+   */
+  .menu {
+    top: var(--space-0);
+    right: var(--space-0);
+    transform: scale(0.78);
+    transform-origin: top right;
+  }
+
+  .footer {
+    padding: var(--space-1);
+  }
+
+  .footer button {
+    padding: 0;
+  }
+
+  .footer button span {
+    display: none;
+  }
+}

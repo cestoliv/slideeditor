@@ -1,0 +1,183 @@
+/*
+ * Ported from styles.css:2735-2900 and its 780px block at :2925-2933. Colours,
+ * gaps, padding, radii and type come from tokens.css. The literals that remain
+ * are structural: the page's measure, the column the grid breaks at, and the
+ * thumbnail's own shape, none of which is a step on any scale.
+ */
+
+.admin {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-5) var(--space-8);
+}
+
+.head {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-end;
+  justify-content: space-between;
+  padding-bottom: var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-line);
+  flex-wrap: wrap;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+}
+
+/* styles.css:2753 asked for 34px, which the type scale has no step for. */
+.title {
+  margin: var(--space-1) 0 var(--space-2);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-heavy);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.intro {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: var(--border-width) solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-panel);
+}
+
+.tab {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  text-decoration: none;
+}
+
+.tab[data-current] {
+  color: var(--color-panel);
+  background: var(--color-ink);
+}
+
+.toolbar {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin: var(--space-5) 0 var(--space-2);
+  flex-wrap: wrap;
+}
+
+.search {
+  min-width: 240px;
+  flex: 1 1 320px;
+  border-radius: var(--radius-pill);
+}
+
+/* The picker the upload button clicks. It is never shown, only triggered. */
+.picker {
+  display: none;
+}
+
+.hint {
+  margin: 0 0 var(--space-5);
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+}
+
+.problem {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin: 0 0 var(--space-4);
+  flex-wrap: wrap;
+}
+
+.problemText {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+}
+
+.grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
+}
+
+.empty {
+  padding: var(--space-7) 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+.card {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 132px 1fr;
+}
+
+.thumb {
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-empty);
+  aspect-ratio: 3 / 4;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.fields {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+}
+
+.cardFooter {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-0);
+}
+
+/* styles.css:2884 sets these at 11px, which the type scale has no step for. */
+.meta,
+.saveState {
+  color: var(--color-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.saveState {
+  margin-left: auto;
+}
+
+.delete {
+  color: var(--color-danger);
+}
+
+@media (max-width: 780px) {
+  .admin {
+    padding: var(--space-4) var(--space-3) var(--space-7);
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .card {
+    grid-template-columns: 1fr;
+  }
+}

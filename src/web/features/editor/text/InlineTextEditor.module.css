@@ -1,0 +1,30 @@
+/*
+ * Ported from styles.css:1828-1853.
+ *
+ * The glyphs here are invisible on purpose. They exist so the browser has a
+ * real text flow to put a caret and a selection into, while what the reader
+ * sees is the layer painted underneath from the shared layout.
+ */
+
+.editor {
+  position: absolute;
+  z-index: var(--z-raised);
+  display: block;
+  overflow: hidden;
+  color: transparent;
+  outline: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--color-accent);
+  cursor: text;
+  pointer-events: auto;
+  user-select: text;
+}
+
+/* styles.css:1844. A selection has to be visible without painting the glyphs. */
+.editor::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--color-accent) 42%, transparent);
+  -webkit-text-fill-color: transparent;
+}

@@ -31,18 +31,20 @@ That is the whole setup. There is nothing to install and nothing to configure.
 Each run pulls the current default branch, so you are always on the latest
 version.
 
-To work on the code instead, clone the repo and run `npm start`, which installs
-dependencies on first run.
+The first run builds the editor before it starts, so it takes a minute. Later
+runs reuse npm's cache and start straight away.
+
+To work on the code instead, see [Working on the code](#working-on-the-code).
 
 Data lives in `~/.slide-studio`: a SQLite database, the image files, and the
 access token. Back up that one directory and you have backed up everything.
 
-| Flag | Default | Purpose |
-|---|---|---|
-| `--port` | `4173` | Port to listen on |
-| `--host` | `127.0.0.1` | Interface to bind. Use `0.0.0.0` to reach it from another machine. |
-| `--data` | `~/.slide-studio` | Data directory |
-| `--allowed-host` | none | Extra hostname to accept, repeatable |
+| Flag             | Default           | Purpose                                                            |
+| ---------------- | ----------------- | ------------------------------------------------------------------ |
+| `--port`         | `4173`            | Port to listen on                                                  |
+| `--host`         | `127.0.0.1`       | Interface to bind. Use `0.0.0.0` to reach it from another machine. |
+| `--data`         | `~/.slide-studio` | Data directory                                                     |
+| `--allowed-host` | none              | Extra hostname to accept, repeatable                               |
 
 `SLIDE_STUDIO_PORT` and `SLIDE_STUDIO_DATA` work as environment variables too.
 
@@ -119,15 +121,15 @@ HTTP.
 
 ### 3. Tools
 
-| Tool | Purpose |
-|---|---|
-| `list_library` | List or search backgrounds and assets, with usage stats |
-| `get_library_item` | Read one item, including its usage guidance |
-| `list_slideshows` | List slideshows with ids, versions, status, and edit URLs |
-| `get_slideshow` | Read one slideshow's composition and status |
-| `create_slideshow` | Draft a slideshow. Returns the edit URL. |
-| `update_slideshow` | Edit an existing one, guarded by its version |
-| `set_slideshow_status` | Move a slideshow between draft, ready, and published |
+| Tool                   | Purpose                                                             |
+| ---------------------- | ------------------------------------------------------------------- |
+| `list_library`         | List or search backgrounds and assets, with usage stats             |
+| `get_library_item`     | Read one item, including its usage guidance                         |
+| `list_slideshows`      | List slideshows with ids, versions, status, captions, and edit URLs |
+| `get_slideshow`        | Read one slideshow's composition, status, and caption               |
+| `create_slideshow`     | Draft a slideshow and its caption. Returns the edit URL.            |
+| `update_slideshow`     | Edit an existing one, guarded by its version                        |
+| `set_slideshow_status` | Move a slideshow between draft, ready, and published                |
 
 ### 4. How to draft a slideshow
 
@@ -155,6 +157,8 @@ Then call `create_slideshow`. Each slide takes one `background` id, any number o
 {
   "name": "Summer travel tips",
   "ratio": { "w": 4, "h": 5 },
+  "description": "Five things to know before you book a summer trip.",
+  "hashtags": ["travel", "summer"],
   "slides": [
     {
       "background": "<background id>",
@@ -169,6 +173,19 @@ Then call `create_slideshow`. Each slide takes one `background` id, any number o
   ]
 }
 ```
+
+Write the caption as part of the draft. A slideshow exists to be posted, and the
+`description` and the `hashtags` are what gets pasted into TikTok or Instagram
+beside the images, so a placeholder there is work the human has to redo.
+
+Hashtags go in as a list or as one string, and the leading `#` is optional.
+What comes back is always one string, `"#travel #summer"`, whichever way they
+went in. A tag repeated in any casing is kept once, and only the first 30 are
+stored, which is Instagram's own limit. A description stops at 2200 characters,
+the caption limit on both platforms.
+
+The human edits both behind the Caption button in the editor's header, and
+copies each one out when they post.
 
 Pick the ratio from where it will be posted: `9:16` for TikTok, Reels, or
 Stories; `4:5` or `3:4` for an Instagram feed post; `1:1` for a square; `1.91:1`
@@ -187,6 +204,10 @@ Call `get_slideshow` first and pass the `version` it returns to
 `update_slideshow`. A stale version is rejected rather than overwriting work the
 human did in the meantime. On rejection, read the slideshow again and redo your
 change on top of the current state.
+
+A caption field you leave out keeps what is stored, so editing the slides never
+wipes a caption the human has been working on. Send an empty string to clear one
+on purpose.
 
 Slides whose composition you leave untouched keep the exact layout the human
 gave them. On a slide you do change, any asset or text line that is still there
@@ -260,11 +281,44 @@ Writes to a slideshow carry the version you read. A stale write gets a 409
 instead of overwriting someone else's work, and an open editor reloads when an
 agent changes the slideshow you are looking at.
 
-## Tests
+## Working on the code
+
+```bash
+git clone https://github.com/cestoliv/slideeditor.git
+cd slideeditor
+npm install
+npm run dev:all
+```
+
+`npm run dev:all` starts the API with a watcher on port 4173 and the Vite dev
+server on port 5173 together. Open the Vite one. It proxies `/api`, `/media`,
+and `/mcp` to the API. `npm run dev` and `npm run dev:web` start each half on
+its own.
+
+`npm start` runs the built server, so it needs `npm install` and `npm run build`
+first.
+
+The code sits in three roots. `src/shared` holds pure TypeScript: geometry, text
+layout, composition, and the schemas. `src/server` holds Fastify, the MCP tools,
+and the SQLite services. `src/web` holds the React editor and the design system.
+
+### Tests
 
 ```bash
 npm test
 ```
+
+That runs four Vitest projects: `shared` and `server` in Node, `web` and `e2e`
+in a real browser. The two browser projects need Chromium from Playwright, so
+run `npx playwright install chromium` once.
+
+Run one at a time with `npm run test:shared`, `npm run test:server`,
+`npm run test:web`, or `npm run test:e2e`. `npm run check` runs both typechecks,
+ESLint, and Prettier.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers where a change goes, which test
+project it needs, and the two rules that keep the editor and the export drawing
+the same picture.
 
 ## License
 

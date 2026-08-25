@@ -1,0 +1,80 @@
+/*
+ * Ported from styles.css:528-533. The literals left are structural: the rail's
+ * own track width and the workspace's floor, neither of which is a step on the
+ * spacing scale.
+ */
+
+.editor {
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+}
+
+/*
+ * The four columns styles.css:531 declared: the slide rail, the asset rail, the
+ * workspace, and the inspector. The two rail widths and the workspace floor are
+ * structural literals rather than steps on the spacing scale.
+ */
+.shell {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 190px 168px minmax(300px, 1fr) 294px;
+}
+
+.name {
+  width: min(360px, 40vw);
+}
+
+.state {
+  display: grid;
+  padding: var(--space-8) var(--space-5);
+  place-items: center;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+.problem {
+  color: var(--color-danger);
+}
+
+/*
+ * styles.css:3205-3208 and styles.css:3259-3262. The columns tighten, and then
+ * the inspector leaves the grid entirely and becomes a sheet over the canvas,
+ * which Inspector.module.css draws.
+ *
+ * The slide rail narrows with them, to 148px and then to 68px. The rules that
+ * make a 68px rail readable live in SlideRail.module.css, beside the markup
+ * they reshape; without them the rail's own controls stack on top of each
+ * other, which is why this track waited for them.
+ */
+@media (max-width: 1040px) {
+  .shell {
+    grid-template-columns: 148px 132px minmax(280px, 1fr) 250px;
+  }
+}
+
+@media (max-width: 780px) {
+  .shell {
+    grid-template-columns: 68px 64px minmax(200px, 1fr);
+  }
+}
+
+/* The button that opens that sheet, which is worth nothing on a wide screen. */
+.mobileToggle {
+  display: none;
+}
+
+@media (max-width: 780px) {
+  .mobileToggle {
+    display: inline-grid;
+  }
+}
+
+/* The name and its save state read as one thing, so they sit together. */
+.identity {
+  display: inline-flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+}

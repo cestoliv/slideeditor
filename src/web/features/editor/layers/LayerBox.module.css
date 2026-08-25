@@ -1,0 +1,148 @@
+/*
+ * Ported from styles.css:1579-2015. Every colour, space and radius is a token,
+ * and every handle offset is arithmetic on the handle's own size, so a handle
+ * stays centred on its edge whatever the scale becomes.
+ */
+
+/*
+ * styles.css:1580 and styles.css:1712 drew the outline with a 1px border, which
+ * takes 2px out of the box's content width. Everything inside is laid out from
+ * TextLayout, which measures against the layer's own fraction of the canvas, so
+ * a border here would put the stage 2px out from the export at every scale. An
+ * inset ring paints the same line and leaves the content box whole.
+ */
+.box {
+  position: absolute;
+  outline: none;
+  box-shadow: inset 0 0 0 var(--border-width) transparent;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  transform-origin: center center;
+}
+
+.box:hover {
+  box-shadow: inset 0 0 0 var(--border-width)
+    color-mix(in srgb, var(--color-white) 52%, transparent);
+}
+
+.box.selected,
+.box.selected:hover {
+  box-shadow:
+    inset 0 0 0 var(--border-width) var(--color-accent),
+    0 0 0 var(--border-width) color-mix(in srgb, var(--color-ink) 75%, transparent);
+}
+
+/* styles.css:1673-1709. The rotate grip, on its short stalk above the box. */
+.rotate {
+  position: absolute;
+  top: calc((var(--space-5) + var(--space-2)) * -1);
+  left: 50%;
+  z-index: var(--z-raised);
+  display: grid;
+  width: var(--space-5);
+  height: var(--space-5);
+  place-items: center;
+  border: var(--border-width-strong) solid var(--color-ink);
+  border-radius: 50%;
+  color: var(--color-ink);
+  background: var(--color-white);
+  box-shadow: 0 0 0 var(--border-width) var(--color-white);
+  transform: translateX(-50%);
+  cursor: grab;
+  touch-action: none;
+}
+
+.rotate svg {
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.rotate::after {
+  position: absolute;
+  top: var(--space-5);
+  left: 50%;
+  width: var(--border-width);
+  height: var(--space-2);
+  background: var(--color-accent);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.corner,
+.edge {
+  position: absolute;
+  z-index: var(--z-raised);
+  border: var(--border-width-strong) solid var(--color-ink);
+  background: var(--color-accent);
+  box-shadow: 0 0 0 var(--border-width) var(--color-white);
+  touch-action: none;
+}
+
+.corner {
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: 50%;
+}
+
+.edge {
+  border-radius: var(--radius-sm);
+}
+
+.edge[data-handle="n"],
+.edge[data-handle="s"] {
+  left: 50%;
+  width: calc(var(--space-4) + var(--space-0));
+  height: var(--space-2);
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.edge[data-handle="n"] {
+  top: calc((var(--space-1) + var(--border-width)) * -1);
+}
+
+.edge[data-handle="s"] {
+  bottom: calc((var(--space-1) + var(--border-width)) * -1);
+}
+
+.edge[data-handle="e"],
+.edge[data-handle="w"] {
+  top: 50%;
+  width: var(--space-2);
+  height: calc(var(--space-4) + var(--space-0));
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.edge[data-handle="e"] {
+  right: calc((var(--space-1) + var(--border-width)) * -1);
+}
+
+.edge[data-handle="w"] {
+  left: calc((var(--space-1) + var(--border-width)) * -1);
+}
+
+.corner[data-handle="nw"] {
+  top: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  left: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  cursor: nwse-resize;
+}
+
+.corner[data-handle="ne"] {
+  top: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  right: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  cursor: nesw-resize;
+}
+
+.corner[data-handle="sw"] {
+  bottom: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  left: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  cursor: nesw-resize;
+}
+
+.corner[data-handle="se"] {
+  right: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  bottom: calc((var(--space-3) / 2 + var(--border-width)) * -1);
+  cursor: nwse-resize;
+}

@@ -1,0 +1,390 @@
+[
+  {
+    "ratio": {
+      "w": 9,
+      "h": 16
+    },
+    "slides": [
+      {
+        "name": "Slide 1",
+        "backgroundItemId": "bg1",
+        "width": 1080,
+        "height": 1920,
+        "imageScale": 1,
+        "imageX": 0,
+        "imageY": 0,
+        "overlays": [],
+        "texts": []
+      }
+    ]
+  },
+  {
+    "ratio": {
+      "w": 9,
+      "h": 16
+    },
+    "slides": [
+      {
+        "name": "Slide 1",
+        "backgroundItemId": "bg1",
+        "width": 1080,
+        "height": 1920,
+        "imageScale": 1,
+        "imageX": 0,
+        "imageY": 0,
+        "overlays": [
+          {
+            "itemId": "a1",
+            "x": 0.06,
+            "y": 0.07,
+            "width": 0.88,
+            "height": 0.2475,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 1
+          }
+        ],
+        "texts": [
+          {
+            "text": "Short line",
+            "x": 0.06,
+            "y": 0.8826666666666667,
+            "width": 0.88,
+            "height": 0.037333333333333336,
+            "size": 64,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 2
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "ratio": {
+      "w": 4,
+      "h": 5
+    },
+    "slides": [
+      {
+        "name": "Slide 1",
+        "backgroundItemId": "bg2",
+        "width": 1200,
+        "height": 1200,
+        "imageScale": 1,
+        "imageX": 0,
+        "imageY": 0,
+        "overlays": [
+          {
+            "itemId": "a1",
+            "x": 0.10655555555555551,
+            "y": 0.15951111111111108,
+            "width": 0.2733333333333334,
+            "height": 0.10933333333333335,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 1
+          },
+          {
+            "itemId": "a2",
+            "x": 0.40988888888888886,
+            "y": 0.07,
+            "width": 0.18022222222222217,
+            "height": 0.2883555555555555,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 2
+          },
+          {
+            "itemId": "a3",
+            "x": 0.6201111111111111,
+            "y": 0.10484444444444439,
+            "width": 0.2733333333333334,
+            "height": 0.2186666666666667,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 3
+          },
+          {
+            "itemId": "a4",
+            "x": 0.3633333333333333,
+            "y": 0.3883555555555555,
+            "width": 0.2733333333333334,
+            "height": 0.043733333333333346,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 4
+          }
+        ],
+        "texts": [
+          {
+            "text": "One",
+            "x": 0.06,
+            "y": 0.7167111111111111,
+            "width": 0.88,
+            "height": 0.0530962962962963,
+            "size": 64,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 5
+          },
+          {
+            "text": "Two",
+            "x": 0.06,
+            "y": 0.7918074074074074,
+            "width": 0.88,
+            "height": 0.0530962962962963,
+            "size": 64,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 6
+          },
+          {
+            "text": "Three",
+            "x": 0.06,
+            "y": 0.8669037037037037,
+            "width": 0.88,
+            "height": 0.0530962962962963,
+            "size": 64,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 7
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "ratio": {
+      "w": 1,
+      "h": 1
+    },
+    "slides": [
+      {
+        "name": "Slide 1",
+        "backgroundItemId": "bg2",
+        "width": 1200,
+        "height": 1200,
+        "imageScale": 1,
+        "imageX": 0,
+        "imageY": 0,
+        "overlays": [],
+        "texts": [
+          {
+            "text": "A very long line that has to wrap several times before it fits inside the content width of the slide",
+            "x": 0.06,
+            "y": 0.6545185185185185,
+            "width": 0.88,
+            "height": 0.2654814814814815,
+            "size": 64,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 1
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "ratio": {
+      "w": 1.91,
+      "h": 1
+    },
+    "slides": [
+      {
+        "name": "Slide 1",
+        "backgroundItemId": "bg1",
+        "width": 1080,
+        "height": 1920,
+        "imageScale": 1,
+        "imageX": 0,
+        "imageY": 0,
+        "overlays": [
+          {
+            "itemId": "a1",
+            "x": 0.3735648148148148,
+            "y": 0.07,
+            "width": 0.1782962962962963,
+            "height": 0.17010600706713783,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 1
+          },
+          {
+            "itemId": "a2",
+            "x": 0.5818611111111112,
+            "y": 0.07,
+            "width": 0.04457407407407408,
+            "height": 0.17010600706713783,
+            "rotation": 0,
+            "cropX": 0,
+            "cropY": 0,
+            "cropW": 1,
+            "cropH": 1,
+            "z": 2
+          }
+        ],
+        "texts": [
+          {
+            "text": "One",
+            "x": 0.06,
+            "y": 0.28010600706713784,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 3
+          },
+          {
+            "text": "Two",
+            "x": 0.06,
+            "y": 0.3613427561837456,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 4
+          },
+          {
+            "text": "Three",
+            "x": 0.06,
+            "y": 0.4425795053003534,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 5
+          },
+          {
+            "text": "Four",
+            "x": 0.06,
+            "y": 0.5238162544169611,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 6
+          },
+          {
+            "text": "Five",
+            "x": 0.06,
+            "y": 0.6050530035335688,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 7
+          },
+          {
+            "text": "Six",
+            "x": 0.06,
+            "y": 0.6862897526501766,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 8
+          },
+          {
+            "text": "Seven",
+            "x": 0.06,
+            "y": 0.7675265017667843,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 9
+          },
+          {
+            "text": "Eight",
+            "x": 0.06,
+            "y": 0.848763250883392,
+            "width": 0.88,
+            "height": 0.07123674911660778,
+            "size": 36,
+            "style": "plain",
+            "color": "#FFFFFF",
+            "background": "white",
+            "backgroundShape": "lines",
+            "align": "center",
+            "rotation": 0,
+            "z": 10
+          }
+        ]
+      }
+    ]
+  }
+]

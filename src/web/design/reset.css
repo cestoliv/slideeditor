@@ -1,0 +1,73 @@
+/*
+ * Element-level defaults, ported from styles.css:44-108. Everything past this
+ * point is a component, so this file owns no class of its own.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--color-ink);
+  font-family: var(--font-family-base);
+  /* The paper grid is two hairline gradients over the paper colour. */
+  background:
+    linear-gradient(var(--surface-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--surface-grid) 1px, transparent 1px), var(--color-paper);
+  background-size: var(--grid-pitch) var(--grid-pitch);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  color: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-muted);
+  opacity: 1;
+}
+
+/*
+ * The cyan ring alone is 1.2:1 on paper, so the ink companion behind it carries
+ * the contrast while the brand colour stays exactly where it was. Any primitive
+ * that paints its own box-shadow has to compose --focus-ring back in.
+ */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: var(--focus-ring);
+}
+
+button {
+  color: inherit;
+}
+
+button,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}

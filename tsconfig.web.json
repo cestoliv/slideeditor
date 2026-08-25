@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `types: []` keeps @types/node out of the browser bundle's type surface, so
+    // `process.env` fails here instead of at runtime in Chromium.
+    "types": [],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "noEmit": true
+  },
+  // tests/e2e runs in Chromium too, so it belongs under this config. Its setup
+  // directory does not: that code runs in Node and needs the types removed here.
+  "include": ["src/web", "src/shared", "tests/e2e"],
+  "exclude": ["tests/e2e/setup"]
+}

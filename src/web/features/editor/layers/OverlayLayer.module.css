@@ -1,0 +1,118 @@
+/*
+ * Ported from styles.css:1589-1658.
+ */
+
+.clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.clip img {
+  position: absolute;
+  display: block;
+  max-width: none;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+}
+
+/*
+ * styles.css:1609-1621. The part of the overlay hanging off the canvas, greyed,
+ * so a selected overlay shows what will not export.
+ */
+.outside {
+  display: none;
+}
+
+.outside img {
+  filter: grayscale(1) saturate(0) brightness(1.08) contrast(0.82);
+  opacity: 0.72;
+}
+
+.outside[data-visible="true"] {
+  display: block;
+}
+
+.inside {
+  z-index: var(--z-raised);
+}
+
+.cropping {
+  overflow: hidden;
+  cursor: default;
+}
+
+/* styles.css:1632-1639. The kept region, with everything else dimmed around it. */
+.cropRect {
+  position: absolute;
+  z-index: var(--z-overlay);
+  border: var(--border-width) solid var(--color-white);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--color-ink) 50%, transparent);
+  cursor: move;
+  touch-action: none;
+}
+
+.cropCorner,
+.cropEdge {
+  position: absolute;
+  z-index: var(--z-menu);
+  width: calc(var(--space-3) - var(--border-width));
+  height: calc(var(--space-3) - var(--border-width));
+  border: var(--border-width-strong) solid var(--color-ink);
+  background: var(--color-accent);
+  box-shadow: 0 0 0 var(--border-width) var(--color-white);
+  touch-action: none;
+}
+
+.cropCorner[data-crop-handle="nw"] {
+  top: calc(var(--space-2) * -0.75);
+  left: calc(var(--space-2) * -0.75);
+  cursor: nwse-resize;
+}
+
+.cropCorner[data-crop-handle="ne"] {
+  top: calc(var(--space-2) * -0.75);
+  right: calc(var(--space-2) * -0.75);
+  cursor: nesw-resize;
+}
+
+.cropCorner[data-crop-handle="sw"] {
+  bottom: calc(var(--space-2) * -0.75);
+  left: calc(var(--space-2) * -0.75);
+  cursor: nesw-resize;
+}
+
+.cropCorner[data-crop-handle="se"] {
+  right: calc(var(--space-2) * -0.75);
+  bottom: calc(var(--space-2) * -0.75);
+  cursor: nwse-resize;
+}
+
+.cropEdge[data-crop-handle="n"] {
+  top: calc(var(--space-2) * -0.75);
+  left: 50%;
+  cursor: ns-resize;
+  transform: translateX(-50%);
+}
+
+.cropEdge[data-crop-handle="s"] {
+  bottom: calc(var(--space-2) * -0.75);
+  left: 50%;
+  cursor: ns-resize;
+  transform: translateX(-50%);
+}
+
+.cropEdge[data-crop-handle="e"] {
+  top: 50%;
+  right: calc(var(--space-2) * -0.75);
+  cursor: ew-resize;
+  transform: translateY(-50%);
+}
+
+.cropEdge[data-crop-handle="w"] {
+  top: 50%;
+  left: calc(var(--space-2) * -0.75);
+  cursor: ew-resize;
+  transform: translateY(-50%);
+}
