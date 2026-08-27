@@ -14,6 +14,15 @@ const TYPES = new Map([
 
 const EXTENSIONS = new Map([...TYPES].map(([type, ext]) => [ext, type]));
 
+// Google fonts are self-hosted through this same content-addressed store, at
+// /media/<hash>.woff2. They are never a valid image upload, so this stays out
+// of TYPES/extensionForType (which gate what the library accepts) — only
+// typeForExtension needs it, to send the right Content-Type back.
+const FONT_EXTENSIONS = new Map([
+  ["woff2", "font/woff2"],
+  ["woff", "font/woff"],
+]);
+
 export interface ImageSize {
   width: number;
   height: number;
@@ -31,7 +40,7 @@ export function extensionForType(type: unknown): string | null {
 }
 
 export function typeForExtension(ext: string): string {
-  return EXTENSIONS.get(ext) ?? "application/octet-stream";
+  return EXTENSIONS.get(ext) ?? FONT_EXTENSIONS.get(ext) ?? "application/octet-stream";
 }
 
 export class MediaStore {

@@ -14,6 +14,10 @@ it("names the guard each path needs", () => {
   expect(guardFor("/media/abc.png")).toBe("any");
   expect(guardFor("/")).toBe("none");
   expect(guardFor("/assets/index.js")).toBe("none");
+  // Deliberately public: the two bundled font binaries under assets/, named
+  // by the login screen before any credential exists — unlike /media/, which
+  // also serves uploaded library images through the same URL shape.
+  expect(guardFor("/fonts/tiktok-sans.ttf")).toBe("none");
 });
 
 it("ignores the query string when naming a guard", () => {

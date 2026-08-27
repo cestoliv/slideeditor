@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, LibrarySort } from "@shared/schema/index.js";
 import { browseLibrary, matchesQuery } from "./browse.js";
 
@@ -19,6 +20,7 @@ function item(overrides: Partial<LibraryItem> = {}): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: "m1",
     ext: "png",
     url: "/media/m1.png",

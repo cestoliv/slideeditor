@@ -8,7 +8,7 @@ interface IdParams {
 
 export function projectRoutes(app: FastifyInstance): void {
   app.get("/api/projects", (request) => ({
-    projects: app.projects.list(statusFilter(request.query)),
+    projects: app.projects.list(projectListOptions(request.query)),
   }));
 
   app.post("/api/projects", (request) => {
@@ -19,6 +19,7 @@ export function projectRoutes(app: FastifyInstance): void {
         document: body["document"],
         description: field(body, "description"),
         hashtags: field(body, "hashtags"),
+        accountId: field(body, "accountId"),
       }),
     };
   });
@@ -56,4 +57,10 @@ export function projectRoutes(app: FastifyInstance): void {
 export function statusFilter(query: unknown): ProjectListOptions {
   const status = queryValue(query, "status");
   return status === null ? {} : { status };
+}
+
+/** statusFilter plus the `?account=` filter, shared with /api/slideshows. */
+export function projectListOptions(query: unknown): ProjectListOptions {
+  const account = queryValue(query, "account");
+  return { ...statusFilter(query), ...(account === null ? {} : { accountId: account }) };
 }

@@ -33,6 +33,7 @@ it("counts every placement, not just distinct items", async () => {
 
   // The same asset twice on one slide, once on another.
   projects.create({
+    accountId: "default",
     name: "One",
     document: document([
       slide(background.id, [asset.id, asset.id]),
@@ -55,10 +56,12 @@ it("adds up across slideshows", async () => {
   const asset = await addItem(library, "asset", "As");
 
   projects.create({
+    accountId: "default",
     name: "One",
     document: document([slide(background.id, [asset.id])]),
   });
   projects.create({
+    accountId: "default",
     name: "Two",
     document: document([slide(background.id, [asset.id, asset.id])]),
   });
@@ -74,6 +77,7 @@ it("keeps history after the slideshow is deleted", async () => {
   const background = await addItem(library, "background", "Bg");
   const asset = await addItem(library, "asset", "As");
   const project = projects.create({
+    accountId: "default",
     name: "Doomed",
     document: document([slide(background.id, [asset.id, asset.id])]),
   });
@@ -96,6 +100,7 @@ it("tracks the current placement count on re-save", async () => {
   const background = await addItem(library, "background", "Bg");
   const asset = await addItem(library, "asset", "As");
   const project = projects.create({
+    accountId: "default",
     name: "Edited",
     document: document([slide(background.id, [asset.id, asset.id])]),
   });
@@ -133,6 +138,7 @@ it("sorts least-used first so an agent can vary its choices", async () => {
   const never = await addItem(library, "asset", "Never");
 
   projects.create({
+    accountId: "default",
     name: "One",
     document: document([slide(background.id, [heavy.id, heavy.id, heavy.id, light.id])]),
   });
@@ -153,6 +159,7 @@ it("applies a sort to search results too", async () => {
   const heavy = await addItem(library, "asset", "Arrow one", { description: "an arrow" });
   await addItem(library, "asset", "Arrow two", { description: "an arrow" });
   projects.create({
+    accountId: "default",
     name: "One",
     document: document([slide(background.id, [heavy.id])]),
   });

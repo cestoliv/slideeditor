@@ -83,8 +83,8 @@ npm test
 ```
 
 `npm run dev` starts the API alone on port 4173. `npm run dev:web` starts Vite
-alone on port 5173 and proxies `/api`, `/media`, and `/mcp` to the API. `npm run
-dev:all` runs both.
+alone on port 5173 and proxies `/api`, `/media`, `/mcp`, and `/fonts` to the
+API. `npm run dev:all` runs both.
 
 `npm start` runs the built server, so run `npm run build` first.
 
@@ -108,20 +108,10 @@ code in every checkout. The citations record why a formula is shaped the way it
 is, which is worth reading when you change one, and git holds that for as long
 as the repo exists.
 
-## Two defects carried on purpose
+## A defect carried on purpose
 
-Neither is a bug someone missed. Both are recorded so the next person does not
-rediscover them, and neither is in scope for the rewrite.
-
-**The auto-layout engine gives every overlay a negative width and height when a
-slide carries many assets and an overflowing text block.** `layoutAssets` in
-`src/shared/compose/compose.ts` subtracts its gaps from the asset band with no
-floor. Once the rows outgrow the band, every overlay comes out negative and
-renders as nothing. Ten assets plus an overflowing text block is enough.
-`tests/e2e/agent-flow.e2e.test.ts` carries a test failing on purpose for it,
-"gives an overlay a real size when a slide carries many assets", written as
-`it.fails` so it turns red the day someone fixes the engine. Delete the `.fails`
-then.
+Not a bug someone missed. Recorded so the next person does not rediscover it,
+and not in scope for the rewrite.
 
 **`list()` reports the page length rather than the match count when a search
 term is given.** `LibraryService.list` in `src/server/services/library.ts`

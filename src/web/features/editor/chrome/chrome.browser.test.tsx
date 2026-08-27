@@ -7,6 +7,7 @@ import "../../../design/reset.css";
 import { OUTPUT_WIDTH } from "@shared/geometry/index.js";
 import type { Project, Slide } from "@shared/schema/index.js";
 import { ToastProvider } from "../../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../../app/accounts.js";
 import { LibraryCache } from "../../../app/useLibrary.js";
 import { Editor } from "../Editor.js";
 import type { EditorClient } from "../Editor.js";
@@ -69,25 +70,39 @@ function emptyLibrary(): LibraryCache {
   });
 }
 
+function emptyAccountsStore(): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
+
 function mount(it_: World) {
   return render(
     <MemoryRouter initialEntries={["/projects/project-1"]}>
       <ToastProvider>
-        <Routes>
-          <Route path="/" element={<p>Somewhere else</p>} />
-          <Route
-            path="/projects/:id"
-            element={
-              <Editor
-                projectId="project-1"
-                client={it_.client}
-                library={emptyLibrary()}
-                subscribe={() => () => undefined}
-                render={it_.render}
-              />
-            }
-          />
-        </Routes>
+        <AccountsProvider store={emptyAccountsStore()}>
+          <Routes>
+            <Route path="/" element={<p>Somewhere else</p>} />
+            <Route
+              path="/projects/:id"
+              element={
+                <Editor
+                  projectId="project-1"
+                  client={it_.client}
+                  library={emptyLibrary()}
+                  subscribe={() => () => undefined}
+                  render={it_.render}
+                />
+              }
+            />
+          </Routes>
+        </AccountsProvider>
       </ToastProvider>
     </MemoryRouter>,
   );

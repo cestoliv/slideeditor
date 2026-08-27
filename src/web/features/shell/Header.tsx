@@ -53,6 +53,15 @@ export function Header({ editor = false, center, children }: HeaderProps) {
       {center === undefined ? null : <div className={styles.center}>{center}</div>}
       <div className={styles.actions}>
         {children}
+        {/*
+         * Every brand's typography lives behind this screen (AccountsAdmin),
+         * linked from here on every screen's header. Unlike Settings below,
+         * this has nothing to do with the auth session, so it shows
+         * regardless of session mode.
+         */}
+        <Button asChild variant="ghost">
+          <Link to="/accounts">Accounts</Link>
+        </Button>
         {showAccount ? (
           <>
             <Button asChild variant="ghost">

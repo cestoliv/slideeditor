@@ -49,23 +49,58 @@ export const TEXT_WRAP_INSET = 0.32;
  * (app.js:4444). */
 export const TEXT_VERTICAL_PADDING = 0.1;
 
+/** The family a text layer uses when it names none of its own. */
+export const DEFAULT_FONT_FAMILY = "TikTok Sans";
+
 /**
- * The face both render paths must measure and draw with.
+ * Average glyph advance, as a fraction of font size — the compose engine's
+ * line-wrap estimate (shared/compose/compose.ts's textHeight) has no font
+ * file to measure against, so this stands in for one. The best guess
+ * available for a family with no measured value of its own: this is what a
+ * Google font falls back to today, since nothing in this codebase extracts
+ * font metrics.
  *
- * Measurement is injected, so the module cannot check what its callers bind. A
- * one-character difference between the two callers' font strings rewraps every
- * line, and no test inside this module can see it, so the string lives here and
- * both callers read it rather than writing their own.
+ * This is the fallback only. The real per-family value — every family this
+ * codebase has actually tuned, both bundled builtins included — lives in the
+ * `font` table's own `advance` column (services/fonts.ts's
+ * FontService.advanceRatioFor, seeded by BUILTIN_FONTS there), which is
+ * shared code with no database to read: composeDocument takes an
+ * `advanceRatioFor` a caller with a real catalogue can inject, and
+ * `advanceRatioFor` below — this module's own, name-keyed version — is only
+ * what a caller lacking one (or a test) gets instead.
  */
-export const TEXT_FONT_FAMILY = "TikTok Sans";
+export const DEFAULT_ADVANCE_RATIO = 0.5;
+
+/** advanceRatioFor's own fallback for a caller with no font catalogue to inject — see its doc comment above. */
+export function advanceRatioFor(_family: string): number {
+  return DEFAULT_ADVANCE_RATIO;
+}
 
 /** Fallback chain for the DOM and SVG paths, which name a family rather than measure one. */
-export const TEXT_FONT_STACK = `"${TEXT_FONT_FAMILY}", sans-serif`;
+export function fontStack(family: string): string {
+  return `"${family}", sans-serif`;
+}
 
 /**
- * The canvas `font` shorthand for one font size, matching app.js:2739 and app.js:4449.
- * Both the measuring canvas and the export canvas must be set from this.
+ * The canvas `font` shorthand for one font size and family, matching
+ * app.js:2739 and app.js:4449.
+ *
+ * Measurement is injected, so this module cannot check what its callers bind.
+ * A one-character difference between two callers' font strings rewraps every
+ * line, and no test inside this module can see it, so both the measuring
+ * canvas and the paint path must build this string from the same layer's
+ * `fontFamily` and read it from here rather than writing their own.
+ *
+ * `weight` defaults to TEXT_WEIGHT, but a caller that knows a family's real
+ * weight (src/web/app/fontFaces.ts weightFor) should pass it: a face
+ * catalogued at a different weight than requested makes the browser
+ * synthesise bold on some render paths and not others, which is exactly the
+ * mismatch this shared string exists to prevent.
  */
-export function textFontString(fontSize: number): string {
-  return `${TEXT_WEIGHT} ${fontSize}px "${TEXT_FONT_FAMILY}"`;
+export function textFontString(
+  fontSize: number,
+  family: string,
+  weight: number = TEXT_WEIGHT,
+): string {
+  return `${weight} ${fontSize}px "${family}"`;
 }

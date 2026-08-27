@@ -10,13 +10,17 @@ import { registerMcp } from "./mcp/server.js";
 import { registerClient } from "./plugins/client.js";
 import { registerSecurity } from "./plugins/security.js";
 import { registerServices } from "./plugins/services.js";
+import { accountRoutes } from "./routes/accounts.js";
 import { authRoutes } from "./routes/auth.js";
 import { eventRoutes } from "./routes/events.js";
+import { fontRoutes } from "./routes/fonts.js";
 import { healthRoutes } from "./routes/health.js";
 import { libraryRoutes } from "./routes/library.js";
 import { mediaRoutes } from "./routes/media.js";
 import { projectRoutes } from "./routes/projects.js";
 import { slideshowRoutes } from "./routes/slideshows.js";
+import { AccountNotEmptyError } from "./services/accounts.js";
+import { FontInUseError } from "./services/fonts.js";
 
 export { editUrl } from "./urls.js";
 
@@ -85,12 +89,14 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
   });
 
   authRoutes(app);
+  accountRoutes(app);
   healthRoutes(app);
   libraryRoutes(app);
   projectRoutes(app);
   slideshowRoutes(app);
   eventRoutes(app);
   mediaRoutes(app);
+  fontRoutes(app);
   // The agent surface belongs to the server, not to the entry point that built
   // it, so an embedder and the end-to-end setup get it too.
   await registerMcp(app);
@@ -135,6 +141,14 @@ function registerErrorHandler(app: FastifyInstance): void {
     // those messages, so the status is restored here.
     if (error instanceof ComposeError)
       return reply.code(400).send({ error: error.message });
+    if (error instanceof AccountNotEmptyError) {
+      return reply
+        .code(409)
+        .send({ error: error.message, projects: error.projects, items: error.items });
+    }
+    if (error instanceof FontInUseError) {
+      return reply.code(409).send({ error: error.message, usedBy: error.usedBy });
+    }
     if (error.code === "FST_ERR_CTP_BODY_TOO_LARGE") {
       return reply.code(413).send({ error: "The request body is too large." });
     }

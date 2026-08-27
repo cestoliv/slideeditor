@@ -1,5 +1,5 @@
 import { page } from "vitest/browser";
-import { parseDocument } from "@shared/schema/index.js";
+import { DEFAULT_ACCOUNT_ID, parseDocument } from "@shared/schema/index.js";
 import type {
   LibraryItem,
   Slide,
@@ -8,6 +8,7 @@ import type {
 } from "@shared/schema/index.js";
 import { computeTextLayout, fontSizeAt, textFontString } from "@shared/text/index.js";
 import type { MeasureText, TextLayout } from "@shared/text/index.js";
+import { weightFor } from "../../../app/fontFaces.js";
 
 /*
  * Fixtures and pixel arithmetic for the export tests.
@@ -93,6 +94,7 @@ export function libraryItem(
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url,
@@ -161,7 +163,7 @@ export function layoutAt(
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("This browser gave no 2d canvas context.");
-  context.font = textFontString(fontSize);
+  context.font = textFontString(fontSize, layer.fontFamily, weightFor(layer.fontFamily));
   const measure: MeasureText = (line) => context.measureText(line).width;
   return computeTextLayout({
     layer,

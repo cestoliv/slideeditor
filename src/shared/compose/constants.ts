@@ -1,6 +1,8 @@
-// Every value here is transcribed from server/compose.mjs:5-18. The geometry
-// the golden fixture records depends on all of them, so a tweak to any one is
-// a behaviour change, not a tidy-up.
+// Every value here started out transcribed from server/compose.mjs:5-18. The
+// geometry the golden fixture records depends on all of them, so a tweak to
+// any one is a behaviour change, not a tidy-up. The one exception is the size
+// ladder itself (server/compose.mjs:12-13): that shrink-to-fit behaviour was
+// deliberately dropped, and TEXT_SMALLEST_SIZE went with it.
 
 /** Side gutter, as a fraction of the slide width (server/compose.mjs:6). */
 export const SIDE_MARGIN = 0.06;
@@ -17,22 +19,21 @@ export const TEXT_GAP = 0.022;
 /** The spacing tried once the preferred one overflows (server/compose.mjs:10). */
 export const TEXT_GAP_TIGHT = 0.01;
 
-/** The tallest the whole text block may grow before the size drops (server/compose.mjs:11). */
+/**
+ * The tallest a text block may be at TEXT_GAP before layoutTexts falls back
+ * to TEXT_GAP_TIGHT instead (server/compose.mjs:11). Originally the point
+ * past which the size ladder shrank the block to fit; the ladder is gone
+ * (product decision, see this file's own header comment), so past this a
+ * block only tries the tighter gap — nothing shrinks any more.
+ */
 export const TEXT_BLOCK_MAX = 0.46;
 
-// TEXT_SIZES.at(-1) is the size the overflow fallback scales from
-// (server/compose.mjs:154). Naming it separately lets the fallback read it
-// without an index the type checker has to treat as possibly out of range.
-/** The smallest rung of the size ladder (server/compose.mjs:12). */
-export const TEXT_SMALLEST_SIZE = 36;
-
-/** The sizes tried in order, largest first (server/compose.mjs:12). */
-export const TEXT_SIZES = [64, 56, 48, 42, TEXT_SMALLEST_SIZE];
-
-/** No scaled size ever falls below this (server/compose.mjs:13). */
-export const TEXT_SIZE_FLOOR = 20;
-
-/** The highest a scaled text block may start (server/compose.mjs:14). */
+/**
+ * The highest a text block may start when it fits within the frame between
+ * this and TEXT_BOTTOM_MARGIN (server/compose.mjs:14). A block too tall for
+ * that is centered on the whole frame instead (layoutTexts), so this is not
+ * a hard floor: an unfittable block's top can sit above it.
+ */
 export const TEXT_TOP_LIMIT = 0.02;
 
 /** Line height the wrap estimate assumes (server/compose.mjs:15). */

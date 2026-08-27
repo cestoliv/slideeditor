@@ -4,6 +4,7 @@ import { page, userEvent } from "vitest/browser";
 // The rail is laid out from the token layer, so the tests load it the way the app does.
 import "../../design/tokens.css";
 import "../../design/reset.css";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { ToastProvider } from "../../design/index.js";
 import { OUTPUT_WIDTH, getImageLayout, outputHeight } from "@shared/geometry/index.js";
@@ -33,6 +34,7 @@ function replacement(id: string): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: `/media/${id}.png`,

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseProject, projectSchema, serverEventSchema } from "./api.js";
+import {
+  parseProject,
+  projectSchema,
+  projectSummarySchema,
+  serverEventSchema,
+} from "./api.js";
 
 describe("parseProject", () => {
   // Important 6: projectSchema alone (documentSchema.extend(...)) never
@@ -12,6 +17,7 @@ describe("parseProject", () => {
       name: "Project",
       version: 1,
       status: "draft",
+      accountId: "default",
       createdAt: 1,
       updatedAt: 2,
       ratio: { w: 9, h: 16 },
@@ -40,6 +46,42 @@ describe("parseProject", () => {
   it("still throws on a genuinely malformed project, unlike parseDocument", () => {
     expect(() => parseProject({ id: "p1" })).toThrow();
   });
+});
+
+it("requires accountId on a project summary", () => {
+  expect(() =>
+    projectSummarySchema.parse({
+      id: "p1",
+      name: "P",
+      version: 1,
+      ratio: { w: 9, h: 16 },
+      status: "draft",
+      description: "",
+      hashtags: "",
+      slideCount: 0,
+      coverItemId: null,
+      coverUrl: null,
+      createdAt: 1,
+      updatedAt: 2,
+    }),
+  ).toThrow();
+});
+
+it("requires accountId on a full project", () => {
+  expect(() =>
+    projectSchema.parse({
+      id: "p1",
+      name: "P",
+      version: 1,
+      status: "draft",
+      description: "",
+      hashtags: "",
+      createdAt: 1,
+      updatedAt: 2,
+      ratio: { w: 9, h: 16 },
+      slides: [],
+    }),
+  ).toThrow();
 });
 
 describe("serverEventSchema", () => {

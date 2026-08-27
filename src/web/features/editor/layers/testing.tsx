@@ -1,7 +1,8 @@
 import { expect } from "vitest";
 import { page, userEvent } from "@vitest/browser/context";
 import type { ReactNode } from "react";
-import type { LibraryItem, Project } from "@shared/schema/index.js";
+import { BUILTIN_DEFAULTS, DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
+import type { AccountDefaults, LibraryItem, Project } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { EditorStore } from "../store.js";
 import { Stage } from "../Stage.js";
@@ -31,6 +32,7 @@ export function libraryItem(
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: PIXEL,
@@ -57,14 +59,20 @@ export function editorStore(project: Project): EditorStore {
   return new EditorStore(project, { save: (saved) => Promise.resolve(saved) });
 }
 
-export type HarnessProps = Omit<LayerStackOptions, "library"> & {
+export type HarnessProps = Omit<LayerStackOptions, "library" | "defaults"> & {
   library: LibraryIndex;
   /** Rendered beside the stage, for the tests that need a drop target. */
   extras?: ReactNode;
+  /** Defaults to BUILTIN_DEFAULTS; only a test about a specific account overrides it. */
+  defaults?: AccountDefaults;
 };
 
-export function LayerHarness({ library, extras, ...options }: HarnessProps) {
-  const { layers, onFinishCrop } = useLayerStack({ ...options, library });
+export function LayerHarness({ library, extras, defaults, ...options }: HarnessProps) {
+  const { layers, onFinishCrop } = useLayerStack({
+    ...options,
+    library,
+    defaults: defaults ?? BUILTIN_DEFAULTS,
+  });
   return (
     <div style={{ width: "640px", height: "760px", display: "grid" }}>
       <Stage

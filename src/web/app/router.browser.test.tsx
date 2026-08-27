@@ -1,9 +1,11 @@
 import { expect, it, vi } from "vitest";
+import { userEvent } from "@vitest/browser/context";
 import { render } from "vitest-browser-react";
 import { MemoryRouter } from "react-router";
 import "../design/tokens.css";
 import "../design/reset.css";
 import { ToastProvider } from "../design/index.js";
+import { AccountsProvider } from "./accounts.js";
 import { ProjectsProvider } from "./projects.js";
 import type { Subscribe } from "./projects.js";
 import { AppRoutes } from "./router.js";
@@ -66,6 +68,8 @@ vi.mock("./api.js", async (importOriginal) => ({
       }),
     listLibrary: () => Promise.resolve({ items: [], total: 0 }),
     session: () => Promise.resolve({ authenticated: true, mode: "open" }),
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
   },
   isUnauthorized: () => false,
 }));
@@ -85,7 +89,9 @@ async function at(path: string) {
     <MemoryRouter initialEntries={[path]}>
       <ToastProvider>
         <ProjectsProvider subscribe={noStream}>
-          <AppRoutes />
+          <AccountsProvider>
+            <AppRoutes />
+          </AccountsProvider>
         </ProjectsProvider>
       </ToastProvider>
     </MemoryRouter>,
@@ -181,4 +187,16 @@ it("puts the brand on every screen", async () => {
   await expect
     .element(screen.getByRole("link", { name: "Go to slideshows" }))
     .toBeVisible();
+});
+
+/*
+ * The accounts screen configures every brand's typography, and until this,
+ * nothing on any screen linked to it: the router answered /accounts, but a
+ * person could only get there by typing the URL. The header link is the way
+ * in now, so this drives it rather than asserting on the route directly.
+ */
+it("reaches the accounts screen from a header link", async () => {
+  const screen = await at("/");
+  await userEvent.click(screen.getByRole("link", { name: "Accounts" }));
+  await expect.element(screen.getByRole("button", { name: "New account" })).toBeVisible();
 });

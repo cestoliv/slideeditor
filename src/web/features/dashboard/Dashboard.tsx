@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type { ProjectSummary } from "@shared/schema/index.js";
-import { Button, Dialog, Field, Icon, Switch, useToast } from "../../design/index.js";
+import {
+  Button,
+  Dialog,
+  Field,
+  Icon,
+  Select,
+  Switch,
+  useToast,
+} from "../../design/index.js";
+import type { SelectOption } from "../../design/index.js";
 import { isUnauthorized } from "../../app/api.js";
+import { useAccounts } from "../../app/accounts.js";
 import { useProjects } from "../../app/projects.js";
 import { Header } from "../shell/Header.js";
 import { DashboardCard } from "./DashboardCard.js";
+import { NewSlideshowDialog } from "./NewSlideshowDialog.js";
 import styles from "./Dashboard.module.css";
 
 /*
@@ -23,17 +34,45 @@ export function Dashboard() {
     streamDown,
     showPublished,
     setShowPublished,
+    accountFilter,
+    setAccountFilter,
     create,
     remove,
   } = useProjects();
+  const { accounts } = useAccounts();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [pending, setPending] = useState<ProjectSummary | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [creatingSlideshow, setCreatingSlideshow] = useState(false);
+
+  const accountOptions: SelectOption[] = [
+    { value: "all", label: "All accounts" },
+    ...accounts.map((account) => ({ value: account.id, label: account.name })),
+  ];
 
   useEffect(() => {
     document.title = "Slide Studio";
   }, []);
+
+  /*
+   * An account the filter is narrowed to can vanish out from under it — the
+   * reader deletes it in another tab, or an agent does. Left alone, the
+   * Select's value would match nothing in accountOptions and Radix would fall
+   * back to its own placeholder rather than "All accounts", so the control
+   * would lie about its state even though the dropdown still offers a way
+   * back. This is the store's own accountFilter, which drives every refresh,
+   * not just what the trigger displays, so it has to be corrected at the
+   * source rather than papered over in the render.
+   */
+  useEffect(() => {
+    if (
+      accountFilter !== undefined &&
+      !accounts.some((account) => account.id === accountFilter)
+    ) {
+      setAccountFilter(undefined);
+    }
+  }, [accountFilter, accounts, setAccountFilter]);
 
   // The server already orders by updated_at, but the list also arrives from a
   // stream refresh, so the screen sorts rather than trusting arrival order.
@@ -49,14 +88,23 @@ export function Dashboard() {
     [navigate],
   );
 
-  const startProject = useCallback(async () => {
-    try {
-      const project = await create();
-      await navigate(`/projects/${encodeURIComponent(project.id)}`);
-    } catch {
-      toast("Couldn’t create the slideshow.", { tone: "danger" });
-    }
-  }, [create, navigate, toast]);
+  // Reports whether a project actually got created, rather than swallowing
+  // that into a bare toast: NewSlideshowDialog's own onCreate contract needs
+  // it, so it does not remember an account whose create failed as the one
+  // the reader used (see there).
+  const startProject = useCallback(
+    async (accountId: string): Promise<boolean> => {
+      try {
+        const project = await create(accountId);
+        await navigate(`/projects/${encodeURIComponent(project.id)}`);
+        return true;
+      } catch {
+        toast("Couldn’t create the slideshow.", { tone: "danger" });
+        return false;
+      }
+    },
+    [create, navigate, toast],
+  );
 
   const confirmRemove = useCallback(async () => {
     if (pending === null) return;
@@ -84,7 +132,7 @@ export function Dashboard() {
         <Button
           variant="solid"
           onClick={() => {
-            void startProject();
+            setCreatingSlideshow(true);
           }}
         >
           New slideshow
@@ -111,6 +159,15 @@ export function Dashboard() {
           <div className={styles.sectionHeading}>
             <h2 className={styles.sectionTitle}>Your slideshows</h2>
             <div className={styles.sectionActions}>
+              <Field className={styles.toggle ?? ""} label="Account">
+                <Select
+                  items={accountOptions}
+                  value={accountFilter ?? "all"}
+                  onValueChange={(value) => {
+                    setAccountFilter(value === "all" ? undefined : value);
+                  }}
+                />
+              </Field>
               <Field className={styles.toggle ?? ""} label="Show published">
                 <Switch checked={showPublished} onCheckedChange={setShowPublished} />
               </Field>
@@ -141,7 +198,7 @@ export function Dashboard() {
               type="button"
               className={styles.startCard}
               onClick={() => {
-                void startProject();
+                setCreatingSlideshow(true);
               }}
             >
               <span className={styles.startMark} aria-hidden="true">
@@ -163,6 +220,16 @@ export function Dashboard() {
           </div>
         </section>
       </main>
+
+      <NewSlideshowDialog
+        open={creatingSlideshow}
+        accounts={accounts}
+        onOpenChange={setCreatingSlideshow}
+        onCreate={async (accountId) => {
+          setCreatingSlideshow(false);
+          return startProject(accountId);
+        }}
+      />
 
       <Dialog.Root
         open={pending !== null}

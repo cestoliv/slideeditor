@@ -37,6 +37,7 @@ it("stores an image and hands it back to the browser", async () => {
       name: "Canvas",
       contentType: "image/png",
       data: canvas.toDataURL("image/png"),
+      accountId: "default",
     }),
   });
   expect(created.status).toBe(200);

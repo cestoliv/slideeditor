@@ -20,6 +20,7 @@ export function createMcpServer(context: ToolContext): McpServer {
   const server = new McpServer({ name: "slide-studio", version: "2.0.0" });
   // Registered one by one rather than in a loop, because each tool's input shape
   // is its own type and a loop erases it.
+  registerTool(server, tools.list_accounts, context);
   registerTool(server, tools.list_library, context);
   registerTool(server, tools.get_library_item, context);
   registerTool(server, tools.list_slideshows, context);
@@ -31,7 +32,7 @@ export function createMcpServer(context: ToolContext): McpServer {
 }
 
 /**
- * The seven tools have seven different input shapes, and the SDK's callback type
+ * The eight tools have eight different input shapes, and the SDK's callback type
  * is generic over the shape it was handed. This takes the erased shape, which
  * `ToolDefinition.handler` is a method rather than a property to allow.
  */
@@ -56,6 +57,8 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
   const context: ToolContext = {
     library: app.library,
     projects: app.projects,
+    accounts: app.accounts,
+    fonts: app.fonts,
     baseUrl: app.baseUrl,
   };
   await app.register((scope, _options, done) => {

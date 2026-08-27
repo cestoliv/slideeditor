@@ -94,7 +94,13 @@ export function AssetRail({
   const assets = useMemo(() => {
     const pool =
       source === "all"
-        ? [...library.values()].filter((item) => item.kind === "asset")
+        ? // Only the project's own account's assets: browsing another brand's
+          // images from inside a slideshow would let one of them get saved
+          // into it (validateComposition/validateDocumentAccountScope reject
+          // the save, but the picker should not offer them in the first place).
+          [...library.values()].filter(
+            (item) => item.kind === "asset" && item.accountId === project.accountId,
+          )
         : projectAssetIds(project).flatMap((id) => {
             const item = library.get(id);
             return item === undefined ? [] : [item];
@@ -159,10 +165,10 @@ export function AssetRail({
         const added: LibraryItem[] = [];
         for (const [index, file] of images.entries()) {
           try {
-            const item = await (upload ?? uploadAssetFile)(
-              file,
-              images.length > 1 ? `Asset ${String(index + 1)}` : "Asset",
-            );
+            const item = await (
+              upload ??
+              ((f: File, name: string) => uploadAssetFile(f, name, project.accountId))
+            )(file, images.length > 1 ? `Asset ${String(index + 1)}` : "Asset");
             cache.remember(item);
             added.push(item);
           } catch (error) {
@@ -183,7 +189,7 @@ export function AssetRail({
         setUploading(false);
       }
     },
-    [cache, toast, upload, uploading],
+    [cache, project.accountId, toast, upload, uploading],
   );
 
   return (

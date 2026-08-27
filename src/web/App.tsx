@@ -1,5 +1,6 @@
 import { BrowserRouter } from "react-router";
 import { ToastProvider, Tooltip } from "./design/index.js";
+import { AccountsProvider } from "./app/accounts.js";
 import { ProjectsProvider } from "./app/projects.js";
 import { AppRoutes } from "./app/router.js";
 import { useSession } from "./app/session.js";
@@ -26,6 +27,13 @@ export function App() {
  * replacing it with a login form reads as a crash, and ProjectsProvider would
  * have fired a request that 401s on the way, so it sits inside the gate rather
  * than above it.
+ *
+ * The font catalogue fetch (injectFontFaces()) lives behind the same guard for
+ * the same reason, so it is not made from here or from anything this renders:
+ * useSession's own refresh() is where it is triggered, on the exact
+ * authenticated transition this gate is reading — see that file's comment for
+ * why it has to happen there rather than in an effect somewhere under this
+ * tree.
  */
 function Gate() {
   const { state, refresh } = useSession();
@@ -36,7 +44,9 @@ function Gate() {
   if (!state.session.authenticated) return <LoginScreen onSignedIn={refresh} />;
   return (
     <ProjectsProvider>
-      <AppRoutes />
+      <AccountsProvider>
+        <AppRoutes />
+      </AccountsProvider>
     </ProjectsProvider>
   );
 }

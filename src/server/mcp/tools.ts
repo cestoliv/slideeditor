@@ -4,8 +4,11 @@ import {
   toComposition,
   validateComposition,
 } from "../../shared/compose/index.js";
-import type { CompositionSource } from "../../shared/compose/index.js";
+import type { Composition, CompositionSource } from "../../shared/compose/index.js";
 import type { Slide } from "../../shared/schema/index.js";
+import { HttpError } from "../errors.js";
+import type { AccountService } from "../services/accounts.js";
+import type { FontService } from "../services/fonts.js";
 import type { LibraryService } from "../services/library.js";
 import type {
   ProjectListOptions,
@@ -14,15 +17,17 @@ import type {
 } from "../services/projects.js";
 import { editUrl } from "../urls.js";
 
-/** The three things every tool reads, hung off the Fastify instance by Task 8. */
+/** The things every tool reads, hung off the Fastify instance by Task 8. */
 export interface ToolContext {
   library: LibraryService;
   projects: ProjectService;
+  accounts: AccountService;
+  fonts: FontService;
   baseUrl: () => string;
 }
 
 /**
- * The envelope all seven tools return. There are no output schemas and no
+ * The envelope all eight tools return. There are no output schemas and no
  * structured content, only one JSON text block (server/mcp.mjs:160-162).
  */
 export type ToolResult = {
@@ -107,6 +112,18 @@ const HASHTAGS_SHAPE = z
     'Hashtags for the post, either as a list (["travel", "summer"]) or as one string ("#travel #summer"). The leading # is optional going in and always present coming back. At most 30, and a tag repeated in any casing is kept once.',
   );
 
+const listAccounts = defineTool({
+  name: "list_accounts",
+  title: "List accounts",
+  description:
+    "List every account: its id, name and defaults. Pass an id as accountId to create_slideshow, list_slideshows " +
+    "or list_library. Every slideshow and library item belongs to exactly one account.",
+  inputSchema: {},
+  async handler(_args, { accounts }) {
+    return json({ accounts: accounts.list() });
+  },
+});
+
 const listLibrary = defineTool({
   name: "list_library",
   title: "List library images",
@@ -132,13 +149,19 @@ const listLibrary = defineTool({
         "Order of results. Use `least-used` to favour items you have not used before. Defaults to relevance when searching, newest otherwise.",
       ),
     limit: z.number().int().min(1).max(200).optional(),
+    accountId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Limit to one account. Omit to search every account."),
   },
-  async handler({ kind, query, sort, limit }, { library }) {
+  async handler({ kind, query, sort, limit, accountId }, { library }) {
     const result = library.list({
       kind: kind || null,
       query: query || "",
       limit: limit || 50,
       sort: sort || "recent",
+      ...(accountId === undefined ? {} : { accountId }),
     });
     return json({
       total: result.total,
@@ -149,6 +172,7 @@ const listLibrary = defineTool({
         description: item.description,
         usage: item.usage,
         tags: item.tags,
+        accountId: item.accountId,
         width: item.width,
         height: item.height,
         stats: item.stats,
@@ -173,7 +197,8 @@ const listSlideshows = defineTool({
   title: "List slideshows",
   description:
     "List slideshows with their id, version, status, caption, slide count and edit URL. Published slideshows are " +
-    "hidden by default, because that work is already posted. Pass status to widen the list.",
+    "hidden by default, because that work is already posted. Pass status to widen the list. Pass accountId to " +
+    "see one account's slideshows only; omit it to see every account's.",
   inputSchema: {
     status: z
       .union([z.array(STATUS_SHAPE), z.literal("all")])
@@ -181,11 +206,19 @@ const listSlideshows = defineTool({
       .describe(
         'Statuses to include. Defaults to draft and ready. Pass "all" for everything.',
       ),
+    accountId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Limit to one account. Omit to see every account."),
   },
-  async handler({ status }, { projects, baseUrl }) {
+  async handler({ status, accountId }, { projects, baseUrl }) {
     // `status: undefined` is not the same as an absent key under
     // exactOptionalPropertyTypes, and only the absent key takes the default.
-    const options: ProjectListOptions = status === undefined ? {} : { status };
+    const options: ProjectListOptions = {
+      ...(status === undefined ? {} : { status }),
+      ...(accountId === undefined ? {} : { accountId }),
+    };
     return json({
       slideshows: projects
         .list(options)
@@ -199,7 +232,7 @@ const getSlideshow = defineTool({
   title: "Read a slideshow",
   description:
     "Read one slideshow as a composition: per slide, its background id, asset ids and texts. " +
-    "Also returns the caption: `description` and `hashtags`. " +
+    "Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. " +
     "Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow.",
   inputSchema: { id: z.string().describe("Slideshow id.") },
   async handler({ id }, { projects, baseUrl }) {
@@ -207,6 +240,7 @@ const getSlideshow = defineTool({
     return json({
       slideshow: {
         ...toComposition(asComposable(project)),
+        accountId: project.accountId,
         status: project.status,
         description: project.description,
         hashtags: project.hashtags,
@@ -242,31 +276,42 @@ const createSlideshow = defineTool({
   name: "create_slideshow",
   title: "Create a slideshow",
   description:
-    "Draft a slideshow from library images and text. Each slide takes one background id, any number of asset ids " +
-    "and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and " +
-    "`hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions, sizes or " +
-    "styling: the server lays everything out and the human adjusts it by hand afterwards. Returns the edit URL to " +
-    "hand back to the user.",
+    "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any " +
+    "number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, " +
+    "so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set " +
+    "positions, sizes or styling: the server lays everything out from the account's defaults and the human " +
+    "adjusts it by hand afterwards. Call list_accounts first if you do not already know the accountId. Returns " +
+    "the edit URL to hand back to the user.",
   inputSchema: {
+    accountId: z
+      .string()
+      .describe("The account this slideshow belongs to. Call list_accounts to find one."),
     name: z.string().optional().describe("Slideshow name shown in the editor."),
     ratio: RATIO_SHAPE.optional().describe(
-      "Aspect ratio as width and height, for example 9 by 16. Defaults to 9:16.",
+      "Aspect ratio as width and height. Defaults to the account's own ratio.",
     ),
     slides: z.array(SLIDE_SHAPE).min(1).describe("Slides in order."),
     description: DESCRIPTION_SHAPE.optional(),
     hashtags: HASHTAGS_SHAPE.optional(),
   },
   async handler(
-    { name, ratio, slides, description, hashtags },
-    { library, projects, baseUrl },
+    { accountId, name, ratio, slides, description, hashtags },
+    { library, projects, accounts, fonts, baseUrl },
   ) {
+    const account = accounts.get(accountId);
+    if (account === null) throw new HttpError(400, `No account with id ${accountId}.`);
+    const compositions = slides as Composition[];
+    validateComposition(compositions, { accountId, lookupItem: (id) => library.get(id) });
     const document = composeDocument({
-      ratio,
-      slides: validateComposition(slides),
+      ratio: ratio || account.defaults.ratio,
+      slides: compositions,
       library,
+      defaults: account.defaults,
+      advanceRatioFor: (family) => fonts.advanceRatioFor(family),
     });
     const project = projects.create({
       name: name || "Agent slideshow",
+      accountId,
       document,
       description,
       hashtags,
@@ -304,14 +349,25 @@ const updateSlideshow = defineTool({
   },
   async handler(
     { id, version, name, ratio, slides, description, hashtags },
-    { library, projects, baseUrl },
+    { library, projects, accounts, fonts, baseUrl },
   ) {
     const current = projects.require(id);
+    const account = accounts.get(current.accountId);
+    if (account === null) {
+      throw new HttpError(400, `No account with id ${current.accountId}.`);
+    }
+    const compositions = slides as Composition[];
+    validateComposition(compositions, {
+      accountId: current.accountId,
+      lookupItem: (itemId) => library.get(itemId),
+    });
     const document = composeDocument({
       ratio: ratio || current.ratio,
-      slides: validateComposition(slides),
+      slides: compositions,
       library,
+      defaults: account.defaults,
       previous: asComposable(current),
+      advanceRatioFor: (family) => fonts.advanceRatioFor(family),
     });
     const project = projects.save(id, {
       name: name ?? current.name,
@@ -331,8 +387,9 @@ const updateSlideshow = defineTool({
   },
 });
 
-/** The seven tools, in the order server/mcp.mjs registered them. */
+/** The eight tools, list_accounts first so an agent can see its brand before anything else. */
 export const tools = {
+  list_accounts: listAccounts,
   list_library: listLibrary,
   get_library_item: getLibraryItem,
   list_slideshows: listSlideshows,

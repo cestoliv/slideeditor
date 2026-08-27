@@ -30,5 +30,5 @@
       "@assets/*": ["./assets/*"]
     }
   },
-  "include": ["src", "tests", "*.config.ts"]
+  "include": ["src", "tests", "scripts", "*.config.ts"]
 }

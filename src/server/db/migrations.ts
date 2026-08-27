@@ -153,4 +153,72 @@ export const MIGRATIONS: string[] = [
     applied_at INTEGER NOT NULL
   ) STRICT;
   `,
+  `
+  -- Accounts. Each holds a name and a defaults blob (migration design doc,
+  -- 2026-08-26): the shape follows TextLayer, which this codebase already
+  -- treats as an evolving document type, so a column per property would force
+  -- a migration every time a text default appears.
+  CREATE TABLE account (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    defaults   TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- The font catalogue: built-in faces (media_id NULL, resolved from the asset
+  -- directory) and Google faces fetched once and self-hosted through MediaStore.
+  --
+  -- weight_min/weight_max are NULL for every static face (every Google family
+  -- self-hosts one woff2 slice at one weight, same as a builtin face whose
+  -- bundled binary only carries one instance). They are set only for a
+  -- builtin whose bundled binary is itself a variable font, so its
+  -- @font-face can declare the full axis instead of pinning the single
+  -- seeded weight column — see FontService's BUILTIN_FONTS and
+  -- fontFaces.ts's faceRule(). seedBuiltins reconciles the values on every
+  -- construction (an upsert, not just this CREATE), so a row seeded before
+  -- this migration existed also picks up its axis.
+  --
+  -- advance is the average glyph width, as a fraction of font size, that the
+  -- compose engine's line-wrap estimate uses in place of a real font file to
+  -- measure (shared/text/constants.ts's DEFAULT_ADVANCE_RATIO and
+  -- FontService.advanceRatioFor). NULL for a family with no measured value —
+  -- every Google-added family today, since nothing in this codebase extracts
+  -- font metrics — which falls back to DEFAULT_ADVANCE_RATIO the same way it
+  -- always has. seedBuiltins reconciles TikTok Sans and Space Mono's own
+  -- rows to the two hand-tuned values that used to live in a two-entry map
+  -- keyed by name, so a family newly measured (by hand, or by a future
+  -- metrics pass) has somewhere to carry that value that is not a third
+  -- hardcoded name.
+  CREATE TABLE font (
+    id         TEXT PRIMARY KEY,
+    family     TEXT NOT NULL UNIQUE,
+    source     TEXT NOT NULL CHECK (source IN ('builtin', 'google')),
+    weight     INTEGER NOT NULL,
+    weight_min INTEGER,
+    weight_max INTEGER,
+    advance    REAL,
+    media_id   TEXT,
+    ext        TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Reproduces today's rendering values exactly, so an existing install looks
+  -- unchanged the moment it upgrades.
+  INSERT INTO account (id, name, defaults, created_at, updated_at)
+  VALUES ('default', 'Default', '{"ratio":{"w":9,"h":16},"text":{"fontFamily":"TikTok Sans","size":64,"style":"plain","color":"#FFFFFF","background":"white","backgroundShape":"lines","align":"center"}}', 0, 0);
+
+  -- SQLite refuses ADD COLUMN with a REFERENCES clause unless the default is
+  -- NULL, so these stay nullable in SQL. NOT NULL and referential integrity
+  -- live in ProjectService and LibraryService instead: every write already
+  -- passes through them, and no code path writes NULL after the backfill below.
+  ALTER TABLE project ADD COLUMN account_id TEXT;
+  ALTER TABLE library_item ADD COLUMN account_id TEXT;
+
+  UPDATE project SET account_id = 'default';
+  UPDATE library_item SET account_id = 'default';
+
+  CREATE INDEX project_account_idx ON project(account_id, updated_at DESC);
+  CREATE INDEX library_item_account_idx ON library_item(account_id);
+  `,
 ];

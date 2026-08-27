@@ -4,12 +4,13 @@ import {
   toComposition,
   validateComposition,
 } from "../../shared/compose/index.js";
-import type { CompositionSource } from "../../shared/compose/index.js";
+import type { Composition, CompositionSource } from "../../shared/compose/index.js";
 import type { Ratio, Slide } from "../../shared/schema/index.js";
+import { HttpError } from "../errors.js";
 import type { StoredProject } from "../services/projects.js";
 import { editUrl } from "../urls.js";
 import { asFields, field } from "./input.js";
-import { statusFilter } from "./projects.js";
+import { projectListOptions } from "./projects.js";
 
 interface IdParams {
   id: string;
@@ -18,7 +19,7 @@ interface IdParams {
 export function slideshowRoutes(app: FastifyInstance): void {
   app.get("/api/slideshows", (request) => ({
     slideshows: app.projects
-      .list(statusFilter(request.query))
+      .list(projectListOptions(request.query))
       .map((summary) => ({ ...summary, editUrl: editUrl(app.baseUrl(), summary.id) })),
   }));
 
@@ -27,6 +28,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
     return {
       slideshow: {
         ...toComposition(asComposable(project)),
+        accountId: project.accountId,
         status: project.status,
         description: project.description,
         hashtags: project.hashtags,
@@ -37,17 +39,24 @@ export function slideshowRoutes(app: FastifyInstance): void {
 
   app.post("/api/slideshows", (request) => {
     const body = asFields(request.body);
-    const slides = validateComposition(body["slides"]);
+    const accountId = String(field(body, "accountId") ?? "");
+    const account = app.accounts.get(accountId);
+    if (!account) throw new HttpError(400, `No account with id ${accountId}.`);
+    const slides = asCompositions(body["slides"]);
+    validateComposition(slides, { accountId, lookupItem: (id) => app.library.get(id) });
     const document = composeDocument({
-      ratio: asRatio(body["ratio"]),
+      ratio: body["ratio"] ? asRatio(body["ratio"]) : account.defaults.ratio,
       slides,
       library: app.library,
+      defaults: account.defaults,
+      advanceRatioFor: (family) => app.fonts.advanceRatioFor(family),
     });
     const project = app.projects.create({
       name: field(body, "name") || "Agent slideshow",
       document,
       description: field(body, "description"),
       hashtags: field(body, "hashtags"),
+      accountId: field(body, "accountId"),
     });
     return {
       id: project.id,
@@ -65,14 +74,22 @@ export function slideshowRoutes(app: FastifyInstance): void {
     const body = asFields(request.body);
     const id = request.params.id;
     const current = app.projects.require(id);
-    const slides = validateComposition(body["slides"]);
+    const account = app.accounts.get(current.accountId);
+    if (!account) throw new HttpError(400, `No account with id ${current.accountId}.`);
+    const slides = asCompositions(body["slides"]);
+    validateComposition(slides, {
+      accountId: current.accountId,
+      lookupItem: (itemId) => app.library.get(itemId),
+    });
     const document = composeDocument({
       // The old route read `body.ratio || current.ratio`, so a ratio that is
       // absent or falsy keeps the one the slideshow already has.
       ratio: body["ratio"] ? asRatio(body["ratio"]) : current.ratio,
       slides,
       library: app.library,
+      defaults: account.defaults,
       previous: asComposable(current),
+      advanceRatioFor: (family) => app.fonts.advanceRatioFor(family),
     });
     const project = app.projects.save(id, {
       name: field(body, "name") ?? current.name,
@@ -127,4 +144,10 @@ function asRatio(value: unknown): Ratio | undefined {
  */
 function asComposable(project: StoredProject): CompositionSource {
   return { ...project, slides: project.slides as Slide[] };
+}
+
+/** The raw wire array, cast to the shape validateComposition still checks
+ * defensively at runtime regardless of what TypeScript is told here. */
+function asCompositions(value: unknown): Composition[] {
+  return (Array.isArray(value) ? value : []) as Composition[];
 }

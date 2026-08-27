@@ -1,0 +1,90 @@
+.admin {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--space-6);
+  padding: var(--space-6);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.row {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+}
+
+.row[aria-pressed="true"] {
+  border-color: var(--color-border-accent);
+  background: var(--color-surface-raised);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 420px;
+}
+
+.addFont {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.fontList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fontItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.fontLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: #202020;
+}
+
+.previewCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}

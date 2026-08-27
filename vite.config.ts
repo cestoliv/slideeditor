@@ -18,6 +18,7 @@ export default defineConfig({
       "/api": "http://127.0.0.1:4173",
       "/media": "http://127.0.0.1:4173",
       "/mcp": "http://127.0.0.1:4173",
+      "/fonts": "http://127.0.0.1:4173",
     },
   },
 });

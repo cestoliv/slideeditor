@@ -9,10 +9,12 @@ import {
   naturalOverlayHeight,
   outputAspect,
 } from "@shared/geometry/index.js";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, Project, Ratio } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../app/useLibrary.js";
 import { LibraryCache } from "../../app/useLibrary.js";
 import { ToastProvider } from "../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../app/accounts.js";
 import { Editor } from "./Editor.js";
 import { EditorStore } from "./store.js";
 import { fixtureProject } from "./testing.js";
@@ -31,6 +33,7 @@ function asset(id: string): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: `/media/${id}.png`,
@@ -342,23 +345,37 @@ it("picks a ratio from inside the editor", async () => {
   const screen = await render(
     <MemoryRouter initialEntries={["/projects/project-1"]}>
       <ToastProvider>
-        <Routes>
-          <Route
-            path="/projects/:id"
-            element={
-              <Editor
-                projectId="project-1"
-                client={client}
-                library={
-                  new LibraryCache({
-                    listLibrary: () => Promise.resolve({ items: [], total: 0 }),
-                  })
-                }
-                subscribe={() => () => undefined}
-              />
-            }
-          />
-        </Routes>
+        <AccountsProvider
+          store={
+            new AccountsStore({
+              listAccounts: () => Promise.resolve({ accounts: [] }),
+              listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+              createAccount: () => Promise.reject(new Error("not used")),
+              updateAccount: () => Promise.reject(new Error("not used")),
+              deleteAccount: () => Promise.reject(new Error("not used")),
+              addGoogleFont: () => Promise.reject(new Error("not used")),
+              deleteFont: () => Promise.reject(new Error("not used")),
+            })
+          }
+        >
+          <Routes>
+            <Route
+              path="/projects/:id"
+              element={
+                <Editor
+                  projectId="project-1"
+                  client={client}
+                  library={
+                    new LibraryCache({
+                      listLibrary: () => Promise.resolve({ items: [], total: 0 }),
+                    })
+                  }
+                  subscribe={() => () => undefined}
+                />
+              }
+            />
+          </Routes>
+        </AccountsProvider>
       </ToastProvider>
     </MemoryRouter>,
   );

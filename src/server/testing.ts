@@ -5,10 +5,13 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import type { DatabaseSync } from "node:sqlite";
 import type { FastifyInstance } from "fastify";
+import { DEFAULT_ACCOUNT_ID } from "../shared/schema/index.js";
 import type { LibraryItem, LibraryKind } from "../shared/schema/index.js";
 import { dataPaths, openDb } from "./db/open.js";
 import { HttpError } from "./errors.js";
+import { AccountService } from "./services/accounts.js";
 import { EventBus } from "./services/events.js";
+import { FontService } from "./services/fonts.js";
 import { LibraryService } from "./services/library.js";
 import { MediaStore } from "./services/media.js";
 import { ProjectService } from "./services/projects.js";
@@ -72,23 +75,33 @@ export interface TestApp {
     library: LibraryService;
     projects: ProjectService;
     media: MediaStore;
+    accounts: AccountService;
+    fonts: FontService;
   };
   close(): void;
 }
 
 /** The services on a throwaway data directory, cleaned up by the returned close(). */
-export function createTestApp(): TestApp {
+export function createTestApp(
+  options: { fetchCss?: (family: string) => Promise<string> } = {},
+): TestApp {
   const directory = mkdtempSync(join(tmpdir(), "slide-studio-test-"));
   const paths = dataPaths(directory);
   const db = openDb(paths.database, paths.token);
   const media = new MediaStore(paths.media);
   const events = new EventBus();
-  const library = new LibraryService(db, media);
-  const projects = new ProjectService(db, events, library);
+  const accounts = new AccountService(db);
+  const library = new LibraryService(db, media, accounts);
+  const projects = new ProjectService(db, events, library, accounts);
+  const fonts = new FontService({
+    db,
+    media,
+    ...(options.fetchCss ? { fetchCss: options.fetchCss } : {}),
+  });
   return {
     db,
     events,
-    services: { library, projects, media },
+    services: { library, projects, media, accounts, fonts },
     close() {
       events.close();
       db.close();
@@ -133,6 +146,7 @@ export async function addItem(
     tags?: string;
     width?: number;
     height?: number;
+    accountId?: string;
   } = {},
 ): Promise<LibraryItem> {
   return library.create({
@@ -143,6 +157,7 @@ export async function addItem(
     tags: extra.tags ?? "",
     contentType: "image/png",
     bytes: solidPng(extra.width ?? 1200, extra.height ?? 1600),
+    accountId: extra.accountId ?? DEFAULT_ACCOUNT_ID,
   });
 }
 

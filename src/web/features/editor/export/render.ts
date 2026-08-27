@@ -15,6 +15,7 @@ import type {
   Slide,
   TextLayer,
 } from "@shared/schema/index.js";
+import { weightFor, whenCatalogueReady } from "../../../app/fontFaces.js";
 import { slideItems } from "../selection.js";
 import { pillFillFor } from "../text/renderTextDom.js";
 
@@ -221,8 +222,11 @@ function drawTextLayer(
   context.rotate((layer.rotation * Math.PI) / 180);
   // Set before the layout is computed, because `measure` below reads this very
   // context. The string comes from the shared module, so the measuring canvas
-  // on the stage and this one cannot bind different faces.
-  context.font = textFontString(fontSize);
+  // on the stage and this one cannot bind different faces. The weight comes
+  // from the catalogue rather than TEXT_WEIGHT, so a face registered off that
+  // default cannot make this canvas synthesise bold where the DOM paint
+  // (renderTextDom.tsx) does not, or the reverse.
+  context.font = textFontString(fontSize, layer.fontFamily, weightFor(layer.fontFamily));
 
   const layout = computeTextLayout({
     layer,
@@ -334,12 +338,35 @@ async function drawSlideLayers(
   }
 }
 
+/** Every family the slide's text layers actually use, without duplicates. */
+function distinctFamilies(slide: Slide): string[] {
+  return [...new Set(slide.texts.map((text) => text.fontFamily))];
+}
+
 /**
  * Draws one slide to a canvas at the requested size.
  *
- * The font is awaited first. app.js:4449 set context.font to TikTok Sans and
+ * Every distinct family on the slide is awaited first, one load each rather
+ * than one per layer. app.js:4449 set context.font to TikTok Sans and
  * measured immediately, so the first export of a cold page measured against a
  * fallback face and wrapped its lines somewhere else than the stage did.
+ *
+ * Each load is caught individually rather than left to a bare Promise.all, so
+ * one family's genuine load failure (a dead Google font fetch, say) degrades
+ * to whatever face the browser substitutes for it instead of aborting the
+ * whole export. The stage already behaves this way (useTextLayout.ts's
+ * ensureFontLoaded settles a failed family rather than waiting forever); the
+ * export should not be stricter than the thing it is supposed to match.
+ *
+ * whenCatalogueReady() is awaited first, for the same reason
+ * useTextLayout.ts's ensureFontLoaded awaits it: useSession's call to
+ * ensureFontFacesLoaded() (fired the moment sign-in resolves) may still be
+ * awaiting its fetch, in which case no @font-face rule exists for any family yet and
+ * document.fonts.load() would resolve almost immediately against a face that
+ * doesn't exist. Exporting within the first few hundred ms of a page load
+ * would then measure against a fallback face while the stage — which does
+ * await this — measures against the real one, wrapping the PNG's lines
+ * differently than what is on screen.
  */
 export async function renderSlideCanvas(
   slide: Slide,
@@ -347,7 +374,14 @@ export async function renderSlideCanvas(
 ): Promise<HTMLCanvasElement> {
   const width = options.width ?? OUTPUT_WIDTH;
   const { height, assets } = options;
-  await document.fonts.load(textFontString(FONT_LOAD_SIZE));
+  await whenCatalogueReady();
+  await Promise.all(
+    distinctFamilies(slide).map((family) =>
+      document.fonts
+        .load(textFontString(FONT_LOAD_SIZE, family, weightFor(family)))
+        .catch(() => undefined),
+    ),
+  );
 
   const canvas = document.createElement("canvas");
   canvas.width = width;

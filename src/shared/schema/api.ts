@@ -52,6 +52,7 @@ export const projectSchema = documentSchema.extend({
   status: slideshowStatusSchema,
   description: captionSchema,
   hashtags: captionSchema,
+  accountId: z.string(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });
@@ -66,6 +67,7 @@ export type Project = {
   description: string;
   /** The tags that go under it, as `#one #two`. */
   hashtags: string;
+  accountId: string;
   createdAt: number;
   updatedAt: number;
 } & SlideDocument;
@@ -94,6 +96,7 @@ export const projectSummarySchema = z.object({
   status: slideshowStatusSchema,
   description: captionSchema,
   hashtags: captionSchema,
+  accountId: z.string(),
   slideCount: z.number(),
   coverItemId: z.string().nullable(),
   coverUrl: z.string().nullable(),
@@ -110,6 +113,7 @@ export type ProjectSummary = {
   status: SlideshowStatus;
   description: string;
   hashtags: string;
+  accountId: string;
   slideCount: number;
   coverItemId: string | null;
   coverUrl: string | null;

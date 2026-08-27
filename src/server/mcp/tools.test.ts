@@ -5,11 +5,15 @@ import { tools, type ToolContext, type ToolResult } from "./tools.js";
 let harness: TestApp;
 let context: ToolContext;
 
+const ACCOUNT_ID = "default";
+
 beforeEach(() => {
   harness = createTestApp();
   context = {
     library: harness.services.library,
     projects: harness.services.projects,
+    accounts: harness.services.accounts,
+    fonts: harness.services.fonts,
     baseUrl: () => "http://localhost:4173",
   };
 });
@@ -25,13 +29,88 @@ function payload(result: ToolResult): Record<string, unknown> {
   return JSON.parse(first?.text ?? "") as Record<string, unknown>;
 }
 
-async function background(name = "Sunset"): Promise<string> {
-  return (await addItem(harness.services.library, "background", name)).id;
+async function background(name = "Sunset", accountId = ACCOUNT_ID): Promise<string> {
+  return (await addItem(harness.services.library, "background", name, { accountId })).id;
+}
+
+/**
+ * Finding 13: an account default's fontFamily now has to name a real row in
+ * the font table (services/accounts.ts's assertKnownFont), so a test whose
+ * account uses a family other than the seeded builtins has to add it first.
+ * Inserted directly rather than through FontService.addGoogleFont(), which
+ * would reach the real network — this only needs the row to exist.
+ */
+function seedFont(family: string): void {
+  harness.db
+    .prepare(
+      `INSERT INTO font (id, family, source, weight, media_id, ext, created_at)
+       VALUES (?, ?, 'google', 400, 'm1', 'woff2', ?)`,
+    )
+    .run(family, family, Date.now());
 }
 
 async function asset(name = "Arrow"): Promise<string> {
   return (await addItem(harness.services.library, "asset", name)).id;
 }
+
+it("lists accounts so an agent can see the brand it writes into", async () => {
+  const result = await tools.list_accounts.handler({}, context);
+  const body = payload(result) as { accounts: { id: string; name: string }[] };
+  expect(body.accounts.some((account) => account.id === "default")).toBe(true);
+});
+
+it("requires an accountId on create_slideshow", async () => {
+  const id = await background();
+  const created = await tools.create_slideshow.handler(
+    { accountId: "default", slides: [{ background: id }] },
+    context,
+  );
+  const body = payload(created) as { id: string };
+  const summary = payload(
+    await tools.list_slideshows.handler({ accountId: "default" }, context),
+  ) as { slideshows: { id: string }[] };
+  expect(summary.slideshows.map((item) => item.id)).toContain(body.id);
+});
+
+/*
+ * The point of the whole feature: an agent drafting into a non-default
+ * account gets that account's own typography, not the seeded default's.
+ * Task 7 left both handlers hardcoded to BUILTIN_DEFAULTS/DEFAULT_ACCOUNT_ID
+ * on purpose, deferring the real resolution to this task.
+ */
+it("styles an agent-created slide with its own account's defaults, not the built-in default", async () => {
+  seedFont("Bebas Neue");
+  const account = context.accounts.create({
+    name: "Side project",
+    defaults: {
+      ratio: { w: 3, h: 4 },
+      text: {
+        fontFamily: "Bebas Neue",
+        size: 40,
+        style: "boxed",
+        color: "#111111",
+        background: "white",
+        backgroundShape: "full",
+        align: "left",
+      },
+    },
+  });
+  // The background belongs to this same account: validateComposition (frozen,
+  // Task 5) refuses a slide that mixes in another account's library items, so
+  // this is not the shared `background()` default-account fixture.
+  const id = await background("Sunset", account.id);
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: account.id, slides: [{ background: id, texts: ["Launch day"] }] },
+      context,
+    ),
+  ) as { id: string };
+  const project = harness.services.projects.require(created.id);
+  const text = (project.slides[0] as { texts: { fontFamily: string; size: number }[] })
+    .texts[0];
+  expect(text?.fontFamily).toBe("Bebas Neue");
+  expect(text?.size).toBe(40);
+});
 
 it("lists library items with their usage stats", async () => {
   await background();
@@ -54,10 +133,32 @@ it("lists library items with their usage stats", async () => {
 
 it("counts a use once the item is on a slide", async () => {
   const id = await background();
-  await tools.create_slideshow.handler({ slides: [{ background: id }] }, context);
+  await tools.create_slideshow.handler(
+    { accountId: ACCOUNT_ID, slides: [{ background: id }] },
+    context,
+  );
   const result = await tools.list_library.handler({}, context);
   const body = payload(result) as { items: { stats: { timesUsed: number } }[] };
   expect(body.items[0]?.stats.timesUsed).toBe(1);
+});
+
+it("filters the library list by account", async () => {
+  const id = await background();
+  const body = payload(
+    await tools.list_library.handler({ accountId: "default" }, context),
+  ) as { items: { id: string }[] };
+  expect(body.items.map((item) => item.id)).toContain(id);
+});
+
+// No account has "" as its id, so an empty accountId must narrow the result
+// to nothing rather than being treated as "no filter" and searching every
+// account.
+it("narrows to nothing rather than every account on an empty accountId", async () => {
+  await background();
+  const body = payload(await tools.list_library.handler({ accountId: "" }, context)) as {
+    items: unknown[];
+  };
+  expect(body.items).toEqual([]);
 });
 
 it("hides the media fields the editor needs and the agent does not", async () => {
@@ -72,6 +173,7 @@ it("hides the media fields the editor needs and the agent does not", async () =>
     "description",
     "usage",
     "tags",
+    "accountId",
     "width",
     "height",
     "stats",
@@ -81,7 +183,7 @@ it("hides the media fields the editor needs and the agent does not", async () =>
 it("reads one library item with the slideshows that use it", async () => {
   const id = await background();
   await tools.create_slideshow.handler(
-    { name: "Launch", slides: [{ background: id }] },
+    { accountId: ACCOUNT_ID, name: "Launch", slides: [{ background: id }] },
     context,
   );
   const body = payload(await tools.get_library_item.handler({ id }, context)) as {
@@ -96,7 +198,10 @@ it("reads one library item with the slideshows that use it", async () => {
 it("names the wrong kind when a background id is passed as an asset", async () => {
   const assetId = await asset();
   await expect(
-    tools.create_slideshow.handler({ slides: [{ background: assetId }] }, context),
+    tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: assetId }] },
+      context,
+    ),
   ).rejects.toThrow(/is an asset, expected a background/);
 });
 
@@ -104,7 +209,11 @@ it("returns the edit URL from create_slideshow", async () => {
   const id = await background();
   const body = payload(
     await tools.create_slideshow.handler(
-      { name: "Launch", slides: [{ background: id, texts: ["Hello"] }] },
+      {
+        accountId: ACCOUNT_ID,
+        name: "Launch",
+        slides: [{ background: id, texts: ["Hello"] }],
+      },
       context,
     ),
   ) as { id: string; version: number; slideCount: number; editUrl: string };
@@ -116,7 +225,10 @@ it("returns the edit URL from create_slideshow", async () => {
 it("names the slideshow itself when the agent gives it none", async () => {
   const id = await background();
   const created = payload(
-    await tools.create_slideshow.handler({ slides: [{ background: id }] }, context),
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: id }] },
+      context,
+    ),
   ) as { id: string };
   const read = payload(
     await tools.get_slideshow.handler({ id: created.id }, context),
@@ -127,9 +239,9 @@ it("names the slideshow itself when the agent gives it none", async () => {
 });
 
 it("refuses a slideshow with no slides", async () => {
-  await expect(tools.create_slideshow.handler({ slides: [] }, context)).rejects.toThrow(
-    /needs at least one slide/,
-  );
+  await expect(
+    tools.create_slideshow.handler({ accountId: ACCOUNT_ID, slides: [] }, context),
+  ).rejects.toThrow(/needs at least one slide/);
 });
 
 it("reads a slideshow back as the composition the agent wrote", async () => {
@@ -138,6 +250,7 @@ it("reads a slideshow back as the composition the agent wrote", async () => {
   const created = payload(
     await tools.create_slideshow.handler(
       {
+        accountId: ACCOUNT_ID,
         slides: [{ background: backgroundId, assets: [assetId], texts: ["One", "Two"] }],
       },
       context,
@@ -147,11 +260,12 @@ it("reads a slideshow back as the composition the agent wrote", async () => {
   const body = payload(
     await tools.get_slideshow.handler({ id: created.id }, context),
   ) as {
-    slideshow: { version: number; status: string; slides: unknown[] };
+    slideshow: { version: number; status: string; slides: unknown[]; accountId: string };
     editUrl: string;
   };
   expect(body.slideshow.status).toBe("draft");
   expect(body.slideshow.version).toBe(1);
+  expect(body.slideshow.accountId).toBe(ACCOUNT_ID);
   expect(body.slideshow.slides).toEqual([
     expect.objectContaining({
       background: backgroundId,
@@ -166,7 +280,10 @@ it("reads a slideshow back as the composition the agent wrote", async () => {
 it("refuses an update carrying a stale version", async () => {
   const id = await background();
   const created = payload(
-    await tools.create_slideshow.handler({ slides: [{ background: id }] }, context),
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: id }] },
+      context,
+    ),
   ) as { id: string; version: number };
 
   await tools.update_slideshow.handler(
@@ -189,7 +306,10 @@ it("refuses an update carrying a stale version", async () => {
 it("bumps the version and keeps the id on a good update", async () => {
   const id = await background();
   const created = payload(
-    await tools.create_slideshow.handler({ slides: [{ background: id }] }, context),
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: id }] },
+      context,
+    ),
   ) as { id: string; version: number };
 
   const updated = payload(
@@ -207,17 +327,66 @@ it("bumps the version and keeps the id on a good update", async () => {
   expect(updated.slideCount).toBe(2);
 });
 
+/*
+ * Task 7 left updateSlideshow hardcoded to BUILTIN_DEFAULTS too, with a
+ * comment marking it as this task's job: left unfixed, an agent editing a
+ * slideshow in a non-default account would style any newly added text with
+ * the wrong brand's look.
+ */
+it("keeps styling text added by update_slideshow with the slideshow's own account defaults", async () => {
+  seedFont("Bebas Neue");
+  const account = context.accounts.create({
+    name: "Side project",
+    defaults: {
+      ratio: { w: 3, h: 4 },
+      text: {
+        fontFamily: "Bebas Neue",
+        size: 40,
+        style: "boxed",
+        color: "#111111",
+        background: "white",
+        backgroundShape: "full",
+        align: "left",
+      },
+    },
+  });
+  // Same reason as the create_slideshow styling test above: the background
+  // must belong to this account, or validateComposition refuses the slide.
+  const id = await background("Sunset", account.id);
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: account.id, slides: [{ background: id }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  const updated = payload(
+    await tools.update_slideshow.handler(
+      {
+        id: created.id,
+        version: created.version,
+        slides: [{ background: id, texts: ["New line"] }],
+      },
+      context,
+    ),
+  ) as { id: string };
+  const project = harness.services.projects.require(updated.id);
+  const text = (project.slides[0] as { texts: { fontFamily: string; size: number }[] })
+    .texts[0];
+  expect(text?.fontFamily).toBe("Bebas Neue");
+  expect(text?.size).toBe(40);
+});
+
 it("hides published slideshows unless status is all", async () => {
   const id = await background();
   const open = payload(
     await tools.create_slideshow.handler(
-      { name: "Open", slides: [{ background: id }] },
+      { accountId: ACCOUNT_ID, name: "Open", slides: [{ background: id }] },
       context,
     ),
   ) as { id: string };
   const done = payload(
     await tools.create_slideshow.handler(
-      { name: "Done", slides: [{ background: id }] },
+      { accountId: ACCOUNT_ID, name: "Done", slides: [{ background: id }] },
       context,
     ),
   ) as { id: string };
@@ -247,7 +416,10 @@ it("hides published slideshows unless status is all", async () => {
 it("sets a status without bumping the version", async () => {
   const id = await background();
   const created = payload(
-    await tools.create_slideshow.handler({ slides: [{ background: id }] }, context),
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: id }] },
+      context,
+    ),
   ) as { id: string; version: number };
 
   const body = payload(
@@ -283,6 +455,12 @@ it("says which slideshow is missing", async () => {
  */
 const PINNED = [
   {
+    name: "list_accounts",
+    title: "List accounts",
+    description:
+      "List every account: its id, name and defaults. Pass an id as accountId to create_slideshow, list_slideshows or list_library. Every slideshow and library item belongs to exactly one account.",
+  },
+  {
     name: "list_library",
     title: "List library images",
     description:
@@ -298,13 +476,13 @@ const PINNED = [
     name: "list_slideshows",
     title: "List slideshows",
     description:
-      "List slideshows with their id, version, status, caption, slide count and edit URL. Published slideshows are hidden by default, because that work is already posted. Pass status to widen the list.",
+      "List slideshows with their id, version, status, caption, slide count and edit URL. Published slideshows are hidden by default, because that work is already posted. Pass status to widen the list. Pass accountId to see one account's slideshows only; omit it to see every account's.",
   },
   {
     name: "get_slideshow",
     title: "Read a slideshow",
     description:
-      "Read one slideshow as a composition: per slide, its background id, asset ids and texts. Also returns the caption: `description` and `hashtags`. Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow.",
+      "Read one slideshow as a composition: per slide, its background id, asset ids and texts. Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow.",
   },
   {
     name: "set_slideshow_status",
@@ -316,7 +494,7 @@ const PINNED = [
     name: "create_slideshow",
     title: "Create a slideshow",
     description:
-      "Draft a slideshow from library images and text. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions, sizes or styling: the server lays everything out and the human adjusts it by hand afterwards. Returns the edit URL to hand back to the user.",
+      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions, sizes or styling: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user.",
   },
   {
     name: "update_slideshow",
@@ -351,7 +529,7 @@ it("keeps the geometry a human adjusted when the composition is unchanged", asyn
   const id = await background();
   const created = payload(
     await tools.create_slideshow.handler(
-      { slides: [{ background: id, texts: ["Hello"] }] },
+      { accountId: ACCOUNT_ID, slides: [{ background: id, texts: ["Hello"] }] },
       context,
     ),
   ) as { id: string; version: number };
@@ -395,7 +573,7 @@ it("keeps the current ratio when an update carries none", async () => {
   const id = await background();
   const created = payload(
     await tools.create_slideshow.handler(
-      { ratio: { w: 4, h: 5 }, slides: [{ background: id }] },
+      { accountId: ACCOUNT_ID, ratio: { w: 4, h: 5 }, slides: [{ background: id }] },
       context,
     ),
   ) as { id: string; version: number };
@@ -416,7 +594,7 @@ it("keeps the current name when an update carries none", async () => {
   const id = await background();
   const created = payload(
     await tools.create_slideshow.handler(
-      { name: "Launch", slides: [{ background: id }] },
+      { accountId: ACCOUNT_ID, name: "Launch", slides: [{ background: id }] },
       context,
     ),
   ) as { id: string; version: number };
@@ -452,6 +630,7 @@ it("drafts a caption alongside the slides and reads it back", async () => {
   const created = payload(
     await tools.create_slideshow.handler(
       {
+        accountId: ACCOUNT_ID,
         slides: [{ background: id }],
         description: "Five things to know first",
         hashtags: ["travel", "#summer"],
@@ -479,7 +658,11 @@ it("takes a caption's hashtags as one string too", async () => {
   const id = await background();
   const created = payload(
     await tools.create_slideshow.handler(
-      { slides: [{ background: id }], hashtags: "travel, #Travel summer" },
+      {
+        accountId: ACCOUNT_ID,
+        slides: [{ background: id }],
+        hashtags: "travel, #Travel summer",
+      },
       context,
     ),
   ) as { hashtags: string };
@@ -491,6 +674,7 @@ it("leaves the caption alone when an update only changes the slides", async () =
   const created = payload(
     await tools.create_slideshow.handler(
       {
+        accountId: ACCOUNT_ID,
         slides: [{ background: id }],
         description: "Written first",
         hashtags: "#travel",
@@ -520,7 +704,12 @@ it("rewrites a caption when the update carries one", async () => {
   const id = await background();
   const created = payload(
     await tools.create_slideshow.handler(
-      { slides: [{ background: id }], description: "First draft", hashtags: "#travel" },
+      {
+        accountId: ACCOUNT_ID,
+        slides: [{ background: id }],
+        description: "First draft",
+        hashtags: "#travel",
+      },
       context,
     ),
   ) as { id: string; version: number };
@@ -545,7 +734,12 @@ it("rewrites a caption when the update carries one", async () => {
 it("carries the caption in the list, so choosing a slideshow needs one call", async () => {
   const id = await background();
   await tools.create_slideshow.handler(
-    { slides: [{ background: id }], description: "Listed caption", hashtags: "am" },
+    {
+      accountId: ACCOUNT_ID,
+      slides: [{ background: id }],
+      description: "Listed caption",
+      hashtags: "am",
+    },
     context,
   );
   const listed = payload(await tools.list_slideshows.handler({}, context)) as {
@@ -558,7 +752,10 @@ it("carries the caption in the list, so choosing a slideshow needs one call", as
 it("takes a slideshow with no caption as one carrying none", async () => {
   const id = await background();
   const created = payload(
-    await tools.create_slideshow.handler({ slides: [{ background: id }] }, context),
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: id }] },
+      context,
+    ),
   ) as { id: string };
   const read = payload(
     await tools.get_slideshow.handler({ id: created.id }, context),

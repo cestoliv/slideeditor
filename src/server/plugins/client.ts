@@ -79,16 +79,21 @@ function matchesAnotherMethod(
 }
 
 /**
- * `vite build` writes dist/web next to package.json, and this module runs from
- * src/server/plugins under tsx and from dist/server/server/plugins once built,
- * so the package root is found by walking up rather than counting directories.
+ * Walks up from this module's own file until it finds package.json. This
+ * module runs from src/server/plugins under tsx and from
+ * dist/server/server/plugins once built, at different depths from the repo
+ * root, so the root is found by walking up rather than counting directories.
  */
-function clientRoot(): string {
+export function packageRoot(): string {
   let directory = dirname(fileURLToPath(import.meta.url));
   while (!existsSync(join(directory, "package.json"))) {
     const parent = dirname(directory);
     if (parent === directory) break;
     directory = parent;
   }
-  return join(directory, "dist", "web");
+  return directory;
+}
+
+function clientRoot(): string {
+  return join(packageRoot(), "dist", "web");
 }

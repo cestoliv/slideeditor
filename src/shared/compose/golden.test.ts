@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import type { LibraryItem, SlideDocument } from "../schema/index.js";
+import { BUILTIN_DEFAULTS } from "../schema/index.js";
 import { composeDocument } from "./compose.js";
 import type { Composition, ComposeDocumentInput, LibraryLookup } from "./compose.js";
 // Imported as a module rather than read off disk, because everything under
@@ -83,10 +84,18 @@ const strip = (doc: SlideDocument) => ({
   })),
 });
 
-it("matches the previous engine's geometry exactly", () => {
+// Not "the previous engine's geometry" any more: the size ladder is gone
+// (product decision), and an unfittable text block (case 4 below) is
+// centered on the frame rather than floored to one edge, so this fixture is
+// regenerated against the current engine rather than transcribed from
+// server/compose.mjs. What this still guards is regression-by-omission — a
+// change to compose.ts or constants.ts that shifts placement without anyone
+// meaning it to.
+it("matches this engine's recorded geometry exactly", () => {
   const input = (entry: (typeof cases)[number]): ComposeDocumentInput => ({
     ...entry,
     library,
+    defaults: BUILTIN_DEFAULTS,
   });
   expect(cases.map((entry) => strip(composeDocument(input(entry))))).toEqual(golden);
 });

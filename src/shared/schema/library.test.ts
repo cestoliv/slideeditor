@@ -9,6 +9,7 @@ it("parses tags from a comma-separated string into an array", () => {
     description: "",
     usage: "",
     tags: ["arrow", "pointer"],
+    accountId: "default",
     mediaId: "m1",
     ext: "png",
     url: "/media/m1.png",
@@ -30,6 +31,7 @@ it("parses a background item with used stats", () => {
     description: "A sky",
     usage: "cover",
     tags: [],
+    accountId: "default",
     mediaId: "m2",
     ext: "jpg",
     url: "/media/m2.jpg",
@@ -42,6 +44,27 @@ it("parses a background item with used stats", () => {
   expect(item.kind).toBe("background");
   expect(item.stats.firstUsedAt).toBe(5);
   expect(item.stats.lastUsedAt).toBe(15);
+});
+
+it("requires accountId", () => {
+  expect(() =>
+    libraryItemSchema.parse({
+      id: "i3",
+      kind: "asset",
+      name: "No account",
+      description: "",
+      usage: "",
+      tags: [],
+      mediaId: "m3",
+      ext: "png",
+      url: "/media/m3.png",
+      width: 10,
+      height: 10,
+      createdAt: 1,
+      updatedAt: 2,
+      stats: { timesUsed: 0, slideshowCount: 0, firstUsedAt: null, lastUsedAt: null },
+    }),
+  ).toThrow();
 });
 
 describe("libraryUseSchema", () => {

@@ -1,10 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
-// The font wait below asks for the real face, so the test loads the same
-// @font-face declaration the app does.
+import { afterEach, describe, expect, it, vi } from "vitest";
+// The font wait below asks for the real faces, so the test loads the same
+// @font-face declaration the app does, plus a second real family
+// (testFonts.css) for the multi-family wait.
 import "../../../design/fonts.css";
+import "./testFonts.css";
 import { outputHeight } from "@shared/geometry/index.js";
 import { textFontString } from "@shared/text/index.js";
 import type { LibraryItem } from "@shared/schema/index.js";
+import { injectFontFaces, resetFontFacesForTesting } from "../../../app/fontFaces.js";
 import { renderSlideBlob, renderSlideCanvas } from "./render.js";
 import {
   gradientImage,
@@ -577,14 +580,120 @@ describe("the font wait", () => {
   afterEach(() => {
     Reflect.deleteProperty(document.fonts, "load");
     CanvasRenderingContext2D.prototype.measureText = realMeasure;
+    vi.unstubAllGlobals();
+    resetFontFacesForTesting();
   });
 
-  it("waits for the font before measuring text", async () => {
+  it("waits for the font catalogue fetch to settle before loading anything", async () => {
+    /*
+     * useSession's call to injectFontFaces() (fired the moment sign-in
+     * resolves) may still be awaiting its fetch when an export starts.
+     * document.fonts.load() for a family with no @font-face rule registered
+     * yet does not error and does not wait — it resolves almost immediately
+     * against a fallback — so renderSlideCanvas has to await
+     * whenCatalogueReady() first, the same way useTextLayout.ts's
+     * ensureFontLoaded does, rather than racing it.
+     */
+    const order: string[] = [];
+    let releaseCatalogue: (response: Response) => void = () => {};
+    const catalogueFetch = new Promise<Response>((resolve) => {
+      releaseCatalogue = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => catalogueFetch),
+    );
+    // Replaces the app-wide catalogueReady promise with one only this test
+    // controls, exactly as a cold sign-in would leave it pending.
+    const injecting = injectFontFaces();
+
+    document.fonts.load = async (font: string, text?: string) => {
+      order.push(`load:${font}`);
+      return realLoad(font, text);
+    };
+
+    const rendering = renderSlideCanvas(
+      slideFixture({
+        texts: [textSeed({ id: "a", text: "One", fontFamily: "TikTok Sans" })],
+      }),
+      { height: 1920, assets: backgroundOnly() },
+    );
+
+    // Nothing here waits on a clock: a handful of microtask turns is enough
+    // for the render to have reached document.fonts.load if it did not wait.
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    expect(
+      order,
+      "the catalogue fetch has not settled, so nothing has loaded yet",
+    ).toEqual([]);
+
+    releaseCatalogue(
+      new Response(JSON.stringify({ fonts: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await injecting;
+    const canvas = await rendering;
+    expect(canvas.width).toBe(1080);
+    expect(order).toEqual([`load:${textFontString(64, "TikTok Sans")}`]);
+  });
+
+  /*
+   * Finding 10: this call site built its document.fonts.load() string with
+   * no weight argument, contradicting textFontString's own documented
+   * contract (constants.ts) that every caller passes the family's real
+   * catalogued weight — context.font two lines above this same file already
+   * does. Latent while the catalogue is empty (every test above), since CSS
+   * matching falls back to the single face that exists either way; this
+   * proves the real, non-default weight is what actually gets asked for once
+   * a family names one.
+   */
+  it("asks the browser for a family's real catalogued weight, not the TEXT_WEIGHT default", async () => {
+    const order: string[] = [];
+    document.fonts.load = async (font: string, text?: string) => {
+      order.push(font);
+      return realLoad(font, text);
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              fonts: [
+                {
+                  id: "1",
+                  family: "Space Mono",
+                  weight: 400,
+                  source: "google",
+                  url: "/media/abc.woff2",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    await injectFontFaces();
+
+    await renderSlideCanvas(
+      slideFixture({
+        texts: [textSeed({ id: "a", text: "One", fontFamily: "Space Mono" })],
+      }),
+      { height: 1920, assets: backgroundOnly() },
+    );
+
+    expect(order).toEqual([textFontString(64, "Space Mono", 400)]);
+  });
+
+  it("waits for every distinct family on the slide before measuring text", async () => {
     /*
      * drawTextLayer in app.js:4449 set context.font to TikTok Sans and measured
      * straight away, so the first export after a cold load wrapped its lines
      * against whichever fallback face the browser had. renderSlideCanvas awaits
-     * document.fonts.load first.
+     * document.fonts.load first, once per distinct family the slide actually
+     * uses rather than once per layer.
      *
      * The gate below is what makes this an ordering test rather than a race.
      * The render cannot pass the font wait until the test releases it, so
@@ -610,7 +719,12 @@ describe("the font wait", () => {
     };
 
     const rendering = renderSlideCanvas(
-      slideFixture({ texts: [textSeed({ text: "Measure me twice" })] }),
+      slideFixture({
+        texts: [
+          textSeed({ id: "a", text: "One", fontFamily: "TikTok Sans" }),
+          textSeed({ id: "b", text: "Two", y: 0.3, fontFamily: "Space Mono" }),
+        ],
+      }),
       { height: 1920, assets: backgroundOnly() },
     );
 
@@ -631,9 +745,12 @@ describe("the font wait", () => {
       probe.src = gradientImage(64, 64, "#000000", "#ffffff");
     });
 
-    expect(order, "the font is asked for first, and nothing measures behind it").toEqual([
-      `load:${textFontString(64)}`,
-    ]);
+    expect(order.sort(), "both families are asked for before anything measures").toEqual(
+      [
+        `load:${textFontString(64, "TikTok Sans")}`,
+        `load:${textFontString(64, "Space Mono")}`,
+      ].sort(),
+    );
 
     release();
     const canvas = await rendering;
@@ -642,6 +759,33 @@ describe("the font wait", () => {
       order.filter((entry) => entry === "measure").length,
       "the text is measured once the face has arrived",
     ).toBeGreaterThan(0);
+  });
+
+  it("degrades gracefully when one family fails to load, rather than aborting the whole export", async () => {
+    /*
+     * The stage already settles a family that fails to load rather than
+     * waiting forever (useTextLayout.ts's ensureFontLoaded). The export
+     * awaited every family with a bare Promise.all, so a genuine load
+     * failure for one Google-sourced family used to reject the whole export
+     * instead of falling back to whatever face the browser substituted for
+     * that family, same as the stage does.
+     */
+    document.fonts.load = async (font: string, text?: string) => {
+      if (font.includes("Space Mono")) throw new Error("network error");
+      return realLoad(font, text);
+    };
+
+    const canvas = await renderSlideCanvas(
+      slideFixture({
+        texts: [
+          textSeed({ id: "a", text: "One", fontFamily: "TikTok Sans" }),
+          textSeed({ id: "b", text: "Two", y: 0.3, fontFamily: "Space Mono" }),
+        ],
+      }),
+      { height: 1920, assets: backgroundOnly() },
+    );
+
+    expect(canvas.width).toBe(1080);
   });
 });
 

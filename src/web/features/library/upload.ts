@@ -49,6 +49,7 @@ export type LibraryUploader = Pick<typeof api, "createLibraryItem">;
 export async function uploadLibraryFile(
   kind: LibraryKind,
   file: File,
+  accountId: string,
   client: LibraryUploader = api,
 ): Promise<LibraryItem> {
   const { item } = await client.createLibraryItem({
@@ -56,6 +57,7 @@ export async function uploadLibraryFile(
     name: nameForFile(file, kind),
     contentType: file.type === "" ? "image/png" : file.type,
     data: await fileToDataUrl(file),
+    accountId,
   });
   return item;
 }

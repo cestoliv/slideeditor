@@ -43,11 +43,12 @@ function textOf(result: ToolOutcome): string {
   return first?.type === "text" ? first.text : "";
 }
 
-it("serves the seven tools over the transport", async () => {
+it("serves the eight tools over the transport", async () => {
   const client = await connect();
   try {
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toEqual([
+      "list_accounts",
       "list_library",
       "get_library_item",
       "list_slideshows",
@@ -57,7 +58,7 @@ it("serves the seven tools over the transport", async () => {
       "update_slideshow",
     ]);
     // The SDK builds the JSON schema from the raw zod shape it was handed.
-    expect(listed.tools[0]?.inputSchema.properties).toMatchObject({
+    expect(listed.tools[1]?.inputSchema.properties).toMatchObject({
       kind: { description: "Limit to one library. Omit to search both." },
     });
   } finally {
@@ -71,7 +72,11 @@ it("creates a slideshow through a real tool call", async () => {
   try {
     const created = await client.callTool({
       name: "create_slideshow",
-      arguments: { name: "Launch", slides: [{ background: item.id, texts: ["Hello"] }] },
+      arguments: {
+        accountId: "default",
+        name: "Launch",
+        slides: [{ background: item.id, texts: ["Hello"] }],
+      },
     });
     const body = JSON.parse(textOf(created)) as { id: string; editUrl: string };
     expect(body.editUrl).toBe(`http://127.0.0.1:4173/projects/${body.id}`);
@@ -87,10 +92,40 @@ it("reports a bad library id as a tool error rather than a crash", async () => {
   try {
     const result = await client.callTool({
       name: "create_slideshow",
-      arguments: { slides: [{ background: item.id }] },
+      arguments: { accountId: "default", slides: [{ background: item.id }] },
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/is an asset, expected a background/);
+  } finally {
+    await client.close();
+  }
+});
+
+// No account has "" as its id. An empty accountId used to be indistinguishable
+// from an omitted one (both fell through the same `|| null`), so it silently
+// widened these two filters to every account instead of narrowing to none.
+it("rejects an empty accountId on list_library rather than searching every account", async () => {
+  await addItem(app.library, "background", "Sunset");
+  const client = await connect();
+  try {
+    const result = await client.callTool({
+      name: "list_library",
+      arguments: { accountId: "" },
+    });
+    expect(result.isError).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
+it("rejects an empty accountId on list_slideshows rather than listing every account", async () => {
+  const client = await connect();
+  try {
+    const result = await client.callTool({
+      name: "list_slideshows",
+      arguments: { accountId: "" },
+    });
+    expect(result.isError).toBe(true);
   } finally {
     await client.close();
   }

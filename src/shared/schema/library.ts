@@ -25,6 +25,7 @@ export const libraryItemSchema = z.object({
   description: z.string().catch(""),
   usage: z.string().catch(""),
   tags: z.array(z.string()).catch([]),
+  accountId: z.string(),
   mediaId: z.string(),
   ext: z.string(),
   url: z.string(),

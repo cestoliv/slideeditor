@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { BUILTIN_DEFAULTS } from "../../shared/schema/index.js";
 import { makeTempApp, pngFixture } from "../testing.js";
 
 let app: FastifyInstance;
@@ -16,7 +17,13 @@ async function createItem(kind = "background", name = "Beach"): Promise<string> 
   const response = await app.inject({
     method: "POST",
     url: "/api/library",
-    payload: { kind, name, contentType: "image/png", data: pngFixture(64, 64) },
+    payload: {
+      kind,
+      name,
+      contentType: "image/png",
+      data: pngFixture(64, 64),
+      accountId: "default",
+    },
   });
   expect(response.statusCode).toBe(200);
   return String(response.json().item.id);
@@ -31,6 +38,7 @@ it("creates a library item from base64 data", async () => {
       name: "Beach",
       contentType: "image/png",
       data: pngFixture(64, 64),
+      accountId: "default",
     },
   });
   expect(response.statusCode).toBe(200);
@@ -51,6 +59,7 @@ it("accepts a data URL as well as bare base64", async () => {
       name: "Sticker",
       contentType: "image/png",
       data: `data:image/png;base64,${pngFixture(32, 48)}`,
+      accountId: "default",
     },
   });
   expect(response.statusCode).toBe(200);
@@ -116,6 +125,53 @@ it("lists items with a total, and filters by kind", async () => {
   expect(assets.json().total).toBe(2);
 });
 
+it("filters the listing to one account with ?account=", async () => {
+  const account = app.accounts.create({
+    name: "Side project",
+    defaults: BUILTIN_DEFAULTS,
+  });
+  const own = await createItem("background", "Beach");
+  const otherResponse = await app.inject({
+    method: "POST",
+    url: "/api/library",
+    payload: {
+      kind: "background",
+      name: "Dawn",
+      contentType: "image/png",
+      data: pngFixture(64, 64),
+      accountId: account.id,
+    },
+  });
+  expect(otherResponse.statusCode).toBe(200);
+  const otherId = String(otherResponse.json().item.id);
+
+  const filtered = await app.inject({
+    method: "GET",
+    url: `/api/library?account=${account.id}`,
+  });
+  expect(filtered.json().items.map((item: { id: string }) => item.id)).toEqual([otherId]);
+  expect(filtered.json().total).toBe(1);
+
+  const unfiltered = await app.inject({ method: "GET", url: "/api/library" });
+  expect(
+    unfiltered
+      .json()
+      .items.map((item: { id: string }) => item.id)
+      .sort(),
+  ).toEqual([own, otherId].sort());
+});
+
+// No account has "" as its id, so an empty ?account= must narrow the result
+// to nothing rather than being treated as "no filter" and widening back out
+// to every account's rows.
+it("narrows to nothing rather than every account on an empty ?account=", async () => {
+  await createItem("background", "Beach");
+
+  const filtered = await app.inject({ method: "GET", url: "/api/library?account=" });
+  expect(filtered.json().items).toEqual([]);
+  expect(filtered.json().total).toBe(0);
+});
+
 it("pages through the list with limit and offset", async () => {
   await createItem("background", "One");
   await createItem("background", "Two");
@@ -148,7 +204,7 @@ it("honours a sort it knows and ignores one it does not", async () => {
   await app.inject({
     method: "POST",
     url: "/api/slideshows",
-    payload: { name: "Trip", slides: [{ background: used }] },
+    payload: { name: "Trip", slides: [{ background: used }], accountId: "default" },
   });
 
   const names = (response: { json(): { items: { id: string }[] } }) =>
@@ -211,7 +267,11 @@ it("returns 409 with usedBy when deleting an item in use", async () => {
   const slideshow = await app.inject({
     method: "POST",
     url: "/api/slideshows",
-    payload: { name: "Trip", slides: [{ background: id, texts: ["Hello"] }] },
+    payload: {
+      name: "Trip",
+      slides: [{ background: id, texts: ["Hello"] }],
+      accountId: "default",
+    },
   });
   expect(slideshow.statusCode).toBe(200);
 
@@ -227,7 +287,7 @@ it("deletes an item in use when force is 1", async () => {
   await app.inject({
     method: "POST",
     url: "/api/slideshows",
-    payload: { name: "Trip", slides: [{ background: id }] },
+    payload: { name: "Trip", slides: [{ background: id }], accountId: "default" },
   });
   const response = await app.inject({
     method: "DELETE",
@@ -275,6 +335,7 @@ it("reads a body an agent sent with no content type", async () => {
       name: "Arrow",
       contentType: "image/png",
       data: pngFixture(16, 16),
+      accountId: "default",
     }),
   });
   expect(response.statusCode).toBe(200);

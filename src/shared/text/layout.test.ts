@@ -16,6 +16,7 @@ const base = {
   background: "white" as const,
   backgroundShape: "lines" as const,
   align: "center" as const,
+  fontFamily: "TikTok Sans",
   rotation: 0,
   z: 1,
 };

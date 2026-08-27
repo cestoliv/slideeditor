@@ -4,8 +4,10 @@ import { render } from "vitest-browser-react";
 import { MemoryRouter } from "react-router";
 import "../../design/tokens.css";
 import "../../design/reset.css";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { ToastProvider } from "../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../app/accounts.js";
 import { LibraryCache } from "../../app/useLibrary.js";
 import { AssetRail } from "./AssetRail.js";
 import { Editor } from "./Editor.js";
@@ -22,8 +24,13 @@ import { ASSET_DRAG_TYPE } from "./layers/useAssetDrop.js";
  * paste worked, and picking from the library was an agent-only capability.
  */
 
-function assetItem(id: string, name: string, description = ""): LibraryItem {
-  return { ...libraryItem(id, 400, 400, name), kind: "asset", description };
+function assetItem(
+  id: string,
+  name: string,
+  description = "",
+  accountId = DEFAULT_ACCOUNT_ID,
+): LibraryItem {
+  return { ...libraryItem(id, 400, 400, name), kind: "asset", description, accountId };
 }
 
 type Harness = {
@@ -60,16 +67,30 @@ function harness(options: { assets?: LibraryItem[]; overlays?: number } = {}): H
   };
 }
 
+function emptyAccountsStore(): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
+
 async function openEditor(built: Harness) {
   await render(
     <ToastProvider>
       <MemoryRouter initialEntries={["/p/project-1"]}>
-        <Editor
-          projectId={built.project.id}
-          client={built.client}
-          library={built.cache}
-          subscribe={() => () => undefined}
-        />
+        <AccountsProvider store={emptyAccountsStore()}>
+          <Editor
+            projectId={built.project.id}
+            client={built.client}
+            library={built.cache}
+            subscribe={() => () => undefined}
+          />
+        </AccountsProvider>
       </MemoryRouter>
     </ToastProvider>,
   );
@@ -145,6 +166,20 @@ it("shows only the assets this slideshow uses until the scope is switched", asyn
   await userEvent.click(page.getByRole("button", { name: "Library" }));
 
   await expect.element(page.getByAltText("Cyan sticker")).toBeInTheDocument();
+});
+
+it("does not offer another account's assets in the Library tab", async () => {
+  const built = harness({
+    assets: [
+      assetItem("sticker-1", "Cyan sticker"),
+      assetItem("sticker-2", "Their sticker", "", "other-account"),
+    ],
+  });
+  await openEditor(built);
+  await userEvent.click(page.getByRole("button", { name: "Library" }));
+
+  await expect.element(page.getByAltText("Cyan sticker")).toBeInTheDocument();
+  expect(page.getByAltText("Their sticker").query()).toBe(null);
 });
 
 it("filters the assets as the search is typed", async () => {

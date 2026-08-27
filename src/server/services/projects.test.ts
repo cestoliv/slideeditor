@@ -6,6 +6,8 @@ import {
   addItem,
   type TestApp,
 } from "../testing.js";
+import { ComposeError } from "../../shared/compose/index.js";
+import { BUILTIN_DEFAULTS } from "../../shared/schema/index.js";
 import { ProjectService, type StoredProject } from "./projects.js";
 
 let app: TestApp | undefined;
@@ -41,7 +43,7 @@ function slideDocument(backgroundId: string, itemId: string | null): SlideDocume
 it("increments the version on every write", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "One" });
+  const project = projects.create({ accountId: "default", name: "One" });
   expect(project.version).toBe(1);
   expect(
     projects.save(project.id, { name: "One", document: project, version: 1 }).version,
@@ -54,7 +56,7 @@ it("increments the version on every write", () => {
 it("rejects a stale write and reports the current state", async () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Guarded" });
+  const project = projects.create({ accountId: "default", name: "Guarded" });
   projects.save(project.id, { name: "Guarded", document: project, version: 1 });
 
   const error = asHttpError(
@@ -76,6 +78,7 @@ it("tracks which slideshows use which library items", async () => {
   const other = await addItem(library, "asset", "Unused");
 
   const project = projects.create({
+    accountId: "default",
     name: "Tracked",
     document: slideDocument(background.id, asset.id),
   });
@@ -102,6 +105,7 @@ it("clears usage when a slideshow is deleted", async () => {
   const { library, projects } = app.services;
   const background = await addItem(library, "background", "Bg");
   const project = projects.create({
+    accountId: "default",
     name: "Doomed",
     document: slideDocument(background.id, null),
   });
@@ -110,13 +114,93 @@ it("clears usage when a slideshow is deleted", async () => {
   expect(projects.get(project.id)).toBeNull();
 });
 
+/*
+ * Finding 4: normalizeDocument only checked slides was an array, not that
+ * each entry was an object — so a raw POST could store a slide the
+ * json_each-based in-use query in fonts.ts could not walk (see there). A
+ * non-object entry is dropped, matching reindex()'s own "not an object, skip
+ * it" tolerance for the same shape.
+ */
+it("drops a slide entry that is not an object", () => {
+  app = createTestApp();
+  const project = app.services.projects.create({
+    accountId: "default",
+    name: "Odd slide",
+    document: { ratio: { w: 9, h: 16 }, slides: ["x", null, 42, { id: "s1" }] },
+  });
+  expect(project.slides).toEqual([{ id: "s1" }]);
+});
+
 it("falls back to the default ratio for nonsense input", () => {
   app = createTestApp();
   const project = app.services.projects.create({
+    accountId: "default",
     name: "Odd",
     document: { ratio: { w: 0, h: -3 }, slides: [] },
   });
   expect(project.ratio).toEqual({ w: 9, h: 16 });
+});
+
+/*
+ * Finding 5: save() called normalizeDocument(document) with no fallback
+ * ratio, while create() (above) passes the account's default. A PUT whose
+ * body omitted ratio entirely (not merely a malformed one — see the previous
+ * test) fell through to normalizeDocument's own hardcoded 9:16 default no
+ * matter what the account's real default was, silently reshaping a 3:4
+ * account's slideshow on any save that did not carry its own ratio.
+ */
+it("keeps the account's default ratio on a save whose document omits one, matching create()", () => {
+  app = createTestApp();
+  const { projects, accounts } = app.services;
+  const account = accounts.create({
+    name: "Portrait-ish brand",
+    defaults: { ...BUILTIN_DEFAULTS, ratio: { w: 3, h: 4 } },
+  });
+  const project = projects.create({ accountId: account.id, name: "Uses 3:4" });
+  expect(project.ratio).toEqual({ w: 3, h: 4 });
+
+  // A save whose document body carries no ratio key at all — the shape a
+  // client that only touched slides, not the ratio picker, would send.
+  const { ratio: _omitted, ...documentWithoutRatio } = project;
+  const saved = projects.save(project.id, {
+    name: project.name,
+    document: documentWithoutRatio,
+    version: project.version,
+  });
+  expect(saved.ratio).toEqual({ w: 3, h: 4 });
+});
+
+/*
+ * The account default only seeds a slideshow once, at create() — after that
+ * the slideshow's own ratio is the snapshot of record. A save that omits
+ * ratio must keep that snapshot even once the account's default has since
+ * diverged from it; the previous test above can't catch a regression here
+ * because it never lets the two values differ.
+ */
+it("keeps its own ratio on save even after the account's default changes", () => {
+  app = createTestApp();
+  const { projects, accounts } = app.services;
+  const account = accounts.create({
+    name: "Square then portrait",
+    defaults: { ...BUILTIN_DEFAULTS, ratio: { w: 1, h: 1 } },
+  });
+  const project = projects.create({ accountId: account.id, name: "Started square" });
+  expect(project.ratio).toEqual({ w: 1, h: 1 });
+
+  // The account's default ratio changes after the slideshow was created.
+  accounts.update(account.id, {
+    defaults: { ...BUILTIN_DEFAULTS, ratio: { w: 3, h: 4 } },
+  });
+
+  // A save whose document body carries no ratio key at all must keep the
+  // slideshow's own 1:1, not follow the account's new 3:4 default.
+  const { ratio: _omitted, ...documentWithoutRatio } = project;
+  const saved = projects.save(project.id, {
+    name: project.name,
+    document: documentWithoutRatio,
+    version: project.version,
+  });
+  expect(saved.ratio).toEqual({ w: 1, h: 1 });
 });
 
 it("reports a missing slideshow as 404", async () => {
@@ -130,7 +214,11 @@ it("summaries carry the cover and slide count without the document", async () =>
   app = createTestApp();
   const { library, projects } = app.services;
   const background = await addItem(library, "background", "Cover");
-  projects.create({ name: "Listed", document: slideDocument(background.id, null) });
+  projects.create({
+    accountId: "default",
+    name: "Listed",
+    document: slideDocument(background.id, null),
+  });
   const [summary] = projects.list();
   expect(summary?.slideCount).toBe(1);
   expect(summary?.coverUrl).toBe(background.url);
@@ -144,7 +232,11 @@ it("serialises a summary in the order the HTTP API has always used", async () =>
   app = createTestApp();
   const { library, projects } = app.services;
   const background = await addItem(library, "background", "Cover");
-  projects.create({ name: "Listed", document: slideDocument(background.id, null) });
+  projects.create({
+    accountId: "default",
+    name: "Listed",
+    document: slideDocument(background.id, null),
+  });
   const [summary] = projects.list();
 
   // coverUrl is last because list() appends it after toSummary, exactly as
@@ -157,6 +249,7 @@ it("serialises a summary in the order the HTTP API has always used", async () =>
     "status",
     "description",
     "hashtags",
+    "accountId",
     "slideCount",
     "coverItemId",
     "createdAt",
@@ -177,6 +270,7 @@ it("keeps the first use while the last use moves", async () => {
   try {
     vi.setSystemTime(1_700_000_000_000);
     const project = projects.create({
+      accountId: "default",
       name: "Twice",
       document: {
         ratio: { w: 9, h: 16 },
@@ -220,7 +314,7 @@ it("keeps the first use while the last use moves", async () => {
 it("truncates a slideshow name at 200 characters", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "n".repeat(300) });
+  const project = projects.create({ accountId: "default", name: "n".repeat(300) });
   expect(project.name.length).toBe(200);
   const saved = projects.save(project.id, {
     name: "s".repeat(300),
@@ -232,7 +326,7 @@ it("truncates a slideshow name at 200 characters", () => {
 
 it("starts a new slideshow at version 1 and status draft", () => {
   app = createTestApp();
-  const project = app.services.projects.create();
+  const project = app.services.projects.create({ accountId: "default" });
   expect(project.version).toBe(1);
   expect(project.status).toBe("draft");
   expect(project.name, "the default name").toBe("New Project");
@@ -243,7 +337,7 @@ it("starts a new slideshow at version 1 and status draft", () => {
 it("rejects a save carrying a stale version with 409 and the current project", async () => {
   app = createTestApp();
   const { projects } = app.services;
-  const created = projects.create({ name: "Held" });
+  const created = projects.create({ accountId: "default", name: "Held" });
   const saved = projects.save(created.id, {
     name: "Held",
     document: created,
@@ -265,7 +359,7 @@ it("rejects a save carrying a stale version with 409 and the current project", a
 it("bumps the version on every accepted save", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Counting" });
+  const project = projects.create({ accountId: "default", name: "Counting" });
   let version = project.version;
   for (let round = 0; round < 5; round += 1) {
     const next = projects.save(project.id, {
@@ -281,7 +375,7 @@ it("bumps the version on every accepted save", () => {
 it("keeps the name when a save leaves it out", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Named" });
+  const project = projects.create({ accountId: "default", name: "Named" });
   const saved = projects.save(project.id, {
     document: { ratio: { w: 9, h: 16 }, slides: [] },
     version: 1,
@@ -297,6 +391,7 @@ it("keeps a slide field the rewrite does not model", async () => {
     { id: "s1", backgroundItemId: background.id, futureField: { nested: true } },
   ];
   const project = projects.create({
+    accountId: "default",
     name: "Forward",
     document: { ratio: { w: 9, h: 16 }, slides },
   });
@@ -312,6 +407,7 @@ it("counts one placement per overlay and one for the background", async () => {
   const background = await addItem(library, "background", "Bg");
   const asset = await addItem(library, "asset", "As", { width: 400, height: 300 });
   projects.create({
+    accountId: "default",
     name: "Counted",
     document: {
       ratio: { w: 9, h: 16 },
@@ -334,6 +430,7 @@ it("keeps usage history after the slideshow is deleted", async () => {
   const { library, projects } = app.services;
   const background = await addItem(library, "background", "Bg");
   const project = projects.create({
+    accountId: "default",
     name: "Doomed",
     document: slideDocument(background.id, null),
   });
@@ -353,7 +450,7 @@ it("announces every change on the event stream", () => {
     seen.push(payload);
   };
   const { projects } = app.services;
-  const project = projects.create({ name: "Watched" });
+  const project = projects.create({ accountId: "default", name: "Watched" });
   projects.save(project.id, {
     document: { ratio: { w: 9, h: 16 }, slides: [] },
     version: 1,
@@ -370,7 +467,7 @@ it("announces every change on the event stream", () => {
 it("works without an event bus or a library", () => {
   app = createTestApp();
   const projects = new ProjectService(app.db, null);
-  const project = projects.create({ name: "Alone" });
+  const project = projects.create({ accountId: "default", name: "Alone" });
   expect(projects.list().map((summary) => summary.name)).toEqual(["Alone"]);
   expect(projects.list()[0]?.coverUrl, "no library means no cover to look up").toBeNull();
   expect(projects.get(project.id)?.name).toBe("Alone");
@@ -383,6 +480,7 @@ it("stores a caption and hands it back in the shape everything reads", () => {
   app = createTestApp();
   const { projects } = app.services;
   const project = projects.create({
+    accountId: "default",
     name: "Captioned",
     description: "Five things to know first",
     hashtags: ["travel", "#summer"],
@@ -399,7 +497,7 @@ it("stores a caption and hands it back in the shape everything reads", () => {
 
 it("starts a slideshow with no caption when none was asked for", () => {
   app = createTestApp();
-  const project = app.services.projects.create({ name: "Bare" });
+  const project = app.services.projects.create({ accountId: "default", name: "Bare" });
   expect(project.description).toBe("");
   expect(project.hashtags).toBe("");
 });
@@ -408,6 +506,7 @@ it("leaves a caption alone when a save says nothing about it", () => {
   app = createTestApp();
   const { projects } = app.services;
   const project = projects.create({
+    accountId: "default",
     name: "Captioned",
     description: "Written by the agent",
     hashtags: "#travel",
@@ -431,6 +530,7 @@ it("clears a caption for a save that asks for it in as many words", () => {
   app = createTestApp();
   const { projects } = app.services;
   const project = projects.create({
+    accountId: "default",
     name: "Captioned",
     description: "Written by the agent",
     hashtags: "#travel",
@@ -449,7 +549,7 @@ it("clears a caption for a save that asks for it in as many words", () => {
 it("normalises the hashtags a save carries", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Captioned" });
+  const project = projects.create({ accountId: "default", name: "Captioned" });
   const saved = projects.save(project.id, {
     document: { ratio: { w: 9, h: 16 }, slides: [] },
     version: 1,
@@ -457,4 +557,66 @@ it("normalises the hashtags a save carries", () => {
   });
 
   expect(saved.hashtags).toBe("#travel #summer");
+});
+
+it("rejects create() with a document whose background belongs to another account", async () => {
+  app = createTestApp();
+  const { projects, library, accounts } = app.services;
+  const other = accounts.create({ name: "Other", defaults: BUILTIN_DEFAULTS });
+  const theirBackground = await addItem(library, "background", "Their Bg", {
+    accountId: other.id,
+  });
+
+  expect(() =>
+    projects.create({
+      accountId: "default",
+      name: "Cross-account",
+      document: slideDocument(theirBackground.id, null),
+    }),
+  ).toThrow(ComposeError);
+});
+
+it("rejects save() (the /api/projects write path) with an overlay item from another account", async () => {
+  app = createTestApp();
+  const { projects, library, accounts } = app.services;
+  const background = await addItem(library, "background", "Bg", { accountId: "default" });
+  const other = accounts.create({ name: "Other", defaults: BUILTIN_DEFAULTS });
+  const theirAsset = await addItem(library, "asset", "Their Asset", {
+    accountId: other.id,
+  });
+  const project = projects.create({
+    accountId: "default",
+    name: "Guarded",
+    document: slideDocument(background.id, null),
+  });
+
+  const error = await catchError(() =>
+    projects.save(project.id, {
+      document: slideDocument(background.id, theirAsset.id),
+      version: 1,
+    }),
+  );
+
+  expect(error).toBeInstanceOf(ComposeError);
+  expect((error as ComposeError).message).toContain("different account");
+  expect((error as ComposeError).message).toContain("Their Asset");
+});
+
+it("allows save() with a document whose items all belong to the slideshow's own account", async () => {
+  app = createTestApp();
+  const { projects, library } = app.services;
+  const background = await addItem(library, "background", "Bg", { accountId: "default" });
+  const asset = await addItem(library, "asset", "Asset", { accountId: "default" });
+  const project = projects.create({
+    accountId: "default",
+    name: "Same account",
+    document: slideDocument(background.id, null),
+  });
+
+  expect(() =>
+    projects.save(project.id, {
+      document: slideDocument(background.id, asset.id),
+      version: 1,
+    }),
+  ).not.toThrow();
 });
