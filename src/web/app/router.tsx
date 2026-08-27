@@ -1,5 +1,6 @@
 import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes, useParams } from "react-router";
+import { AccountsAdmin } from "../features/accounts/AccountsAdmin.js";
 import { TokenSettings } from "../features/auth/TokenSettings.js";
 import { Dashboard } from "../features/dashboard/Dashboard.js";
 import { Editor } from "../features/editor/Editor.js";
@@ -39,6 +40,7 @@ export function AppRoutes() {
       <Route path="/projects/:id" element={<EditorRoute />} />
       <Route path="/library" element={<Navigate to="/library/backgrounds" replace />} />
       <Route path="/library/:kind" element={<LibraryRoute />} />
+      <Route path="/accounts" element={<AccountsAdmin />} />
       <Route path="/settings" element={<SettingsRoute />} />
       {Gallery === null ? null : (
         <Route

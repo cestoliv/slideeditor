@@ -10,7 +10,15 @@
 :root {
   color-scheme: light; /* styles.css:10 */
 
-  /* The face itself is declared in fonts.css, which owns the asset binding. */
+  /*
+   * The builtin face itself is declared statically by design/fonts.css,
+   * imported from main.tsx so it is there before sign-in — before a session
+   * is known at all, LoginScreen (App.tsx's Gate) is already painting text
+   * in this family. Every OTHER family an account adds is declared at
+   * runtime instead, by injectFontFaces() (src/web/app/fontFaces.ts), which
+   * fetches the font catalogue from /api/fonts once authenticated and
+   * injects one @font-face rule per family.
+   */
   --font-family-base:
     "TikTok Sans", system-ui, -apple-system, sans-serif; /* styles.css:11 */
 

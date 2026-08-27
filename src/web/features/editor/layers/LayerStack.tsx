@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { OUTPUT_WIDTH, outputHeight } from "@shared/geometry/index.js";
-import type { LibraryItem } from "@shared/schema/index.js";
+import type { AccountDefaults, LibraryItem } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { activeSlideOf, useEditor } from "../store.js";
 import type { EditorStore } from "../store.js";
@@ -35,6 +35,8 @@ import styles from "./LayerStack.module.css";
 export type LayerStackOptions = {
   store: EditorStore;
   library: LibraryIndex;
+  /** The active slideshow's own account defaults, applied to a text layer added here. */
+  defaults: AccountDefaults;
   /** app.js:1700. While the photo is placed the layers step aside entirely. */
   photoAdjust?: boolean | undefined;
   /** Puts a dropped or pasted image into the library. */
@@ -71,6 +73,7 @@ const NUDGE: Record<string, { x: number; y: number } | undefined> = {
 export function useLayerStack({
   store,
   library,
+  defaults,
   photoAdjust = false,
   upload,
   remember,
@@ -224,10 +227,14 @@ export function useLayerStack({
         return;
       }
       event.preventDefault();
-      const id = addTextLayer(store, {
-        x: (event.clientX - rect.left) / rect.width,
-        y: (event.clientY - rect.top) / rect.height,
-      });
+      const id = addTextLayer(
+        store,
+        {
+          x: (event.clientX - rect.left) / rect.width,
+          y: (event.clientY - rect.top) / rect.height,
+        },
+        defaults,
+      );
       // app.js:2979-2984 opens the new box for editing straight away, which is
       // what makes a double click feel like one action rather than two.
       if (id !== null) setEditing({ id, caret: { mode: "all" } });
@@ -236,7 +243,7 @@ export function useLayerStack({
     return () => {
       document.removeEventListener("dblclick", onDoubleClick);
     };
-  }, [photoAdjust, rectOf, store]);
+  }, [defaults, photoAdjust, rectOf, store]);
 
   // Undo and redo, on the document as app.js:4861 had them. They live behind
   // this hook rather than in Editor.tsx so the shared file takes no more wiring.

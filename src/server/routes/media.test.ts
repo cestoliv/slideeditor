@@ -17,7 +17,13 @@ async function addBackground(): Promise<{ url: string; bytes: number }> {
   const response = await app.inject({
     method: "POST",
     url: "/api/library",
-    payload: { kind: "background", name: "Beach", contentType: "image/png", data },
+    payload: {
+      kind: "background",
+      name: "Beach",
+      contentType: "image/png",
+      data,
+      accountId: "default",
+    },
   });
   expect(response.statusCode).toBe(200);
   return {

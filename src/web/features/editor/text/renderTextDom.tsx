@@ -1,8 +1,9 @@
 import type { CSSProperties, JSX } from "react";
 import { outlineColorFor, textColorOf } from "@shared/geometry/index.js";
-import { TEXT_FONT_STACK, TEXT_WEIGHT } from "@shared/text/index.js";
+import { fontStack } from "@shared/text/index.js";
 import type { CornerRadii, JunctionCorner, TextLayout } from "@shared/text/index.js";
 import type { TextLayer } from "@shared/schema/index.js";
+import { weightFor } from "../../../app/fontFaces.js";
 import styles from "./text.module.css";
 
 /*
@@ -73,19 +74,21 @@ export function concaveCornerPath({ cx, cy, radius, quadrant }: JunctionCorner):
  * a right aligned one ends at it. The inline editor is positioned from this
  * same object, so the caret sits on the glyphs rather than near them.
  */
-export function textBlockStyle(layout: TextLayout): CSSProperties {
+export function textBlockStyle(family: string, layout: TextLayout): CSSProperties {
   const vertical: CSSProperties = {
     top: `${String(layout.startY - layout.lineHeight / 2)}px`,
     height: `${String(layout.blockHeight)}px`,
     fontSize: `${String(layout.fontSize)}px`,
     lineHeight: `${String(layout.lineHeight)}px`,
     textAlign: layout.align,
-    // The face and the weight are named by the shared module rather than by a
-    // token, because the measuring canvas is bound to that same string. A
-    // one-character difference between the two rewraps every line
-    // (src/shared/text/constants.ts:63-71).
-    fontFamily: TEXT_FONT_STACK,
-    fontWeight: TEXT_WEIGHT,
+    // The face and the weight are named from the layer's own family, and the
+    // measuring canvas (useTextLayout.ts, render.ts) is bound to the same
+    // string and the same weightFor(family) lookup. A one-character
+    // difference between the two rewraps every line
+    // (src/shared/text/constants.ts); a weight mismatch synthesises bold here
+    // without doing so on the canvas.
+    fontFamily: fontStack(family),
+    fontWeight: weightFor(family),
   };
   if (layout.align === "left")
     return { ...vertical, left: `${String(layout.textX)}px`, right: 0 };
@@ -97,7 +100,10 @@ export function textBlockStyle(layout: TextLayout): CSSProperties {
 export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element {
   const color = textColorOf(layer);
   const fill = pillFillFor(layer);
-  const blockStyle: CSSProperties = { ...textBlockStyle(layout), color };
+  const blockStyle: CSSProperties = {
+    ...textBlockStyle(layer.fontFamily, layout),
+    color,
+  };
 
   return (
     <div
@@ -179,8 +185,8 @@ export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element
                 strokeLinejoin="round"
                 strokeLinecap="round"
                 paintOrder="stroke fill"
-                fontFamily={TEXT_FONT_STACK}
-                fontWeight={TEXT_WEIGHT}
+                fontFamily={fontStack(layer.fontFamily)}
+                fontWeight={weightFor(layer.fontFamily)}
                 fontSize={`${String(layout.fontSize)}px`}
               >
                 {line === "" ? " " : line}

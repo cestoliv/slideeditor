@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { DEFAULT_RATIO } from "@shared/schema/index.js";
 import type { Project, ProjectSummary } from "@shared/schema/index.js";
 import type { ServerEvent } from "@shared/schema/index.js";
 import { api } from "./api.js";
@@ -40,6 +39,8 @@ export type ProjectsState = {
   error: unknown;
   /** Published work is finished, so it stays out of the way until asked for. */
   showPublished: boolean;
+  /** `undefined` means every account. Lives beside showPublished: both narrow the list the same way. */
+  accountFilter: string | undefined;
   /** The live stream has given up, so nothing on screen updates itself. */
   streamDown: boolean;
 };
@@ -50,6 +51,7 @@ export class ProjectsStore {
     loading: true,
     error: null,
     showPublished: false,
+    accountFilter: undefined,
     streamDown: false,
   };
   private readonly listeners = new Set<() => void>();
@@ -74,12 +76,19 @@ export class ProjectsStore {
     void this.refresh();
   };
 
+  setAccountFilter = (next: string | undefined): void => {
+    if (this.state.accountFilter === next) return;
+    this.publish({ ...this.state, accountFilter: next });
+    void this.refresh();
+  };
+
   refresh = async (): Promise<void> => {
     const request = this.latest + 1;
     this.latest = request;
     try {
       const { projects } = await this.client.listProjects(
         this.state.showPublished ? "all" : undefined,
+        this.state.accountFilter,
       );
       if (this.latest !== request) return;
       this.publish({ ...this.state, projects, loading: false, error: null });
@@ -98,11 +107,16 @@ export class ProjectsStore {
     this.publish({ ...this.state, streamDown: down });
   };
 
-  create = async (): Promise<Project> => {
-    // app.js:2121 names it and hands over an empty document of the default ratio.
+  create = async (accountId: string): Promise<Project> => {
+    // app.js:2121 named it and handed over an empty document of the (then
+    // account-less) default ratio. A document is still not sent: leaving it
+    // out is what lets the server seed the ratio from this account's own
+    // default (ProjectService.create, src/server/services/projects.ts) rather
+    // than DEFAULT_RATIO overriding it — the same bare-document path
+    // POST /api/slideshows and MCP's create_slideshow already take.
     const { project } = await this.client.createProject({
       name: "New Project",
-      document: { ratio: { ...DEFAULT_RATIO }, slides: [] },
+      accountId,
     });
     await this.refresh();
     return project;
@@ -156,8 +170,9 @@ export function ProjectsProvider({
 
 export type ProjectsValue = ProjectsState & {
   setShowPublished: (next: boolean) => void;
+  setAccountFilter: (next: string | undefined) => void;
   refresh: () => Promise<void>;
-  create: () => Promise<Project>;
+  create: (accountId: string) => Promise<Project>;
   remove: (id: string) => Promise<void>;
 };
 
@@ -170,6 +185,7 @@ export function useProjects(): ProjectsValue {
   return {
     ...state,
     setShowPublished: store.setShowPublished,
+    setAccountFilter: store.setAccountFilter,
     refresh: store.refresh,
     create: store.create,
     remove: store.remove,

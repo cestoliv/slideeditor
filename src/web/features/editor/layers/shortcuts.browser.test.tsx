@@ -6,6 +6,7 @@ import "../../../design/tokens.css";
 import "../../../design/reset.css";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { ToastProvider } from "../../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../../app/accounts.js";
 import { LibraryCache } from "../../../app/useLibrary.js";
 import { Editor } from "../Editor.js";
 import type { EditorClient } from "../Editor.js";
@@ -39,16 +40,30 @@ function library(project: Project): LibraryCache {
   });
 }
 
+function emptyAccountsStore(): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
+
 async function openEditor(project: Project) {
   await render(
     <ToastProvider>
       <MemoryRouter initialEntries={["/p/project-1"]}>
-        <Editor
-          projectId={project.id}
-          client={client(project)}
-          library={library(project)}
-          subscribe={() => () => undefined}
-        />
+        <AccountsProvider store={emptyAccountsStore()}>
+          <Editor
+            projectId={project.id}
+            client={client(project)}
+            library={library(project)}
+            subscribe={() => () => undefined}
+          />
+        </AccountsProvider>
       </MemoryRouter>
     </ToastProvider>,
   );

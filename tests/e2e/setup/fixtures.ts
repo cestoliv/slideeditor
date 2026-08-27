@@ -2,6 +2,7 @@ import { afterEach, vi } from "vitest";
 import { page } from "vitest/browser";
 import { createElement } from "react";
 import { cleanup, render } from "vitest-browser-react";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { App } from "@web/App.js";
 import { libraryCache } from "@web/app/useLibrary.js";
@@ -48,6 +49,7 @@ export type CompositionInput = {
 
 export type CreateSlideshowInput = {
   name: string;
+  accountId?: string;
   ratio?: { w: number; h: number };
   slides: CompositionInput[];
   /** The caption to post with. Hashtags go in as a list or as one string. */
@@ -214,6 +216,7 @@ const SEEDS: LibrarySeed[] = [
 export async function seedLibrary(
   base: string,
   tag: string = uniqueTag(),
+  accountId: string = DEFAULT_ACCOUNT_ID,
 ): Promise<SeededLibrary> {
   const backgrounds: LibraryItem[] = [];
   const assets: LibraryItem[] = [];
@@ -229,6 +232,7 @@ export async function seedLibrary(
         tags: seed.tags,
         contentType: "image/png",
         data: solidPng(seed.width, seed.height, seed.color, `${tag} ${seed.name}`),
+        accountId,
       }),
     });
     if (!response.ok) {
@@ -249,7 +253,7 @@ export async function createSlideshow(
   const response = await fetch(`${base}/api/slideshows`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ accountId: "default", ...input }),
   });
   if (!response.ok) {
     throw new Error(`Creating ${input.name} failed with ${await response.text()}`);
@@ -296,12 +300,23 @@ export const EDITOR_VIEWPORT = { width: 1280, height: 900 };
  *
  * The library cache is a module singleton that loads once, and a test file
  * shares it across every mount, so it is re-read here: without that, a
- * slideshow drafted after the first mount opens with no background to resolve.
+ * slideshow drafted after the first mount opens with no background to
+ * resolve. `invalidate()` covers the scope the about-to-mount editor will
+ * ask for, not only the unscoped one this still eagerly `refresh()`es:
+ * LibraryCache now keeps one independent slot per scope rather than a
+ * single one every load evicted, so an account another test in this file
+ * already loaded stays cached — correctly, for the app itself — right
+ * through a scoped `refresh()` this call has no way to name in advance
+ * (the account belongs to whichever slideshow `path` opens, not yet known
+ * here). Marking every scope as due for a fresh fetch is what makes the
+ * editor's own `load()` call, once it knows its scope, actually reach the
+ * network instead of a previous test's now-stale answer.
  */
 export async function openApp(path: string): Promise<void> {
   cleanup();
   await page.viewport(EDITOR_VIEWPORT.width, EDITOR_VIEWPORT.height);
   window.history.pushState({}, "", path);
+  libraryCache.invalidate();
   await libraryCache.refresh();
   const screen = await render(createElement(App));
   // App gates its first render on a session probe, so the container is empty

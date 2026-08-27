@@ -62,14 +62,18 @@ export function assetDragProps(itemId: string): {
  * caller's fallback becomes the library item's name rather than the generic one
  * nameForFile would settle on.
  */
-export function uploadAssetFile(file: File, fallbackName: string): Promise<LibraryItem> {
+export function uploadAssetFile(
+  file: File,
+  fallbackName: string,
+  accountId: string,
+): Promise<LibraryItem> {
   const named =
     file.name === ""
       ? new File([file], `${fallbackName}.png`, {
           type: file.type === "" ? "image/png" : file.type,
         })
       : file;
-  return uploadLibraryFile("asset", named);
+  return uploadLibraryFile("asset", named, accountId);
 }
 
 function assetIdFrom(data: DataTransfer): string | null {

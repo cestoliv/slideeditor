@@ -4,8 +4,9 @@ import { MemoryRouter } from "react-router";
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
-import { parseProject } from "@shared/schema/index.js";
+import { DEFAULT_ACCOUNT_ID, parseProject } from "@shared/schema/index.js";
 import { ToastProvider, Tooltip } from "../../../design/index.js";
+import { AccountsProvider } from "../../../app/accounts.js";
 import { AppRoutes } from "../../../app/router.js";
 import { libraryItem, solidImage } from "./testing.js";
 
@@ -52,6 +53,7 @@ function project(): Project {
     name: "My Slideshow",
     version: 1,
     status: "draft",
+    accountId: DEFAULT_ACCOUNT_ID,
     createdAt: 1,
     updatedAt: 1,
     ratio: { w: 9, h: 16 },
@@ -87,6 +89,10 @@ function serve(path: string): Response {
   if (path.startsWith("/api/library")) {
     return answer({ items: ITEMS, total: ITEMS.length });
   }
+  // Editor.tsx reads the owning account through useAccounts(), which
+  // AccountsProvider loads on mount regardless of what this route needs it for.
+  if (path.startsWith("/api/accounts")) return answer({ accounts: [] });
+  if (path.startsWith("/api/fonts")) return answer({ fonts: [] });
   return new Response(JSON.stringify({ error: `No stub for ${path}` }), { status: 404 });
 }
 
@@ -130,7 +136,9 @@ async function mount() {
       <MemoryRouter initialEntries={["/projects/project-1"]}>
         <Tooltip.Provider>
           <ToastProvider>
-            <AppRoutes />
+            <AccountsProvider>
+              <AppRoutes />
+            </AccountsProvider>
           </ToastProvider>
         </Tooltip.Provider>
       </MemoryRouter>

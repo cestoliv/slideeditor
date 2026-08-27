@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router";
 import "../../design/tokens.css";
 import "../../design/reset.css";
 import { ToastProvider } from "../../design/index.js";
+import { AccountsProvider } from "../../app/accounts.js";
 import { ProjectsProvider } from "../../app/projects.js";
 import type { Subscribe } from "../../app/projects.js";
 import { AppRoutes } from "../../app/router.js";
@@ -69,6 +70,8 @@ vi.mock("../../app/api.js", async (importOriginal) => ({
         total: 2,
       }),
     session: () => Promise.resolve({ authenticated: true, mode: "open" }),
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
   },
   isUnauthorized: () => false,
 }));
@@ -80,7 +83,9 @@ async function at(path: string) {
     <MemoryRouter initialEntries={[path]}>
       <ToastProvider>
         <ProjectsProvider subscribe={noStream}>
-          <AppRoutes />
+          <AccountsProvider>
+            <AppRoutes />
+          </AccountsProvider>
         </ProjectsProvider>
       </ToastProvider>
     </MemoryRouter>,

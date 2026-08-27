@@ -10,6 +10,7 @@ export function libraryRoutes(app: FastifyInstance): void {
   app.get("/api/library", (request) => {
     const limit = countValue(request.query, "limit");
     const offset = countValue(request.query, "offset");
+    const accountId = queryValue(request.query, "account");
     return app.library.list({
       // The service answers an unknown kind or sort itself, one with a 400 and
       // the other by falling back to "recent", so both cross unchecked.
@@ -18,6 +19,7 @@ export function libraryRoutes(app: FastifyInstance): void {
       sort: queryValue(request.query, "sort") || "recent",
       ...(limit === undefined ? {} : { limit }),
       ...(offset === undefined ? {} : { offset }),
+      ...(accountId === null ? {} : { accountId }),
     });
   });
 
@@ -38,6 +40,7 @@ export function libraryRoutes(app: FastifyInstance): void {
       contentType: field(body, "contentType"),
       width: field(body, "width"),
       height: field(body, "height"),
+      accountId: field(body, "accountId"),
       bytes,
     });
     return { item };

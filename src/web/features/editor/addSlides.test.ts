@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem } from "@shared/schema/index.js";
 import { LibraryCache } from "../../app/useLibrary.js";
 import { addSlidesFromItems } from "./addSlides.js";
@@ -19,6 +20,7 @@ function item(id: string, name = id, width = 1080, height = 1920): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: `/media/${id}.png`,

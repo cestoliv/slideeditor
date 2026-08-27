@@ -29,19 +29,21 @@ function tableNames(db: DatabaseSync): string[] {
 
 it("applies every migration on a fresh database", () => {
   const db = openDb(join(dir, "test.db"));
-  expect(userVersion(db)).toBe(5);
+  expect(userVersion(db)).toBe(6);
   const tables = tableNames(db);
   expect(tables).toContain("item_use_history");
   expect(tables).toContain("library_item");
   expect(tables).toContain("project");
   expect(tables).toContain("project_item_use");
+  expect(tables).toContain("account");
+  expect(tables).toContain("font");
   db.close();
 });
 
 it("is idempotent when reopened", () => {
   openDb(join(dir, "test.db")).close();
   const db = openDb(join(dir, "test.db"));
-  expect(userVersion(db)).toBe(5);
+  expect(userVersion(db)).toBe(6);
   db.close();
 });
 
@@ -97,7 +99,7 @@ it("seeds usage history from existing project use", () => {
 
   const db = openDb(file);
 
-  expect(userVersion(db), "the upgrade runs on open").toBe(5);
+  expect(userVersion(db), "the upgrade runs on open").toBe(6);
   const history = db.prepare("SELECT * FROM item_use_history").all();
   expect(history.length).toBe(1);
   const row = history[0] ?? {};
@@ -155,7 +157,7 @@ it("adds the caption columns to a database that already holds slideshows", () =>
 
   const db = openDb(file);
 
-  expect(userVersion(db), "the upgrade runs on open").toBe(5);
+  expect(userVersion(db), "the upgrade runs on open").toBe(6);
   const row = db.prepare("SELECT * FROM project WHERE id = ?").get("project-1") ?? {};
   expect(Object.keys(row), "the two caption columns are there to be written").toContain(
     "description",
@@ -191,6 +193,61 @@ it("adds the caption columns to a database that already holds slideshows", () =>
   expect(text(stored, "description")).toBe("Booking a summer trip?");
   expect(text(stored, "hashtags")).toBe("#travel #summer");
   again.close();
+});
+
+it("creates the default account and backfills existing rows on upgrade", () => {
+  const file = join(dir, "accounts.db");
+  const now = 1_700_000_000_000;
+
+  // A database as it stands before the accounts migration: every migration up
+  // to the caption one, with a slideshow and a library item already in it.
+  const old = new DatabaseSync(file);
+  old.exec("PRAGMA foreign_keys = ON");
+  old.exec(MIGRATIONS[0] ?? "");
+  old.exec(MIGRATIONS[1] ?? "");
+  old.exec(MIGRATIONS[2] ?? "");
+  old.exec(MIGRATIONS[3] ?? "");
+  old.exec(MIGRATIONS[4] ?? "");
+  old.exec("PRAGMA user_version = 5");
+  old
+    .prepare(
+      `INSERT INTO library_item (id, kind, name, description, usage, tags, media_id, ext, width, height, created_at, updated_at)
+       VALUES ('item-1', 'background', 'Backdrop', '', '', '', 'abc123', 'png', 1080, 1920, ?, ?)`,
+    )
+    .run(now, now);
+  old
+    .prepare(
+      `INSERT INTO project (id, name, document, version, status, description, hashtags, created_at, updated_at)
+       VALUES ('project-1', 'Existing', ?, 1, 'draft', '', '', ?, ?)`,
+    )
+    .run(JSON.stringify({ ratio: { w: 9, h: 16 }, slides: [] }), now, now);
+  expect(userVersion(old)).toBe(5);
+  old.close();
+
+  const db = openDb(file);
+  expect(userVersion(db), "the upgrade runs on open").toBe(6);
+
+  const account = db.prepare("SELECT * FROM account WHERE id = 'default'").get() ?? {};
+  expect(text(account, "name")).toBe("Default");
+  expect(JSON.parse(text(account, "defaults"))).toEqual({
+    ratio: { w: 9, h: 16 },
+    text: {
+      fontFamily: "TikTok Sans",
+      size: 64,
+      style: "plain",
+      color: "#FFFFFF",
+      background: "white",
+      backgroundShape: "lines",
+      align: "center",
+    },
+  });
+
+  const item = db.prepare("SELECT * FROM library_item WHERE id = 'item-1'").get() ?? {};
+  expect(text(item, "account_id")).toBe("default");
+  const project = db.prepare("SELECT * FROM project WHERE id = 'project-1'").get() ?? {};
+  expect(text(project, "account_id")).toBe("default");
+
+  db.close();
 });
 
 it("names the four paths under the data directory", () => {

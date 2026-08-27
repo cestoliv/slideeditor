@@ -3,6 +3,7 @@ import { render } from "vitest-browser-react";
 // The stage is laid out from the token layer, so the tests load it the way the app does.
 import "../../design/tokens.css";
 import "../../design/reset.css";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../app/useLibrary.js";
 import { EditorStore } from "./store.js";
@@ -30,6 +31,7 @@ function library(): LibraryIndex {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: "item-1",
     ext: "png",
     url: PIXEL,

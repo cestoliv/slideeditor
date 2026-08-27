@@ -18,6 +18,9 @@ export { IMAGE_ACCEPT, isImageFile } from "../library/upload.js";
 export type BackgroundUploader = (file: File) => Promise<LibraryItem>;
 
 /** One image, as a background. The server measures it, so no size is sent. */
-export function uploadBackgroundItem(file: File): Promise<LibraryItem> {
-  return uploadLibraryFile("background", file);
+export function uploadBackgroundItem(
+  file: File,
+  accountId: string,
+): Promise<LibraryItem> {
+  return uploadLibraryFile("background", file, accountId);
 }

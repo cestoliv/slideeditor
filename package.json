@@ -17,7 +17,10 @@
   "files": [
     "dist/",
     "bin/",
+    "assets/TikTokSans.ttf",
     "assets/TikTokSans-OFL.txt",
+    "assets/SpaceMono.ttf",
+    "assets/SpaceMono-OFL.txt",
     "assets/Octicons-LICENSE.txt",
     "README.md",
     "LICENSE"
@@ -39,7 +42,8 @@
     "test:e2e": "vitest run --project e2e",
     "test:coverage": "vitest run --project shared --project server --coverage",
     "start": "node bin/slide-studio.mjs",
-    "start:lan": "node bin/slide-studio.mjs --host 0.0.0.0"
+    "start:lan": "node bin/slide-studio.mjs --host 0.0.0.0",
+    "migrations:freeze": "tsx scripts/freeze-migrations.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

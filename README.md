@@ -131,6 +131,7 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 
 | Tool                   | Purpose                                                             |
 | ---------------------- | ------------------------------------------------------------------- |
+| `list_accounts`        | List every account: its id, name, and defaults                      |
 | `list_library`         | List or search backgrounds and assets, with usage stats             |
 | `get_library_item`     | Read one item, including its usage guidance                         |
 | `list_slideshows`      | List slideshows with ids, versions, status, captions, and edit URLs |
@@ -140,6 +141,12 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 | `set_slideshow_status` | Move a slideshow between draft, ready, and published                |
 
 ### 4. How to draft a slideshow
+
+Start with `list_accounts` if you do not already know the account's id. Every
+slideshow and every library item belongs to exactly one account, and
+`create_slideshow` requires one. Pass the same id as `accountId` to
+`list_library` or `list_slideshows` to see only that account's images or
+slideshows; omit it there to see every account's.
 
 Search before you choose. Call `list_library` with a query describing what the
 slide needs, not a filename. Every item carries a `description` of what the
@@ -158,11 +165,13 @@ When several items fit the slide equally well, take the one with the lower
 neglected ones first. Without this, every slideshow ends up using the same three
 images.
 
-Then call `create_slideshow`. Each slide takes one `background` id, any number of
-`assets` ids, and any number of `texts` lines in reading order:
+Then call `create_slideshow`. It requires `accountId`. Each slide takes one
+`background` id, any number of `assets` ids, and any number of `texts` lines in
+reading order:
 
 ```json
 {
+  "accountId": "<account id>",
   "name": "Summer travel tips",
   "ratio": { "w": 4, "h": 5 },
   "description": "Five things to know before you book a summer trip.",
@@ -380,20 +389,29 @@ The MCP tools are a thin wrapper over these routes, which you can call directly.
 
 ```
 GET    /api/health
-GET    /api/library?kind=&q=&sort=&limit=&offset=
+GET    /api/accounts
+POST   /api/accounts             accountId not needed: creates the account
+GET    /api/accounts/:id
+PUT    /api/accounts/:id
+DELETE /api/accounts/:id         409 while it still owns library items or slideshows
+GET    /api/fonts
+POST   /api/fonts                adds a Google font by family name
+DELETE /api/fonts/:id            refuses a built-in font
+GET    /fonts/:file              the font binary itself, revalidated hourly (ETag)
+GET    /api/library?kind=&q=&sort=&limit=&offset=&account=
 GET    /api/library/:id
-POST   /api/library
+POST   /api/library              accountId required
 PATCH  /api/library/:id
 DELETE /api/library/:id          409 when in use, unless force=1
-GET    /api/projects?status=
-POST   /api/projects
+GET    /api/projects?status=&account=
+POST   /api/projects             accountId required
 GET    /api/projects/:id
 PUT    /api/projects/:id         guarded by version
 PATCH  /api/projects/:id/status
 DELETE /api/projects/:id
-GET    /api/slideshows?status=   hides published unless asked
-POST   /api/slideshows           returns editUrl
-PUT    /api/slideshows/:id       guarded by version
+GET    /api/slideshows?status=&account=   hides published unless asked
+POST   /api/slideshows                    accountId required, returns editUrl
+PUT    /api/slideshows/:id                guarded by version
 PATCH  /api/slideshows/:id/status
 GET    /api/events               server-sent events
 GET    /media/:file
@@ -444,7 +462,7 @@ the same picture.
 
 ## License
 
-MIT. TikTok Sans is distributed under the SIL Open Font License 1.1; its license
-is included at `assets/TikTokSans-OFL.txt`. The GitHub Octicons mark is
-distributed under the MIT License; its notice is included at
-`assets/Octicons-LICENSE.txt`.
+MIT. TikTok Sans and Space Mono are both distributed under the SIL Open Font
+License 1.1; their licenses are included at `assets/TikTokSans-OFL.txt` and
+`assets/SpaceMono-OFL.txt`. The GitHub Octicons mark is distributed under the
+MIT License; its notice is included at `assets/Octicons-LICENSE.txt`.

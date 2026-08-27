@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { BUILTIN_DEFAULTS } from "@shared/schema/index.js";
 import type { LibraryItem, Project, SlideshowStatus } from "@shared/schema/index.js";
-import { Button, Icon, IconButton, Input, useToast } from "../../design/index.js";
+import { Badge, Button, Icon, IconButton, Input, useToast } from "../../design/index.js";
 import { api, persistProject } from "../../app/api.js";
+import { useAccounts } from "../../app/accounts.js";
 import { subscribeToServerEvents } from "../../app/events.js";
 import type { ServerEvent } from "../../app/events.js";
 import { libraryCache, useLibrary } from "../../app/useLibrary.js";
@@ -14,6 +16,7 @@ import type { SaveFn, SaveState } from "./persistence.js";
 import { addSlidesFromItems } from "./addSlides.js";
 import { AssetRail } from "./AssetRail.js";
 import { BackgroundPicker } from "./BackgroundPicker.js";
+import { uploadBackgroundItem } from "./backgrounds.js";
 import { SaveIndicator } from "./SaveIndicator.js";
 import { SlideRail } from "./SlideRail.js";
 import { Stage } from "./Stage.js";
@@ -107,9 +110,22 @@ export function Editor({
   const [loaded, setLoaded] = useState<Load>({ kind: "loading", id: projectId });
   const load: Load =
     loaded.id === projectId ? loaded : { kind: "loading", id: projectId };
+  const store = load.kind === "ready" ? load.store : null;
+  // Undefined until the project itself has loaded - the account is on its
+  // document. A slideshow may only reference its own account's library
+  // (validateComposition, server side), and the unscoped page this falls
+  // back to while loading is one 200-item page across every account, so an
+  // account with more than 200 items - or simply an older one - can be
+  // entirely absent from it (Editor never renders anything from `items`
+  // until `store` exists, so that transient unscoped read is never shown).
+  const accountId = store?.getSnapshot().project.accountId;
   // app.js:1541-1543 refreshes the library alongside the project, because every
-  // slide resolves its background through it.
-  const { items } = useLibrary(library);
+  // slide resolves its background through it. `ready: store !== null` is what
+  // keeps a cold open from firing an unscoped load at all: before this,
+  // `accountId` being undefined on the very first render (store not loaded
+  // yet) fired a full 200-item unscoped, stats-joined query that was
+  // discarded a render or two later once the real, scoped accountId came in.
+  const { items } = useLibrary(library, accountId, store !== null);
 
   /*
    * Latched by the project.removed handler. Closing the editor flushes whatever
@@ -176,8 +192,6 @@ export function Editor({
     };
   }, [client, onError, projectId]);
 
-  const store = load.kind === "ready" ? load.store : null;
-
   /*
    * handleServerEvent, app.js:1120-1143. An agent writing through the MCP
    * backend while a human has the slideshow open is the normal case on this
@@ -210,8 +224,10 @@ export function Editor({
         try {
           // app.js:1109 refreshes the library first, so a slide the agent added
           // resolves its background on the render that follows rather than one
-          // request later.
-          await library.refresh();
+          // request later. Scoped to this slideshow's own account, same as the
+          // initial load - the agent that changed it could only have added
+          // items from that account (validateComposition, server side).
+          await library.refresh(store.getSnapshot().project.accountId);
           // Checked before the read, not after it. A request issued for an
           // editor that has already gone is a request nobody will ever use.
           if (!live) return;
@@ -362,7 +378,39 @@ type OpenEditorProps = {
  */
 function OpenEditor({ store, items, library, render }: OpenEditorProps) {
   const { toast } = useToast();
+  const { accounts, error: accountsError } = useAccounts();
   const name = useEditor(store, (state) => state.project.name);
+  /*
+   * The slideshow's own accountId, read straight off the document rather than
+   * through ProjectsStore — the editor already has this record loaded, and a
+   * second store would be a second place this could disagree with the first.
+   * Kept as the whole account, not just its name, because useLayerStack below
+   * needs its defaults for a double-click-added text layer.
+   */
+  const accountId = useEditor(store, (state) => state.project.accountId);
+  const account = accounts.find((item) => item.id === accountId) ?? null;
+  const accountName = account?.name ?? null;
+  /*
+   * `account?.defaults ?? BUILTIN_DEFAULTS` below is right while the catalogue
+   * is still loading — a cold page must still let a double-click add text. It
+   * is silently wrong forever once the fetch has actually failed, since
+   * `accounts` then stays `[]` for good and every new text quietly reverts to
+   * the built-in look with nothing on screen to say why. Told once, since
+   * AccountsStore.refresh() only ever runs the one time here and `error`
+   * would otherwise never go away to retrigger this.
+   */
+  const accountsFailed = useRef(false);
+  useEffect(() => {
+    if (accountsError === null) return;
+    if (accountsFailed.current) return;
+    accountsFailed.current = true;
+    toast(
+      "Couldn’t load this account’s style. New text uses the built-in look for now.",
+      {
+        tone: "danger",
+      },
+    );
+  }, [accountsError, toast]);
   const activeSlideId = useEditor(store, (state) => state.activeSlideId);
   /*
    * Which slide is being placed, not a plain flag. app.js leaves photo mode
@@ -514,6 +562,27 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
   );
 
   /*
+   * Stable across renders as long as the account itself does not change.
+   * Both used to be built fresh on every render, so the `useAssetDrop` and
+   * `useLayerClipboard` effects below (whose `busy` re-entrancy guard lives
+   * on the closure captured when the effect last ran) tore down and
+   * re-registered their document listeners on every render during a drag —
+   * dropping the guard along with it, so two files dropped together could
+   * each start their own upload instead of the second being suppressed.
+   * Keyed on `accountId`, which is read reactively above, rather than on
+   * `store` itself, so the identity only changes when the account actually
+   * does.
+   */
+  const uploadAsset = useCallback(
+    (file: File, name: string) => uploadAssetFile(file, name, accountId),
+    [accountId],
+  );
+  const uploadBackground = useCallback(
+    (file: File) => uploadBackgroundItem(file, accountId),
+    [accountId],
+  );
+
+  /*
    * Task 15's layers, and the crop session they share with the stage. Stage
    * hands the first click on the surface to onFinishCrop rather than clearing
    * the selection, because folding a crop back into an overlay needs the
@@ -523,8 +592,11 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
   const { layers, onFinishCrop } = useLayerStack({
     store,
     library: items,
+    defaults: account?.defaults ?? BUILTIN_DEFAULTS,
     photoAdjust,
-    upload: uploadAssetFile,
+    // A dropped or pasted asset lands in the project's own account, the same
+    // way a replacement background does.
+    upload: uploadAsset,
     remember,
     toast,
   });
@@ -544,6 +616,7 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
                 store.rename(event.target.value);
               }}
             />
+            {accountName === null ? null : <Badge>{accountName}</Badge>}
             <SaveIndicator store={store} />
           </span>
         }
@@ -588,6 +661,8 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
           multiple
           onChoose={addSlides}
           cache={library}
+          upload={uploadBackground}
+          accountId={accountId}
         />
         {/* Task 15's asset rail, filling the second track of .shell. */}
         <AssetRail store={store} library={items} cache={library} />

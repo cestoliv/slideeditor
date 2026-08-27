@@ -26,6 +26,7 @@ it("stores identical bytes once", async () => {
 it("trusts the file header over client-supplied dimensions", async () => {
   app = createTestApp();
   const item = await app.services.library.create({
+    accountId: "default",
     kind: "asset",
     name: "Liar",
     contentType: "image/png",
@@ -43,6 +44,7 @@ it("rejects an unsupported content type", async () => {
   const error = asHttpError(
     await catchError(() =>
       library.create({
+        accountId: "default",
         kind: "asset",
         name: "Bad",
         contentType: "application/pdf",
@@ -110,6 +112,7 @@ it("refuses to delete an item that slides depend on, then allows it with force",
   const { library, projects } = app.services;
   const background = await addItem(library, "background", "In use");
   projects.create({
+    accountId: "default",
     name: "Uses it",
     document: {
       ratio: { w: 9, h: 16 },
@@ -226,10 +229,12 @@ it("refuses to delete an item in use and names the slideshows", async () => {
   const asset = await addItem(library, "asset", "Wanted");
   const background = await addItem(library, "background", "Bg");
   projects.create({
+    accountId: "default",
     name: "Second show",
     document: { ratio: { w: 9, h: 16 }, slides: [slide(background.id, [asset.id])] },
   });
   projects.create({
+    accountId: "default",
     name: "First show",
     document: { ratio: { w: 9, h: 16 }, slides: [slide(background.id, [asset.id])] },
   });
@@ -252,6 +257,7 @@ it("deletes an item in use when force is set", async () => {
   const asset = await addItem(library, "asset", "Doomed", { width: 400, height: 300 });
   const background = await addItem(library, "background", "Bg");
   const project = projects.create({
+    accountId: "default",
     name: "Broken by this",
     document: { ratio: { w: 9, h: 16 }, slides: [slide(background.id, [asset.id])] },
   });
@@ -276,6 +282,7 @@ it("sorts least-used first, never-used before used", async () => {
   const never = await addItem(library, "asset", "Never");
   const light = await addItem(library, "asset", "Light");
   projects.create({
+    accountId: "default",
     name: "One",
     document: {
       ratio: { w: 9, h: 16 },
@@ -312,6 +319,7 @@ it("rejects an unsupported content type with 415", async () => {
   const error = asHttpError(
     await catchError(() =>
       library.create({
+        accountId: "default",
         kind: "asset",
         name: "Bad",
         contentType: "image/tiff",
@@ -330,6 +338,7 @@ it("rejects an upload over 25MB with 413", async () => {
   const error = asHttpError(
     await catchError(() =>
       library.create({
+        accountId: "default",
         kind: "asset",
         name: "Huge",
         contentType: "image/png",
@@ -348,6 +357,7 @@ it("accepts an upload of exactly 25MB", async () => {
   const png = solidPng(4, 4);
   const bytes = Buffer.concat([png, Buffer.alloc(25 * 1024 * 1024 - png.length)]);
   const item = await library.create({
+    accountId: "default",
     kind: "asset",
     name: "Exactly",
     contentType: "image/png",

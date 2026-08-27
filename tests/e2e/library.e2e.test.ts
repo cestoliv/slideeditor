@@ -83,6 +83,11 @@ it("uploads an image and finds it by searching its usage note", async () => {
   await openApp("/library/assets");
   await expect.element(page.getByLabelText("Search the library")).toBeVisible();
 
+  // An upload lands in exactly one account, so the filter has to name one
+  // before the picker will take a file.
+  await userEvent.click(page.getByLabelText("Account"));
+  await userEvent.click(page.getByRole("option", { name: "Default" }));
+
   const file = await pngFile(`Umbrella ${tag}`, 420, 260, "#4477cc");
   await userEvent.upload(await filePicker("assets"), file);
 
@@ -146,7 +151,13 @@ it("accepts two agents uploading the same image at the same time", async () => {
     fetch(`${baseUrl}/api/library`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "asset", name, contentType: "image/png", data }),
+      body: JSON.stringify({
+        kind: "asset",
+        name,
+        contentType: "image/png",
+        data,
+        accountId: "default",
+      }),
     });
 
   const [first, second] = await Promise.all([
@@ -210,7 +221,13 @@ async function upload(name: string, data: string): Promise<LibraryItem> {
   const response = await fetch(`${baseUrl}/api/library`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ kind: "asset", name, contentType: "image/png", data }),
+    body: JSON.stringify({
+      kind: "asset",
+      name,
+      contentType: "image/png",
+      data,
+      accountId: "default",
+    }),
   });
   expect(response.status).toBe(200);
   const { item } = (await response.json()) as { item: LibraryItem };

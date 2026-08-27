@@ -23,6 +23,16 @@ vi.mock("./app/api.js", async (importOriginal) => ({
     deleteProject: (id: string) => Promise.resolve({ removed: id }),
     listLibrary: () => Promise.resolve({ items: [], total: 0 }),
     session: () => Promise.resolve({ authenticated: true, mode: "open" }),
+    // AccountsProvider's mount effect calls refresh(), which needs both of
+    // these off the default `accountsStore` (this module's api singleton),
+    // the same way listProjects/listLibrary above stand in for the rest.
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not part of this test")),
+    updateAccount: () => Promise.reject(new Error("not part of this test")),
+    deleteAccount: () => Promise.reject(new Error("not part of this test")),
+    addGoogleFont: () => Promise.reject(new Error("not part of this test")),
+    deleteFont: () => Promise.reject(new Error("not part of this test")),
   },
   isUnauthorized: () => false,
 }));

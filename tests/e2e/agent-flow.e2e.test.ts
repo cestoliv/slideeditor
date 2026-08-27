@@ -109,19 +109,19 @@ async function findItem(id: string): Promise<LibraryItem> {
 }
 
 /*
- * A defect carried on purpose, and a tripwire rather than a characterisation.
+ * A regression guard for a defect this used to reproduce reliably: `layoutAssets`
+ * subtracted its gaps from the asset band with no floor, so once the rows
+ * outgrew the band every overlay on the slide came out with a negative width
+ * and height and simply did not render. Ten assets and an overflowing text
+ * block was enough to trigger it — an agent asking for a busy slide got a
+ * slide with no photos on it. Fixed by laying the asset band out against the
+ * frame instead of against a text block that starts off-canvas
+ * (shared/compose/compose.ts's layoutAssets); this fixture stays as the
+ * regression test.
  *
- * `layoutAssets` subtracts its gaps from the asset band with no floor, so once
- * the rows outgrow the band every overlay on the slide comes out with a
- * negative width and height and simply does not render. Ten assets and an
- * overflowing text block is enough. Task 6's report has the arithmetic; this is
- * the first place a person meets it, and an agent asking for a busy slide gets
- * a slide with no photos on it.
- *
- * The building happens in a hook rather than in the test body. Inside an
- * `it.fails` every failure counts as the expected one, so a broken upload route
- * or a rejected composition would keep this green while proving nothing. A hook
- * that throws fails the file out loud.
+ * The building still happens in a hook rather than in the test body, so a
+ * broken upload route or a rejected composition fails the file out loud
+ * instead of the one test that reads `crowded` failing for an unrelated reason.
  */
 let crowded: CreatedSlideshow | null = null;
 
@@ -140,6 +140,7 @@ beforeAll(async () => {
         name: `Crowd ${String(index)} ${tag}`,
         contentType: "image/png",
         data: badge,
+        accountId: "default",
       }),
     });
     if (!response.ok) {
@@ -197,14 +198,14 @@ it("hands the person the caption an agent drafted, ready to copy", async () => {
 });
 
 /*
- * `it.fails` rather than an assertion on the values. The magnitudes are
- * deliberately uncharacterised, because any real fix has to change them and a
- * test holding them would read as the regression. A positive width and height
- * is the one thing every candidate fix satisfies and none of them changes, so
- * this documents the defect without pinning the geometry, and it turns red the
- * day someone fixes it. Delete the `.fails` then.
+ * Every overlay gets a real, positive size now that layoutAssets lays the
+ * asset band out against the frame rather than against a text block that
+ * starts off-canvas (see the doc comment on `crowded` above). The exact
+ * magnitudes are still deliberately uncharacterised here — that level of
+ * detail belongs to shared/compose/golden.test.ts's fixture, which pins
+ * numbers; this e2e test only guards against the collapse coming back.
  */
-it.fails("gives an overlay a real size when a slide carries many assets", async () => {
+it("gives an overlay a real size when a slide carries many assets", async () => {
   if (crowded === null) throw new Error("The crowded slideshow was not built.");
   const project = await readProject(baseUrl, crowded.id);
   const overlays: Overlay[] = project.slides[0]?.overlays ?? [];

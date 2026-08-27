@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import type {
   LibraryItem,
@@ -8,6 +8,7 @@ import type {
 } from "@shared/schema/index.js";
 import { ApiError, api, isUnauthorized } from "../../app/api.js";
 import type { LibraryPatch } from "../../app/api.js";
+import { useAccounts } from "../../app/accounts.js";
 import { LibraryCache, libraryCache, useLibrary } from "../../app/useLibrary.js";
 import { useProjects } from "../../app/projects.js";
 import { Button, useToast } from "../../design/index.js";
@@ -73,6 +74,56 @@ export function LibraryAdmin({
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<LibrarySort>("recent");
   const [uploading, setUploading] = useState(false);
+  const [selectedAccount, setAccount] = useState<string | undefined>(undefined);
+  const { accounts, loading: accountsLoading, error: accountsError } = useAccounts();
+  /*
+   * An account the filter is narrowed to can vanish out from under it — the
+   * reader deletes it in another tab, or an agent does. Left alone, the
+   * Select's value would match nothing in accountOptions and Radix would
+   * fall back to its own placeholder rather than "All accounts", while
+   * `scoped` below kept deriving from the stale id: the grid would stay on
+   * the dead account's last-fetched cards forever (no fetch effect ever
+   * reruns for an id no longer in `accounts`), uploads and "New slideshow"
+   * would stay scoped to an account the reader cannot see is gone, and this
+   * screen would report "No backgrounds yet" for it rather than falling
+   * back to "All accounts".
+   *
+   * Derived here rather than reset from an effect (Dashboard.tsx's own
+   * account filter uses an effect for the same guard, but its setter comes
+   * from useProjects(), not a local useState — this one does, which is
+   * exactly the shape react-hooks/set-state-in-effect exists to flag: a
+   * value computable during render has no business being corrected a
+   * render later instead). `selectedAccount` still holds whatever the
+   * reader last explicitly chose — including a since-deleted id — so a
+   * recreated account with the same id (impossible today, but nothing here
+   * assumes otherwise) would resume the filter rather than requiring a
+   * fresh pick.
+   */
+  const account =
+    selectedAccount !== undefined &&
+    accounts.some((entry) => entry.id === selectedAccount)
+      ? selectedAccount
+      : undefined;
+  /*
+   * The account-scoped view, read through the same LibraryCache the editor
+   * already scopes to one account — see LibraryCache's own class doc
+   * comment. This used to run its own hand-rolled `cache.client.listLibrary`
+   * fetch into local component state, re-implementing (without) the
+   * request de-duplication and stale-answer guards `load`/`refresh`
+   * already have: every account switch, every backgrounds↔assets switch and
+   * every "Try again" was a fresh 200-item, stats-joined query, discarded on
+   * unmount, even when the editor (or an earlier visit here) had already
+   * fetched this exact account's page.
+   *
+   * `ready: account !== undefined` is what keeps "All accounts" from firing
+   * a scoped fetch at all — the unscoped `items`/`error` above already
+   * cover that case, the same way `scoped` used to read `null` for it.
+   */
+  const { items: scopedItems, error: scopedError } = useLibrary(
+    cache,
+    account,
+    account !== undefined,
+  );
   /*
    * Where an edited card sits, which is not where its updatedAt says.
    *
@@ -105,26 +156,110 @@ export function LibraryAdmin({
     void cache.refresh();
   }, [cache]);
 
+  /*
+   * The account filter reads the same cache rather than filtering it apart
+   * from a second request: that cache is the app-wide index the editor
+   * resolves every background and overlay through, scoped per account (see
+   * LibraryCache's own class doc comment), which is exactly the scope this
+   * filter wants. "All accounts" falls back to the unscoped `items` above,
+   * so `shown` below never reads `scopedItems` in that case.
+   *
+   * No `q` sent to the server here, deliberately, same as the unscoped path:
+   * the server's `q` (LibraryService.list) is an FTS5 prefix match per word,
+   * while browseLibrary's matchesQuery (below) is a substring match over the
+   * whole haystack, and the two do not agree — a mid-word query like "eep"
+   * substring-matches "Deep cut background" but is not a prefix of any of
+   * its tokens. `cache.load`/`refresh` fetch unfiltered by kind too (an
+   * account's whole library, not just this kind), so browseLibrary is what
+   * narrows by both kind and query for this scope, same as it already does
+   * for the unscoped one.
+   */
   const shown = useMemo(
     () =>
-      browseLibrary(items.values(), { kind, query: settled, sort, orderedAt: heldAt }),
-    [items, kind, settled, sort, heldAt],
+      browseLibrary(account === undefined ? items.values() : scopedItems.values(), {
+        kind,
+        query: settled,
+        sort,
+        orderedAt: heldAt,
+      }),
+    [account, scopedItems, items, kind, settled, sort, heldAt],
   );
 
+  /*
+   * Reads whichever source `shown` itself reads — the unscoped cache with no
+   * account chosen, the scoped one with one — rather than always the
+   * unscoped cache. That used to make the empty-state message lie: an
+   * account with none of this kind, viewed while some OTHER account (or
+   * "All accounts") genuinely had some, still read `ofThisKind` true and
+   * said "Nothing matches that search" for a filter that was never applied,
+   * instead of "No backgrounds yet."
+   */
   const ofThisKind = useMemo(
-    () => [...items.values()].some((item) => item.kind === kind),
-    [items, kind],
+    () =>
+      [...(account === undefined ? items.values() : scopedItems.values())].some(
+        (item) => item.kind === kind,
+      ),
+    [account, scopedItems, items, kind],
   );
 
-  /* app.js:1230 put this on every screen but the editor, this page included. */
+  /*
+   * app.js:1230 put this on every screen but the editor, this page included.
+   * A slideshow may only reference library items from its own account
+   * (validateComposition, server side), so a slideshow started from here
+   * belongs in whichever account the filter names.
+   *
+   * With no filter chosen and more than one account to pick from, guessing
+   * used to fall back to accounts[0] — AccountService.list() orders by name,
+   * so "Acme" and "Default" both existing silently landed a new slideshow in
+   * Acme for a person who had been browsing Default's images the whole time,
+   * with nothing on screen to say so and no way to add what they were
+   * looking at. newSlideshowDisabled below blocks the button outright in
+   * that case instead: the account filter is the only place this can come
+   * from now, not a guess. With exactly one account there is nothing to
+   * guess wrong, so that account is used without making a person pick it out
+   * of a list of one.
+   */
+  const newSlideshowTarget =
+    account ?? (accounts.length === 1 ? accounts[0]?.id : undefined);
+  const newSlideshowDisabled = newSlideshowTarget === undefined;
+  const newSlideshowReasonId = useId();
+  /*
+   * `accounts` reads `[]` for three different reasons — still loading, the
+   * fetch failed, or the account list is genuinely empty — and only the
+   * last of those means "Create an account first." `useAccounts()`'s own
+   * `loading`/`error` are what tell them apart: this used to read
+   * `accounts.length === 0` alone, so every user saw "Create an account
+   * first." on first render (before the fetch had answered at all), and
+   * permanently if the fetch failed — both false claims about an account
+   * list nobody had actually seen empty.
+   *
+   * `accountsError` is checked only once `accounts.length === 0` is already
+   * known, not before it: AccountsStore.refresh() runs after every account
+   * and font mutation and deliberately keeps the previous accounts on a
+   * failed refresh (accounts.tsx's catch spreads `...this.state` rather than
+   * clearing `accounts`), so a refresh that fails after a successful initial
+   * load still has a real, non-empty list to show. Checking the error first
+   * used to override that: the button read "Couldn’t load accounts." with a
+   * good list sitting right there on screen. A refresh failure only matters
+   * here when it leaves nothing to choose from.
+   */
+  const newSlideshowReason = accountsLoading
+    ? "Loading accounts…"
+    : accounts.length === 0
+      ? accountsError
+        ? "Couldn’t load accounts."
+        : "Create an account first."
+      : "Choose an account before starting a slideshow.";
+
   const startProject = useCallback(async () => {
+    if (newSlideshowTarget === undefined) return;
     try {
-      const project = await create();
+      const project = await create(newSlideshowTarget);
       await navigate(`/projects/${encodeURIComponent(project.id)}`);
     } catch {
       toast("Couldn’t create the slideshow.", { tone: "danger" });
     }
-  }, [create, navigate, toast]);
+  }, [newSlideshowTarget, create, navigate, toast]);
 
   const save = useCallback(
     async (item: LibraryItem, patch: LibraryPatch) => {
@@ -135,6 +270,10 @@ export function LibraryAdmin({
       setHeldAt((current) =>
         current.has(item.id) ? current : new Map(current).set(item.id, item.updatedAt),
       );
+      // Folds into every scope that could hold it — the unscoped page and
+      // the item's own account's scope (LibraryCache.remember's own doc
+      // comment) — so the account-scoped view above stays live with no
+      // parallel bookkeeping of its own.
       cache.remember(saved);
       return saved;
     },
@@ -158,6 +297,10 @@ export function LibraryAdmin({
 
   const upload = useCallback(
     (files: File[]) => {
+      // An upload lands in exactly one account, and "All accounts" is not a
+      // destination, so the trigger stays disabled until one is chosen
+      // (LibraryForm) and this is the second guard against a stray call.
+      if (account === undefined) return;
       const run = async () => {
         setUploading(true);
         let added = 0;
@@ -165,7 +308,8 @@ export function LibraryAdmin({
           try {
             // One at a time, as app.js:1418-1426 did. The server rewrites the
             // whole media directory listing per upload, so these do not race.
-            cache.remember(await uploadLibraryFile(kind, file, client));
+            const uploaded = await uploadLibraryFile(kind, file, account, client);
+            cache.remember(uploaded);
             added += 1;
           } catch (problem) {
             toast(
@@ -184,7 +328,7 @@ export function LibraryAdmin({
       };
       void run();
     },
-    [cache, client, kind, toast],
+    [account, cache, client, kind, toast],
   );
 
   const remove = useCallback(
@@ -233,6 +377,9 @@ export function LibraryAdmin({
       <Header>
         <Button
           variant="solid"
+          disabled={newSlideshowDisabled}
+          title={newSlideshowDisabled ? newSlideshowReason : undefined}
+          aria-describedby={newSlideshowDisabled ? newSlideshowReasonId : undefined}
           onClick={() => {
             void startProject();
           }}
@@ -247,6 +394,11 @@ export function LibraryAdmin({
             <p className={styles.eyebrow}>Image library</p>
             <h1 className={styles.title}>{copy.title}</h1>
             <p className={styles.intro}>{copy.intro}</p>
+            {newSlideshowDisabled ? (
+              <p className={styles.hint} id={newSlideshowReasonId}>
+                {newSlideshowReason}
+              </p>
+            ) : null}
           </div>
           <nav className={styles.tabs} aria-label="Library">
             <LibraryTab to="/library/backgrounds" current={kind === "background"}>
@@ -264,6 +416,9 @@ export function LibraryAdmin({
           onQueryChange={changeQuery}
           sort={sort}
           onSortChange={chooseSort}
+          accounts={accounts}
+          account={account}
+          onAccountChange={setAccount}
           uploading={uploading}
           onUpload={upload}
         />
@@ -295,13 +450,35 @@ export function LibraryAdmin({
           </div>
         )}
 
+        {account === undefined || scopedError === null ? null : (
+          <div className={styles.problem} role="alert">
+            <p className={styles.problemText}>
+              {isUnauthorized(scopedError)
+                ? "This browser is not signed in."
+                : "Can’t reach the Slide Studio server. Start it with npm start."}
+            </p>
+            <Button
+              onClick={() => {
+                void cache.refresh(account);
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+
         <div className={styles.grid}>
           {shown.map((item) => (
             <LibraryCard key={item.id} item={item} onSave={save} onDelete={remove} />
           ))}
         </div>
 
-        {shown.length > 0 ? null : (
+        {/*
+         * A scoped fetch that failed says so above instead: showing "No
+         * backgrounds yet" underneath it would claim the account is empty
+         * when the real story is that nothing could be asked.
+         */}
+        {shown.length > 0 || (account !== undefined && scopedError !== null) ? null : (
           <p className={styles.empty}>
             {ofThisKind
               ? "Nothing matches that search."

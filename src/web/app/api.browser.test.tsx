@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { Project } from "@shared/schema/index.js";
 import { ApiError, api, persistProject } from "./api.js";
 
@@ -41,6 +42,7 @@ function libraryItem(overrides: Record<string, unknown> = {}): unknown {
     description: "",
     usage: "",
     tags: ["warm"],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: "media-1",
     ext: "jpg",
     url: "/media/media-1.jpg",
@@ -59,6 +61,7 @@ function storedProject(overrides: Record<string, unknown> = {}): unknown {
     name: "Morning routine",
     version: 4,
     status: "draft",
+    accountId: DEFAULT_ACCOUNT_ID,
     createdAt: 1,
     updatedAt: 2,
     ratio: { w: 9, h: 16 },
@@ -75,6 +78,7 @@ function liveProject(): Project {
     status: "draft",
     description: "Five things to know first",
     hashtags: "#travel #summer",
+    accountId: DEFAULT_ACCOUNT_ID,
     createdAt: 1,
     updatedAt: 2,
     ratio: { w: 9, h: 16 },
@@ -341,7 +345,7 @@ it("carries the server's copy of a slideshow out of a stale write", async () => 
 it("sends a JSON content type only when it has a body", async () => {
   const calls = stubFetch(() => json({ project: storedProject() }));
   await api.getProject("p1");
-  await api.createProject({ name: "Fresh" });
+  await api.createProject({ name: "Fresh", accountId: DEFAULT_ACCOUNT_ID });
   expect(headerOf(calls[0], "Content-Type")).toBeNull();
   expect(headerOf(calls[1], "Content-Type")).toBe("application/json");
 });
@@ -350,4 +354,78 @@ it("escapes an id that would otherwise reshape the path", async () => {
   const calls = stubFetch(() => json({ project: storedProject() }));
   await api.getProject("a b/c");
   expect(calls[0]?.url).toBe("/api/projects/a%20b%2Fc");
+});
+
+/*
+ * Finding 9 (fix round 4): timeoutMs used to be opt-in, so getProject,
+ * listAccounts, listLibrary and the save path could hang forever against a
+ * server that accepts the connection and never answers. Every call() now
+ * gets a bound by default — an AbortSignal is on every request unless a
+ * caller explicitly opts out.
+ */
+it("bounds an ordinary call with a default timeout", async () => {
+  const calls = stubFetch(() => json({ project: storedProject() }));
+  await api.getProject("p1");
+  expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+});
+
+it("bounds listAccounts and listLibrary too, not only the project routes", async () => {
+  const calls = stubFetch((call) =>
+    call.url.startsWith("/api/accounts")
+      ? json({ accounts: [] })
+      : json({ items: [], total: 0 }),
+  );
+  await api.listAccounts();
+  await api.listLibrary();
+  expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+  expect(calls[1]?.init?.signal).toBeInstanceOf(AbortSignal);
+});
+
+/*
+ * createLibraryItem uploads a whole image as base64, so how long it takes
+ * scales with the file's size and the connection rather than with the
+ * default bound every other call gets — and LibraryAdmin.tsx already shows
+ * its own "uploading" indicator for the whole call, unlike most of this
+ * client. It opts out explicitly (`timeoutMs: null`) rather than being
+ * silently exempted.
+ */
+it("does not bound the library upload, which can legitimately run long", async () => {
+  const calls = stubFetch(() => json({ item: libraryItem() }));
+  await api.createLibraryItem({
+    kind: "asset",
+    name: "Sunset",
+    contentType: "image/png",
+    data: "data:image/png;base64,AAAA",
+    accountId: DEFAULT_ACCOUNT_ID,
+  });
+  expect(calls[0]?.init?.signal).toBeUndefined();
+});
+
+/*
+ * Finding 7 from the multi-account review: addGoogleFont used to inherit
+ * DEFAULT_TIMEOUT_MS, but the server handler makes up to three outbound
+ * trips of its own (two Google Fonts css2 requests, then the .woff2 file),
+ * so how long it takes scales with Google's own response and the connection
+ * rather than with anything that default was sized for. On a slow link the
+ * browser aborted this before the server's own attempt finished, and
+ * AccountsAdmin's addFont() reported failure for a font the server went on
+ * to commit anyway. The same exception createLibraryItem already takes,
+ * above.
+ */
+it("does not bound adding a Google font, which can legitimately run long", async () => {
+  const calls = stubFetch(() =>
+    json({
+      font: {
+        id: "f2",
+        family: "Bebas Neue",
+        weight: 400,
+        weightMin: null,
+        weightMax: null,
+        source: "google",
+        url: "/media/f2.woff2",
+      },
+    }),
+  );
+  await api.addGoogleFont("Bebas Neue");
+  expect(calls[0]?.init?.signal).toBeUndefined();
 });

@@ -6,8 +6,9 @@ import type {
   LibrarySort,
   LibraryUse,
 } from "../../shared/schema/index.js";
-import { integer, optionalInteger, text, type Row } from "../db/rows.js";
+import { integer, optionalInteger, requiredText, text, type Row } from "../db/rows.js";
 import { HttpError } from "../errors.js";
+import { requireAccountId, type AccountService } from "./accounts.js";
 import { extensionForType, imageDimensions, type MediaStore } from "./media.js";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -39,6 +40,7 @@ export interface LibraryListOptions {
   limit?: unknown;
   offset?: unknown;
   sort?: unknown;
+  accountId?: unknown;
 }
 
 export interface LibraryListResult {
@@ -61,6 +63,7 @@ export interface LibraryCreateInput {
   bytes: Buffer;
   width?: unknown;
   height?: unknown;
+  accountId: unknown;
 }
 
 export type LibraryPatch = Partial<{
@@ -82,10 +85,16 @@ export interface LibraryRemoveResult {
 export class LibraryService {
   private readonly db: DatabaseSync;
   private readonly media: MediaStore;
+  private readonly accounts: AccountService | null;
 
-  constructor(db: DatabaseSync, media: MediaStore) {
+  constructor(
+    db: DatabaseSync,
+    media: MediaStore,
+    accounts: AccountService | null = null,
+  ) {
     this.db = db;
     this.media = media;
+    this.accounts = accounts;
   }
 
   list({
@@ -94,16 +103,28 @@ export class LibraryService {
     limit = 50,
     offset = 0,
     sort = "recent",
+    accountId = null,
   }: LibraryListOptions = {}): LibraryListResult {
     const size = clampInteger(limit, 1, 200, 50);
     const skip = clampInteger(offset, 0, 100000, 0);
     const wanted = toKindFilter(kind);
     const order: LibrarySort = isSort(sort) ? sort : "recent";
+    // `null`/omitted means "no filter"; any string — including "", which no
+    // account ever has as an id — is an explicit filter that must narrow the
+    // result, never widen it back to every account's rows.
+    const account = typeof accountId === "string" ? accountId : null;
 
     const term = String(query || "").trim();
     if (!term) {
-      const where = wanted ? "WHERE item.kind = ?" : "";
-      const parameters = wanted ? [wanted, size, skip] : [size, skip];
+      const clauses = [
+        ...(wanted ? ["item.kind = ?"] : []),
+        ...(account !== null ? ["item.account_id = ?"] : []),
+      ];
+      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+      const filters = [
+        ...(wanted ? [wanted] : []),
+        ...(account !== null ? [account] : []),
+      ];
       const rows = this.db
         .prepare(
           `
@@ -112,8 +133,8 @@ export class LibraryService {
         ORDER BY ${ORDER_BY[order]} LIMIT ? OFFSET ?
       `,
         )
-        .all(...parameters);
-      return { items: rows.map(toItem), total: this.count(wanted) };
+        .all(...filters, size, skip);
+      return { items: rows.map(toItem), total: this.count(wanted, account) };
     }
 
     // FTS5 treats bare punctuation as syntax, so each word becomes a prefix term.
@@ -125,8 +146,16 @@ export class LibraryService {
       .join(" ");
     if (!match) return { items: [], total: 0 };
 
-    const where = wanted ? "AND item.kind = ?" : "";
-    const parameters = wanted ? [match, wanted, size, skip] : [match, size, skip];
+    const searchClauses = [
+      ...(wanted ? ["item.kind = ?"] : []),
+      ...(account !== null ? ["item.account_id = ?"] : []),
+    ];
+    const where = searchClauses.length ? `AND ${searchClauses.join(" AND ")}` : "";
+    const filters = [
+      match,
+      ...(wanted ? [wanted] : []),
+      ...(account !== null ? [account] : []),
+    ];
     // Relevance wins by default; an explicit sort overrides it.
     const ordering = order === "recent" ? "rank" : ORDER_BY[order];
     const rows = this.db
@@ -141,16 +170,20 @@ export class LibraryService {
       ORDER BY ${ordering} LIMIT ? OFFSET ?
     `,
       )
-      .all(...parameters);
+      .all(...filters, size, skip);
     return { items: rows.map(toItem), total: rows.length };
   }
 
-  count(kind: LibraryKind | null = null): number {
-    const row = kind
-      ? this.db
-          .prepare("SELECT COUNT(*) AS total FROM library_item WHERE kind = ?")
-          .get(kind)
-      : this.db.prepare("SELECT COUNT(*) AS total FROM library_item").get();
+  count(kind: LibraryKind | null = null, accountId: string | null = null): number {
+    const clauses = [
+      ...(kind ? ["kind = ?"] : []),
+      ...(accountId !== null ? ["account_id = ?"] : []),
+    ];
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const filters = [...(kind ? [kind] : []), ...(accountId !== null ? [accountId] : [])];
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS total FROM library_item ${where}`)
+      .get(...filters);
     return row ? integer(row, "total") : 0;
   }
 
@@ -188,8 +221,10 @@ export class LibraryService {
     bytes,
     width,
     height,
+    accountId,
   }: LibraryCreateInput): Promise<LibraryItem> {
     if (!isKind(kind)) throw new HttpError(400, `Unknown kind: ${kind}`);
+    const account = requireAccountId(this.accounts, accountId, "A library item");
     if (!bytes?.length) throw new HttpError(400, "The upload carried no image data.");
     if (bytes.length > MAX_UPLOAD_BYTES)
       throw new HttpError(413, "Images must be 25MB or smaller.");
@@ -217,8 +252,8 @@ export class LibraryService {
     this.db
       .prepare(
         `
-      INSERT INTO library_item (id, kind, name, description, usage, tags, media_id, ext, width, height, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO library_item (id, kind, name, description, usage, tags, media_id, ext, width, height, account_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -232,6 +267,7 @@ export class LibraryService {
         ext,
         Math.round(measured.width),
         Math.round(measured.height),
+        account,
         now,
         now,
       );
@@ -325,6 +361,7 @@ function toItem(row: Row): LibraryItem {
           .map((tag) => tag.trim())
           .filter(Boolean)
       : [],
+    accountId: requiredText(row, "account_id"),
     mediaId,
     ext,
     url: `/media/${mediaId}.${ext}`,

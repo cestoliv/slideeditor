@@ -5,7 +5,8 @@ import {
   outputHeight,
 } from "@shared/geometry/index.js";
 import type { Ratio, SlideDocument, TextLayer } from "@shared/schema/index.js";
-import { Icon, Textarea } from "../../../design/index.js";
+import { Icon, Select, Textarea } from "../../../design/index.js";
+import { useAccounts } from "../../../app/accounts.js";
 import { useTextLayout } from "../text/useTextLayout.js";
 import type { EditorStore } from "../store.js";
 import { ColorPicker } from "./ColorPicker.js";
@@ -41,6 +42,7 @@ export type TextInspectorProps = {
 export function TextInspector({ store, text, ratio }: TextInspectorProps) {
   const entry = useHistoryEntry(store);
   const textId = text.id;
+  const { fonts } = useAccounts();
 
   const write = useCallback(
     (change: (live: TextLayer) => void, options?: { history?: boolean }) => {
@@ -139,6 +141,20 @@ export function TextInspector({ store, text, ratio }: TextInspectorProps) {
             entry.begin();
             write((live) => {
               live.text = next;
+            });
+          }}
+        />
+      </div>
+
+      <div className={styles.group}>
+        <div className={styles.label}>Font</div>
+        <Select
+          items={fonts.map((font) => ({ value: font.family, label: font.family }))}
+          value={text.fontFamily}
+          aria-label="Font"
+          onValueChange={(family) => {
+            writeOnce((live) => {
+              live.fontFamily = family;
             });
           }}
         />

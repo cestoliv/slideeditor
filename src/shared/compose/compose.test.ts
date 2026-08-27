@@ -9,10 +9,15 @@ import {
 import type { Composition, LibraryLookup } from "./compose.js";
 import {
   ASSET_TOP_MARGIN,
+  CONTENT_WIDTH,
   SIDE_MARGIN,
-  TEXT_SIZE_FLOOR,
+  TEXT_BOTTOM_MARGIN,
   TEXT_TOP_LIMIT,
 } from "./constants.js";
+import { DESIGN_WIDTH } from "../geometry/index.js";
+import { DEFAULT_ADVANCE_RATIO } from "../text/index.js";
+import { BUILTIN_DEFAULTS } from "../schema/index.js";
+import type { AccountDefaults } from "../schema/index.js";
 
 // compose reads only id, kind, width and height off a library item, so the
 // stub carries those and nothing else.
@@ -61,7 +66,12 @@ const PORTRAIT = { w: 9, h: 16 };
 
 function compose(
   slides: Composition[],
-  options: { ratio?: { w: number; h: number }; previous?: SlideDocument | null } = {},
+  options: {
+    ratio?: { w: number; h: number };
+    previous?: SlideDocument | null;
+    defaults?: AccountDefaults;
+    advanceRatioFor?: (family: string) => number;
+  } = {},
 ): SlideDocument {
   return composeDocument({
     ratio: options.ratio ?? PORTRAIT,
@@ -69,6 +79,8 @@ function compose(
     library,
     previous: options.previous ?? null,
     newId,
+    defaults: options.defaults ?? BUILTIN_DEFAULTS,
+    advanceRatioFor: options.advanceRatioFor,
   });
 }
 
@@ -332,16 +344,248 @@ describe("layout", () => {
     expect(slide.texts.map((text) => text.z)).toEqual([3, 4]);
   });
 
-  it("scales an unfittable text block down instead of running it off the slide", () => {
+  /*
+   * Finding 10: layoutTexts had no font file to measure a family's average
+   * glyph width against, so it read a shared, name-keyed constant with only
+   * two entries. composeDocument now takes an `advanceRatioFor` a caller
+   * with a real font catalogue (server/services/fonts.ts's FontService) can
+   * inject — this is what proves it actually reaches layoutTexts, by giving
+   * the exact same string a wider "measured" advance and checking the
+   * resulting block is taller, rather than the fixed, name-keyed value
+   * every input got before.
+   */
+  it("uses an injected advanceRatioFor for the line-wrap estimate", () => {
+    const line = "word ".repeat(30).trim();
+    const narrow = firstSlide(
+      compose([{ background: "bg1", assets: [], texts: [line] }], {
+        advanceRatioFor: () => 0.3,
+      }),
+    ).texts[0]!;
+    const wide = firstSlide(
+      compose([{ background: "bg1", assets: [], texts: [line] }], {
+        advanceRatioFor: () => 0.8,
+      }),
+    ).texts[0]!;
+    // A wider average glyph fits fewer characters per line, so the same
+    // string wraps to more lines and a taller box.
+    expect(wide.height).toBeGreaterThan(narrow.height);
+  });
+
+  it("falls back to the shared, name-keyed default when no advanceRatioFor is injected", () => {
+    const line = "word ".repeat(30).trim();
+    const withoutInjection = firstSlide(
+      compose([{ background: "bg1", assets: [], texts: [line] }]),
+    ).texts[0]!;
+    const withDefaultExplicitly = firstSlide(
+      compose([{ background: "bg1", assets: [], texts: [line] }], {
+        advanceRatioFor: () => DEFAULT_ADVANCE_RATIO,
+      }),
+    ).texts[0]!;
+    expect(withoutInjection.height).toBe(withDefaultExplicitly.height);
+  });
+
+  it("uses the account's text size for every layer, with no shrinking", () => {
+    const custom: AccountDefaults = {
+      ...BUILTIN_DEFAULTS,
+      text: { ...BUILTIN_DEFAULTS.text, size: 40 },
+    };
+    const doc = compose([{ background: "bg1", assets: [], texts: ["One", "Two"] }], {
+      defaults: custom,
+    });
+    for (const text of firstSlide(doc).texts) {
+      expect(text.size).toBe(40);
+    }
+  });
+
+  it("centers an unfittable text block rather than shrinking or flooring it to one edge", () => {
     const line =
       "A long line that wraps a great many times before it fits the content width";
     const texts = Array.from({ length: 40 }, (_, index) => `${index} ${line}`);
     const slide = firstSlide(compose([{ background: "bg1", assets: [], texts }]));
     expect(slide.texts).toHaveLength(40);
     for (const text of slide.texts) {
-      expect(text.size).toBeGreaterThanOrEqual(TEXT_SIZE_FLOOR);
+      expect(text.size).toBe(BUILTIN_DEFAULTS.text.size);
     }
-    expect(at(slide.texts, 0).y).toBeGreaterThanOrEqual(TEXT_TOP_LIMIT);
+    /*
+     * Forty long lines at 64px cannot fit under TEXT_BLOCK_MAX at either gap.
+     * Size stays fixed — there is no smaller rung to fall back to — so the
+     * block runs off the frame either way. Flooring it at TEXT_TOP_LIMIT (the
+     * previous behaviour) dumped the whole overflow on the bottom edge, which
+     * on a 9:16 slide is where a platform's caption and action chrome sit —
+     * the worse edge to lose. Centering it on the frame instead spreads the
+     * overflow evenly: the first line starts as far above y = 0 as the last
+     * line ends below y = 1.
+     */
+    const first = at(slide.texts, 0);
+    const last = at(slide.texts, slide.texts.length - 1);
+    const overflowTop = -first.y;
+    const overflowBottom = last.y + last.height - 1;
+    expect(overflowTop).toBeGreaterThan(0);
+    expect(overflowBottom).toBeCloseTo(overflowTop, 10);
+    // And it still starts well above where an unfittable block used to be
+    // floored, rather than being squeezed entirely below it.
+    expect(first.y).toBeLessThan(TEXT_TOP_LIMIT);
+  });
+
+  /*
+   * Finding 4 (fix round 3): a block whose total height lands in (0.90, 1.0)
+   * at these constants fits the frame just fine — bottom-anchoring it and
+   * flooring the top at TEXT_TOP_LIMIT never has to push the top above that
+   * limit — but the centering branch above used to fire for it anyway,
+   * because `fits` compared `total` against
+   * `1 - TEXT_BOTTOM_MARGIN - TEXT_TOP_LIMIT` (0.90) rather than against 1.
+   * Centering shifts the whole block toward the frame's middle regardless of
+   * how small the top-limit shortfall actually is, so it slides the block
+   * DOWN into the reserved bottom margin — the exact chrome zone flooring
+   * exists to protect — while wasting the top space bottom-anchoring would
+   * have kept clear. Every total in that band was worse off than before, and
+   * untested: the golden fixture and the "centers an unfittable block" test
+   * above both sit above 1.0.
+   *
+   * charsPerLine mirrors textHeight()'s own formula (compose.ts) rather than
+   * a hardcoded line width, so a tuned constant does not silently desync
+   * this from what layoutTexts actually wraps at.
+   */
+  const charsPerLine = Math.max(
+    8,
+    Math.floor((CONTENT_WIDTH * DESIGN_WIDTH) / (BUILTIN_DEFAULTS.text.size * 0.5)),
+  );
+
+  /** A composition text guaranteed to wrap to exactly `lines` lines at charsPerLine. */
+  function lineText(lines: number): string {
+    return "x".repeat(charsPerLine * (lines - 1) + 1);
+  }
+
+  /**
+   * A stack of `texts.length` texts whose lines sum to `lineCounts`, so the
+   * block's total height is controlled by both dimensions layoutTexts' gap
+   * math depends on (line count, which sets each box's height, and text
+   * count, which sets how many gaps are summed) — finer control than
+   * varying text count alone, which only moves in whole extra-line-plus-gap
+   * steps too coarse to land close to a specific boundary.
+   */
+  function stackOfLineCounts(lineCounts: number[]): string[] {
+    return lineCounts.map(lineText);
+  }
+
+  function measuredBlock(texts: string[]): {
+    first: Slide["texts"][number];
+    total: number;
+  } {
+    const slide = firstSlide(compose([{ background: "bg1", assets: [], texts }]));
+    const first = at(slide.texts, 0);
+    const last = at(slide.texts, slide.texts.length - 1);
+    return { first, total: last.y + last.height - first.y };
+  }
+
+  it("floors, rather than centers, a text block whose total sits well inside (0.90, 1.0)", () => {
+    // 20 single-line texts: comfortably inside the band per this file's own
+    // constants (verified in the repro this fix shipped with).
+    const { first, total } = measuredBlock(stackOfLineCounts(Array(20).fill(1)));
+    expect(
+      total,
+      "picks a block inside the band this regression is about",
+    ).toBeGreaterThan(1 - TEXT_BOTTOM_MARGIN - TEXT_TOP_LIMIT);
+    expect(total).toBeLessThan(1);
+    // Floored at TEXT_TOP_LIMIT: bottom-anchoring only needed the top pushed
+    // down by (1 - TEXT_BOTTOM_MARGIN - TEXT_TOP_LIMIT - total, negated) —
+    // a small amount — never centered on the whole frame.
+    expect(first.y).toBeCloseTo(TEXT_TOP_LIMIT, 10);
+    // The regression this guards: centering would have placed first.y at
+    // (1 - total) / 2, well below the top limit for a total this large.
+    expect(first.y).not.toBeCloseTo((1 - total) / 2, 2);
+  });
+
+  it("still floors, not centers, a text block right at the edge of the band, just above 0.90", () => {
+    // 14 single-line texts plus 3 two-line texts: 20 lines total across 17
+    // texts, landing just over the old (wrong) 0.90 threshold — see this
+    // file's own comment above for why text count, not just line count,
+    // has to be tuned to land this close.
+    const { first, total } = measuredBlock(
+      stackOfLineCounts([...Array(14).fill(1), 2, 2, 2]),
+    );
+    const oldThreshold = 1 - TEXT_BOTTOM_MARGIN - TEXT_TOP_LIMIT;
+    expect(
+      total,
+      "lands just past the old threshold, not deep in the band",
+    ).toBeGreaterThan(oldThreshold);
+    expect(total).toBeLessThan(oldThreshold + 0.02);
+    expect(first.y).toBeCloseTo(TEXT_TOP_LIMIT, 10);
+  });
+
+  it("centers a text block right at the edge of the band, just above 1.0", () => {
+    // 22 single-line texts lands just over a total of 1 at these constants.
+    const { first, total } = measuredBlock(stackOfLineCounts(Array(22).fill(1)));
+    expect(total, "picks a block just past the frame's own height").toBeGreaterThan(1);
+    expect(total).toBeLessThan(1.1);
+    // Centered, not floored: the top overflows past y = 0 by the same
+    // amount the bottom overflows past y = 1.
+    expect(first.y).toBeCloseTo((1 - total) / 2, 10);
+    expect(first.y).toBeLessThan(0);
+  });
+
+  /*
+   * Finding 3 (fix round 4): the `total > 1` guard above was the wrong
+   * boundary. Flooring the top at TEXT_TOP_LIMIT only avoids clipping when
+   * the block's bottom (TEXT_TOP_LIMIT + total) stays at or under 1 — that
+   * is, when `total <= 1 - TEXT_TOP_LIMIT`. Every total in
+   * `(1 - TEXT_TOP_LIMIT, 1]` used to get floored anyway, running the bottom
+   * past y = 1 and clipping text off the slide while leaving the headroom
+   * flooring was supposed to use sitting unused above it — the exact outcome
+   * centering exists to prevent. The four tests below sit inside that band
+   * (approximated here, at these constants, as (0.96, 1.0]) and either side
+   * of the corrected `1 - TEXT_TOP_LIMIT` (0.98) threshold, none of which the
+   * three tests above cover (0.9367, 0.9067 and 1.0313 respectively).
+   */
+  it("still floors, not centers, a text block just above 0.96, below the corrected threshold", () => {
+    // 17 single-line texts plus 2 two-line texts: lands just past 0.96 but
+    // still under 1 - TEXT_TOP_LIMIT, so flooring places it without clipping.
+    const { first, total } = measuredBlock(
+      stackOfLineCounts([...Array(17).fill(1), 2, 2]),
+    );
+    expect(total, "lands in the band this fix covers").toBeGreaterThan(0.96);
+    expect(total).toBeLessThan(1 - TEXT_TOP_LIMIT);
+    expect(first.y).toBeCloseTo(TEXT_TOP_LIMIT, 10);
+    // Floored, and not clipped: the bottom stays at or above the frame edge.
+    expect(first.y + total).toBeLessThanOrEqual(1);
+  });
+
+  it("centers, not floors, a text block just past the corrected 1 - TEXT_TOP_LIMIT threshold", () => {
+    // 12 single-line texts plus 5 two-line texts: lands just past the fixed
+    // threshold. The old `total > 1` guard floored this instead, and
+    // flooring at TEXT_TOP_LIMIT then ran the block's bottom past y = 1.
+    const { first, total } = measuredBlock(
+      stackOfLineCounts([...Array(12).fill(1), 2, 2, 2, 2, 2]),
+    );
+    expect(total).toBeGreaterThan(1 - TEXT_TOP_LIMIT);
+    expect(total).toBeLessThan(1);
+    expect(first.y).toBeCloseTo((1 - total) / 2, 10);
+    // Not clipped: centering keeps the bottom at or under the frame edge —
+    // the old guard put it at TEXT_TOP_LIMIT + total, past 1, here.
+    expect(first.y + total).toBeLessThanOrEqual(1);
+  });
+
+  it("does not clip 21 single-line texts on a 9:16 slide (this fix's own reproduction)", () => {
+    // The exact case this fix was written against: total lands at 0.984,
+    // inside the regression band. The old guard floored it at TEXT_TOP_LIMIT
+    // (0.02), running the bottom to 1.004 — 0.004 of the last line clipped
+    // off the slide while 0.02 of headroom sat unused at the top.
+    const { first, total } = measuredBlock(stackOfLineCounts(Array(21).fill(1)));
+    expect(total).toBeCloseTo(0.984, 3);
+    expect(first.y).toBeCloseTo((1 - total) / 2, 10);
+    expect(first.y + total).toBeLessThanOrEqual(1);
+  });
+
+  it("centers a text block just above 1.0, at the closed edge of the band", () => {
+    // 16 single-line texts plus 3 two-line texts: lands just over a total of
+    // 1, closer to that boundary than the "just above 1.0" test above.
+    const { first, total } = measuredBlock(
+      stackOfLineCounts([...Array(16).fill(1), 2, 2, 2]),
+    );
+    expect(total).toBeGreaterThan(1);
+    expect(total).toBeLessThan(1.01);
+    expect(first.y).toBeCloseTo((1 - total) / 2, 10);
+    expect(first.y).toBeLessThan(0);
   });
 });
 
@@ -368,7 +612,13 @@ describe("the composition shorthand", () => {
 
   it("falls back to the default ratio when the ratio is missing or unusable", () => {
     expect(
-      composeDocument({ ratio: undefined, slides: [], library, newId }).ratio,
+      composeDocument({
+        ratio: undefined,
+        slides: [],
+        library,
+        newId,
+        defaults: BUILTIN_DEFAULTS,
+      }).ratio,
     ).toEqual({
       w: 9,
       h: 16,
@@ -381,6 +631,7 @@ describe("the composition shorthand", () => {
       ratio: PORTRAIT,
       slides: [{ background: "bg1", assets: ["a1"], texts: ["One"] }],
       library,
+      defaults: BUILTIN_DEFAULTS,
     });
     expect(firstSlide(doc).id).toMatch(/^[0-9a-f-]{36}$/);
   });
@@ -412,20 +663,28 @@ describe("the composition shorthand", () => {
 });
 
 describe("validation", () => {
+  const context = { accountId: "default", lookupItem: () => null };
+
   it("rejects a slideshow with no slides", () => {
-    expect(() => validateComposition([])).toThrow(ComposeError);
-    expect(() => validateComposition("not a list")).toThrow(ComposeError);
+    expect(() => validateComposition([], context)).toThrow(ComposeError);
+    expect(() =>
+      validateComposition("not a list" as unknown as Composition[], context),
+    ).toThrow(ComposeError);
   });
 
   it("rejects more than a hundred slides", () => {
     const slides = Array.from({ length: 101 }, () => ({ background: "bg1" }));
-    expect(() => validateComposition(slides)).toThrow(/at most 100 slides/);
-    expect(validateComposition(slides.slice(0, 100))).toHaveLength(100);
+    expect(() => validateComposition(slides, context)).toThrow(/at most 100 slides/);
+    expect(() => validateComposition(slides.slice(0, 100), context)).not.toThrow();
   });
 
   it("rejects a slide with no background", () => {
-    expect(() => validateComposition([{ texts: ["One"] }])).toThrow(/needs a background/);
-    expect(() => validateComposition([null])).toThrow(/is not an object/);
+    expect(() =>
+      validateComposition([{ texts: ["One"] } as Composition], context),
+    ).toThrow(/needs a background/);
+    expect(() => validateComposition([null as unknown as Composition], context)).toThrow(
+      /is not an object/,
+    );
   });
 
   it("rejects a ratio outside 0.4 to 2.5", () => {

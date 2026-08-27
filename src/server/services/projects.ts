@@ -12,8 +12,10 @@ import type {
   Ratio,
   SlideshowStatus,
 } from "../../shared/schema/index.js";
-import { integer, text, type Row } from "../db/rows.js";
+import { validateDocumentAccountScope } from "../../shared/compose/index.js";
+import { integer, requiredText, text, type Row } from "../db/rows.js";
 import { HttpError } from "../errors.js";
+import { requireAccountId, type AccountService } from "./accounts.js";
 import type { EventBus } from "./events.js";
 import type { LibraryService } from "./library.js";
 
@@ -36,12 +38,14 @@ export type StoredProject = {
   status: SlideshowStatus;
   description: string;
   hashtags: string;
+  accountId: string;
   createdAt: number;
   updatedAt: number;
 } & StoredDocument;
 
 export interface ProjectListOptions {
   status?: string | string[] | null;
+  accountId?: string | null;
 }
 
 export interface ProjectCreateInput {
@@ -49,6 +53,7 @@ export interface ProjectCreateInput {
   document?: unknown;
   description?: unknown;
   hashtags?: unknown;
+  accountId: unknown;
 }
 
 /**
@@ -69,27 +74,37 @@ export class ProjectService {
   private readonly db: DatabaseSync;
   private readonly events: EventBus | null;
   private readonly library: LibraryService | null;
+  private readonly accounts: AccountService | null;
 
   constructor(
     db: DatabaseSync,
     events: EventBus | null,
     library: LibraryService | null = null,
+    accounts: AccountService | null = null,
   ) {
     this.db = db;
     this.events = events;
     this.library = library;
+    this.accounts = accounts;
   }
 
   list({
     status = [...DEFAULT_STATUS_FILTER],
+    accountId = null,
   }: ProjectListOptions = {}): ProjectSummary[] {
     const wanted = normalizeStatusFilter(status);
     const placeholders = wanted.map(() => "?").join(", ");
+    // `null`/omitted means "no filter"; any string — including "", which no
+    // account ever has as an id — is an explicit filter that must narrow the
+    // result, never widen it back to every account's rows.
+    const account = typeof accountId === "string" ? accountId : null;
+    const accountClause = account !== null ? " AND account_id = ?" : "";
+    const parameters = account !== null ? [...wanted, account] : wanted;
     const rows = this.db
       .prepare(
-        `SELECT * FROM project WHERE status IN (${placeholders}) ORDER BY updated_at DESC`,
+        `SELECT * FROM project WHERE status IN (${placeholders})${accountClause} ORDER BY updated_at DESC`,
       )
-      .all(...wanted);
+      .all(...parameters);
     return rows.map((row) => {
       const summary = toSummary(row);
       const cover = summary.coverItemId ? this.library?.get(summary.coverItemId) : null;
@@ -132,15 +147,21 @@ export class ProjectService {
     document = null,
     description,
     hashtags,
-  }: ProjectCreateInput = {}): StoredProject {
+    accountId,
+  }: ProjectCreateInput): StoredProject {
+    const account = requireAccountId(this.accounts, accountId, "A slideshow");
     const now = Date.now();
     const id = randomUUID();
-    const body = normalizeDocument(document);
+    // Seeds the ratio from the account's default when the caller's document
+    // carries none of its own — a bare {} from a fresh editor create, or an
+    // absent field entirely. A document that already names a ratio keeps it.
+    const body = normalizeDocument(document, this.accounts?.get(account)?.defaults.ratio);
+    this.assertOwnScope(body, account);
     this.db
       .prepare(
         `
-      INSERT INTO project (id, name, document, version, status, description, hashtags, created_at, updated_at)
-      VALUES (?, ?, ?, 1, 'draft', ?, ?, ?, ?)
+      INSERT INTO project (id, name, document, version, status, description, hashtags, account_id, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 'draft', ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -149,6 +170,7 @@ export class ProjectService {
         JSON.stringify(body),
         normalizeDescription(description),
         normalizeHashtags(hashtags),
+        account,
         now,
         now,
       );
@@ -172,7 +194,16 @@ export class ProjectService {
         project: current,
       });
     }
-    const body = normalizeDocument(document);
+    // Falls back to the slideshow's OWN current ratio, not the account's
+    // default — the account default only seeds a slideshow once, at create()
+    // (see there), which is the snapshot rule this feature is built on. A
+    // PUT whose body omits ratio used to fall through to the account's
+    // (possibly since-changed) default, silently reshaping e.g. a 1:1
+    // slideshow in a 9:16-default account back to 9:16 on any save that did
+    // not carry its own ratio. Falling back to current.ratio matches the
+    // sibling route (routes/slideshows.ts), which already gets this right.
+    const body = normalizeDocument(document, current.ratio);
+    this.assertOwnScope(body, current.accountId);
     const nextVersion = current.version + 1;
     this.db
       .prepare(
@@ -205,6 +236,31 @@ export class ProjectService {
     this.db.prepare("DELETE FROM project WHERE id = ?").run(id);
     this.events?.broadcast({ type: "project.removed", projectId: id });
     return { removed: id };
+  }
+
+  /**
+   * `/api/projects` accepts a raw document rather than the agent's Composition
+   * shorthand, so this is the cross-account guard for that write path — the
+   * same rule validateComposition enforces on the shorthand routes, run over
+   * the same item ids reindex() extracts below. Skipped when there is no
+   * library to check against (e.g. some unit tests construct the service
+   * without one), matching how the rest of this class treats a null library.
+   *
+   * `lookupItem` is memoized per call: a background reused across many slides
+   * (the common case) named `library.get()` — a stats-joined query — once per
+   * occurrence rather than once per distinct id, on every debounced save.
+   */
+  private assertOwnScope(document: StoredDocument, accountId: string): void {
+    if (!this.library) return;
+    const library = this.library;
+    const cache = new Map<string, ReturnType<LibraryService["get"]>>();
+    validateDocumentAccountScope(document.slides, {
+      accountId,
+      lookupItem: (id) => {
+        if (!cache.has(id)) cache.set(id, library.get(id));
+        return cache.get(id) ?? null;
+      },
+    });
   }
 
   /**
@@ -271,6 +327,7 @@ function toSummary(row: Row): Omit<ProjectSummary, "coverUrl"> {
     status: readStatus(row),
     description: text(row, "description"),
     hashtags: text(row, "hashtags"),
+    accountId: requiredText(row, "account_id"),
     slideCount: slides.length,
     coverItemId: typeof coverItemId === "string" && coverItemId ? coverItemId : null,
     createdAt: integer(row, "created_at"),
@@ -286,17 +343,29 @@ function toProject(row: Row): StoredProject {
     status: readStatus(row),
     description: text(row, "description"),
     hashtags: text(row, "hashtags"),
+    accountId: requiredText(row, "account_id"),
     createdAt: integer(row, "created_at"),
     updatedAt: integer(row, "updated_at"),
     ...normalizeDocument(safeParse(text(row, "document"))),
   };
 }
 
-export function normalizeDocument(document: unknown): StoredDocument {
+export function normalizeDocument(
+  document: unknown,
+  fallbackRatio?: Ratio,
+): StoredDocument {
   const source = asRecord(document) ?? {};
+  const slides = Array.isArray(source["slides"]) ? source["slides"] : [];
   return {
-    ratio: readRatio(source["ratio"]),
-    slides: Array.isArray(source["slides"]) ? source["slides"] : [],
+    ratio: readRatio(source["ratio"], fallbackRatio),
+    // A slide that is not a plain object (a bare string, a number, null) is
+    // dropped rather than stored — the same "not an object, skip it"
+    // tolerance reindex() already applies when it walks a document's slides.
+    // Storing one verbatim used to let a raw POST/PUT (the /api/projects
+    // route forwards body.document with no composition validation, unlike
+    // routes/slideshows.ts) write a document that fonts.remove()'s
+    // json_each-based in-use query could not walk — see fonts.ts.
+    slides: slides.filter((entry) => asRecord(entry) !== null),
   };
 }
 
@@ -326,13 +395,13 @@ function toStatus(value: unknown): SlideshowStatus | null {
   return null;
 }
 
-function readRatio(value: unknown): Ratio {
+function readRatio(value: unknown, fallback: Ratio = DEFAULT_RATIO): Ratio {
   const source = asRecord(value);
   const w = Number(source?.["w"]);
   const h = Number(source?.["h"]);
   return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0
     ? { w, h }
-    : { ...DEFAULT_RATIO };
+    : { ...fallback };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -5,7 +5,15 @@ import {
   initialOverlayWidth,
 } from "@shared/geometry/index.js";
 import type { AssetSize } from "@shared/geometry/index.js";
-import type { Overlay, Ratio, Slide, SlideDocument } from "@shared/schema/index.js";
+import type {
+  AccountDefaults,
+  Overlay,
+  Ratio,
+  Slide,
+  SlideDocument,
+  TextLayer,
+} from "@shared/schema/index.js";
+import { newTextLayer, NEW_TEXT_HEIGHT, NEW_TEXT_WIDTH } from "@shared/defaults/index.js";
 import type { EditorStore } from "../store.js";
 import { isLayerSelected, nextLayerZ } from "../selection.js";
 import type { LayerKind } from "../selection.js";
@@ -17,10 +25,6 @@ import type { LayerKind } from "../selection.js";
  * (app.js:3463-3474), addText (app.js:2949-2985) and addOverlayFromAsset
  * (app.js:3371-3404).
  */
-
-/** app.js:2952-2953. What a freshly added text box measures. */
-export const NEW_TEXT_WIDTH = 0.64;
-export const NEW_TEXT_HEIGHT = 0.08;
 
 /** app.js:3745-3746 and app.js:4038-4039. How small each kind may be dragged. */
 export const OVERLAY_RESIZE_LIMITS = {
@@ -176,18 +180,16 @@ export type StagePoint = { x: number; y: number };
 export function addTextLayer(
   store: EditorStore,
   point: StagePoint | null,
+  defaults: AccountDefaults,
 ): string | null {
   const state = store.getSnapshot();
   const activeSlideId = state.activeSlideId;
   if (activeSlideId === null) return null;
-  const id = crypto.randomUUID();
-  let added = false;
+  let created: TextLayer | null = null;
   store.mutate((document) => {
     const slide = slideOf(document, activeSlideId);
     if (slide === null) return;
-    slide.texts.push({
-      id,
-      text: "Your text",
+    const layer = newTextLayer(defaults, {
       x:
         point === null
           ? 0.18
@@ -196,24 +198,18 @@ export function addTextLayer(
         point === null
           ? 0.42
           : clamp(point.y - NEW_TEXT_HEIGHT / 2, 0, 1 - NEW_TEXT_HEIGHT),
-      width: NEW_TEXT_WIDTH,
-      height: NEW_TEXT_HEIGHT,
-      size: 64,
-      style: "plain",
-      color: "#FFFFFF",
-      background: "white",
-      // app.js:2965 writes "lines" here where the schema's own default is
-      // "full". A text added in the editor is the one that says lines.
-      backgroundShape: "lines",
-      align: "center",
-      rotation: 0,
       z: nextLayerZ(slide),
     });
-    added = true;
+    layer.text = "Your text";
+    slide.texts.push(layer);
+    created = layer;
   });
-  if (!added) return null;
-  store.selectOnly("text", id);
-  return id;
+  if (created === null) return null;
+  // TS doesn't track the reassignment inside the mutate callback above, so it
+  // narrows `created` to `never` here without this cast.
+  const layer = created as TextLayer;
+  store.selectOnly("text", layer.id);
+  return layer.id;
 }
 
 export type AddOverlayOptions = {

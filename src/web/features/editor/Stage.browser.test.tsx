@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 // The stage is laid out from the token layer, so the tests load it the way the app does.
 import "../../design/tokens.css";
 import "../../design/reset.css";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { getImageLayout } from "@shared/geometry/index.js";
 import { EditorStore } from "./store.js";
@@ -24,6 +25,7 @@ function backgroundItem(id: string): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: PIXEL,

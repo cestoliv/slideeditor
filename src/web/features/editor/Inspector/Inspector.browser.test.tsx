@@ -5,10 +5,12 @@ import { page, userEvent } from "vitest/browser";
 // The panel is laid out from the token layer, so the tests load it as the app does.
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem, Project, TextLayer } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { LibraryCache } from "../../../app/useLibrary.js";
 import { ToastProvider } from "../../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../../app/accounts.js";
 import { Editor } from "../Editor.js";
 import { EditorStore } from "../store.js";
 import { fixtureProject } from "../testing.js";
@@ -27,6 +29,7 @@ function asset(id: string, name: string): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: `/media/${id}.png`,
@@ -55,16 +58,33 @@ const LIBRARY: LibraryIndex = new Map([["item-1", asset("item-1", "Sunrise.png")
  * toggle raises rather than a column that is always there. The tests below are
  * about the controls, and the sheet has its own test at the bottom.
  */
-async function mount(store: EditorStore, options: { photoAdjust?: boolean } = {}) {
+function defaultAccountsStore(): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
+
+async function mount(
+  store: EditorStore,
+  options: { photoAdjust?: boolean; accountsStore?: AccountsStore } = {},
+) {
   await page.viewport(1280, 900);
   return render(
-    <div style={{ width: "320px" }}>
-      <Inspector
-        store={store}
-        library={LIBRARY}
-        photoAdjust={options.photoAdjust ?? false}
-      />
-    </div>,
+    <AccountsProvider store={options.accountsStore ?? defaultAccountsStore()}>
+      <div style={{ width: "320px" }}>
+        <Inspector
+          store={store}
+          library={LIBRARY}
+          photoAdjust={options.photoAdjust ?? false}
+        />
+      </div>
+    </AccountsProvider>,
   );
 }
 
@@ -738,7 +758,9 @@ it("hides the panel behind a toggle on a narrow screen", async () => {
   const store = storeFor(fixtureProject({ texts: 1 }));
   store.selectOnly("text", "text-1-1");
   const screen = await render(
-    <Inspector store={store} library={LIBRARY} mobileOpen={false} />,
+    <AccountsProvider store={defaultAccountsStore()}>
+      <Inspector store={store} library={LIBRARY} mobileOpen={false} />
+    </AccountsProvider>,
   );
   await expect
     .element(screen.getByRole("heading", { name: "Text settings" }))
@@ -759,7 +781,9 @@ it("shows the panel on a narrow screen once it is raised", async () => {
   const store = storeFor(fixtureProject({ texts: 1 }));
   store.selectOnly("text", "text-1-1");
   const screen = await render(
-    <Inspector store={store} library={LIBRARY} mobileOpen={true} />,
+    <AccountsProvider store={defaultAccountsStore()}>
+      <Inspector store={store} library={LIBRARY} mobileOpen={true} />
+    </AccountsProvider>,
   );
 
   await vi.waitFor(() => {
@@ -807,23 +831,25 @@ it("raises the sheet from the header and when a layer arrives", async () => {
   const screen = await render(
     <MemoryRouter initialEntries={["/projects/project-1"]}>
       <ToastProvider>
-        <Routes>
-          <Route
-            path="/projects/:id"
-            element={
-              <Editor
-                projectId="project-1"
-                client={client}
-                library={
-                  new LibraryCache({
-                    listLibrary: () => Promise.resolve({ items: [], total: 0 }),
-                  })
-                }
-                subscribe={() => () => undefined}
-              />
-            }
-          />
-        </Routes>
+        <AccountsProvider store={defaultAccountsStore()}>
+          <Routes>
+            <Route
+              path="/projects/:id"
+              element={
+                <Editor
+                  projectId="project-1"
+                  client={client}
+                  library={
+                    new LibraryCache({
+                      listLibrary: () => Promise.resolve({ items: [], total: 0 }),
+                    })
+                  }
+                  subscribe={() => () => undefined}
+                />
+              }
+            />
+          </Routes>
+        </AccountsProvider>
       </ToastProvider>
     </MemoryRouter>,
   );
@@ -922,23 +948,25 @@ it("keeps the layer selected when a control in the real panel is pressed", async
   const screen = await render(
     <MemoryRouter initialEntries={["/projects/project-1"]}>
       <ToastProvider>
-        <Routes>
-          <Route
-            path="/projects/:id"
-            element={
-              <Editor
-                projectId="project-1"
-                client={client}
-                library={
-                  new LibraryCache({
-                    listLibrary: () => Promise.resolve({ items: [], total: 0 }),
-                  })
-                }
-                subscribe={() => () => undefined}
-              />
-            }
-          />
-        </Routes>
+        <AccountsProvider store={defaultAccountsStore()}>
+          <Routes>
+            <Route
+              path="/projects/:id"
+              element={
+                <Editor
+                  projectId="project-1"
+                  client={client}
+                  library={
+                    new LibraryCache({
+                      listLibrary: () => Promise.resolve({ items: [], total: 0 }),
+                    })
+                  }
+                  subscribe={() => () => undefined}
+                />
+              }
+            />
+          </Routes>
+        </AccountsProvider>
       </ToastProvider>
     </MemoryRouter>,
   );
@@ -968,4 +996,60 @@ it("keeps the layer selected when a control in the real panel is pressed", async
     .element(screen.getByRole("button", { name: "Use Pink text" }))
     .toHaveAttribute("aria-pressed", "true");
   screen.unmount();
+});
+
+it("overrides one text layer's font without touching its siblings", async () => {
+  const project = fixtureProject({
+    slides: [
+      {
+        texts: [
+          { id: "t1", text: "First", fontFamily: "TikTok Sans" },
+          { id: "t2", text: "Second", fontFamily: "TikTok Sans" },
+        ],
+      },
+    ],
+  });
+  const store = storeFor(project);
+  store.selectOnly("text", "t1");
+  const accountsStore = new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () =>
+      Promise.resolve({
+        fonts: [
+          {
+            id: "f1",
+            family: "TikTok Sans",
+            weight: 500,
+            weightMin: null,
+            weightMax: null,
+            source: "builtin",
+            url: "/fonts/f1.woff2",
+          },
+          {
+            id: "f2",
+            family: "Bebas Neue",
+            weight: 700,
+            weightMin: null,
+            weightMax: null,
+            source: "google",
+            url: "/media/f2.woff2",
+          },
+        ],
+        dropped: [],
+      }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+  await mount(store, { accountsStore });
+
+  // getByLabelText("Font") also matches "Font size" and "Font size in pixels"
+  // by substring, so the combobox role narrows to the one control this test means.
+  await userEvent.click(page.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Bebas Neue" }));
+
+  expect(store.getSnapshot().project.slides[0]?.texts[0]?.fontFamily).toBe("Bebas Neue");
+  expect(store.getSnapshot().project.slides[0]?.texts[1]?.fontFamily).toBe("TikTok Sans");
 });

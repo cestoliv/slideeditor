@@ -5,6 +5,7 @@ import { render } from "vitest-browser-react";
 import { useState } from "react";
 import "../../design/tokens.css";
 import "../../design/reset.css";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { LibraryItem } from "@shared/schema/index.js";
 import { LibraryCache } from "../../app/useLibrary.js";
 import { BackgroundPicker } from "./BackgroundPicker.js";
@@ -16,8 +17,18 @@ import { libraryItem } from "./layers/testing.js";
  * press a tile.
  */
 
-function background(id: string, name: string, description = ""): LibraryItem {
-  return { ...libraryItem(id, 1080, 1920, name), kind: "background", description };
+function background(
+  id: string,
+  name: string,
+  description = "",
+  accountId = DEFAULT_ACCOUNT_ID,
+): LibraryItem {
+  return {
+    ...libraryItem(id, 1080, 1920, name),
+    kind: "background",
+    description,
+    accountId,
+  };
 }
 
 function asset(id: string, name: string): LibraryItem {
@@ -37,6 +48,7 @@ type HostProps = {
   onChoose: Choose;
   upload?: (file: File) => Promise<LibraryItem>;
   multiple?: boolean;
+  accountId?: string;
 };
 
 type Opened = {
@@ -45,7 +57,13 @@ type Opened = {
 };
 
 /** The caller's half: a button that opens the picker, and it owns the flag. */
-function Host({ cache, onChoose, upload, multiple = false }: HostProps) {
+function Host({
+  cache,
+  onChoose,
+  upload,
+  multiple = false,
+  accountId = DEFAULT_ACCOUNT_ID,
+}: HostProps) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -66,6 +84,7 @@ function Host({ cache, onChoose, upload, multiple = false }: HostProps) {
         multiple={multiple}
         cache={cache}
         upload={upload}
+        accountId={accountId}
       />
     </>
   );
@@ -77,7 +96,11 @@ function Host({ cache, onChoose, upload, multiple = false }: HostProps) {
  */
 async function openPicker(
   items: LibraryItem[],
-  options: { upload?: (file: File) => Promise<LibraryItem>; multiple?: boolean } = {},
+  options: {
+    upload?: (file: File) => Promise<LibraryItem>;
+    multiple?: boolean;
+    accountId?: string;
+  } = {},
 ): Promise<Opened> {
   const cache = cacheOf(items);
   await cache.load();
@@ -87,6 +110,7 @@ async function openPicker(
       cache={cache}
       onChoose={onChoose}
       multiple={options.multiple ?? false}
+      accountId={options.accountId ?? DEFAULT_ACCOUNT_ID}
       {...(options.upload === undefined ? {} : { upload: options.upload })}
     />,
   );
@@ -277,4 +301,17 @@ it("asks for an image when the chosen file is not one", async () => {
   // uploaded would already have reached the uploader by the time it is up.
   expect(upload).not.toHaveBeenCalled();
   expect(onChoose).not.toHaveBeenCalled();
+});
+
+it("shows only the open slideshow's own account, not another brand's backgrounds", async () => {
+  await openPicker(
+    [
+      background("bg-1", "Our beach", "", "default"),
+      background("bg-2", "Their skyline", "", "other-account"),
+    ],
+    { accountId: "default" },
+  );
+
+  await expect.element(page.getByRole("button", { name: "Our beach" })).toBeVisible();
+  expect(page.getByRole("button", { name: "Their skyline" }).query()).toBe(null);
 });

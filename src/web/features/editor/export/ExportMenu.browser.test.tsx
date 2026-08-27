@@ -4,7 +4,7 @@ import { page } from "vitest/browser";
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
 import "../../../design/fonts.css";
-import { parseProject } from "@shared/schema/index.js";
+import { DEFAULT_ACCOUNT_ID, parseProject } from "@shared/schema/index.js";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { ToastProvider } from "../../../design/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
@@ -43,6 +43,7 @@ function projectOf(slideCount: number, options: ProjectOptions = {}): Project {
     name,
     version: 1,
     status: "draft",
+    accountId: DEFAULT_ACCOUNT_ID,
     createdAt: 1,
     updatedAt: 1,
     ratio,

@@ -1,0 +1,14 @@
+/*
+ * A second real family, for tests that need to load more than one font by
+ * name. design/fonts.css only declares TikTok Sans; render.browser.test.tsx's
+ * multi-family font wait needs "Space Mono" loadable too, and
+ * parity.browser.test.tsx (Task 11) imports this same file rather than
+ * declaring its own.
+ */
+@font-face {
+  font-family: "Space Mono";
+  src: url("@assets/SpaceMono.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}

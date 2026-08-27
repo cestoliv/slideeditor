@@ -52,6 +52,13 @@ export type BackgroundPickerProps = {
   cache?: LibraryCache | undefined;
   /** Puts a chosen file in the library. Injected so a test needs no server. */
   upload?: ((file: File) => Promise<LibraryItem>) | undefined;
+  /**
+   * The open slideshow's own account. Both the browsable pool and the upload
+   * default are scoped to it, so nothing from another brand shows up here:
+   * every real caller (SlideRail, Editor) knows its project's account and
+   * passes it.
+   */
+  accountId: string;
 };
 
 export function BackgroundPicker({
@@ -62,9 +69,33 @@ export function BackgroundPicker({
   onChoose,
   multiple = false,
   cache = libraryCache,
-  upload = uploadBackgroundItem,
+  accountId,
+  upload: uploadProp,
 }: BackgroundPickerProps) {
-  const { items, loading } = useLibrary(cache);
+  // Kept stable across renders by keying it on `accountId` rather than
+  // building it fresh every render (a fresh function every render used to
+  // defeat every callback downstream that depends on `upload`, here and in
+  // the callers that build their own default the same way).
+  const defaultUpload = useCallback(
+    (file: File) => uploadBackgroundItem(file, accountId),
+    [accountId],
+  );
+  const upload = uploadProp ?? defaultUpload;
+  // Scoped to the same accountId Editor.tsx already loads this same cache
+  // instance with (both pass `cache={library}` — Editor.tsx, SlideRail.tsx).
+  // Calling this unscoped used to make `loadedAccountId` a race between the
+  // two effects: whichever fired last decided what the whole shared cache
+  // held, so on an unlucky ordering this picker (and everything else reading
+  // the cache) silently fell back to the unscoped, cross-account page the
+  // scoping exists to prevent.
+  const { items, loading } = useLibrary(cache, accountId);
+  // Redundant once the load above is itself scoped, but cheap insurance
+  // against exactly the kind of stale cross-account item a race here used to
+  // let through.
+  const ownItems = useMemo(
+    () => new Map([...items].filter(([, item]) => item.accountId === accountId)),
+    [items, accountId],
+  );
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<LibrarySort>("recent");
   const [uploading, setUploading] = useState(false);
@@ -90,15 +121,15 @@ export function BackgroundPicker({
   );
 
   const shown = useMemo(
-    () => browseLibrary(items.values(), { kind: "background", query, sort }),
-    [items, query, sort],
+    () => browseLibrary(ownItems.values(), { kind: "background", query, sort }),
+    [ownItems, query, sort],
   );
 
-  // Whether the library holds any background at all, which is a different
-  // emptiness from a search that matched none of them.
+  // Whether the account's own library holds any background at all, which is a
+  // different emptiness from a search that matched none of them.
   const anyBackground = useMemo(
-    () => [...items.values()].some((item) => item.kind === "background"),
-    [items],
+    () => [...ownItems.values()].some((item) => item.kind === "background"),
+    [ownItems],
   );
 
   const choose = useCallback(

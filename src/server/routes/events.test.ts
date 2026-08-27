@@ -34,7 +34,7 @@ it("streams what an agent changes to an open editor", async () => {
   const created = await fetch(`${baseUrl()}/api/projects`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Trip" }),
+    body: JSON.stringify({ name: "Trip", accountId: "default" }),
   });
   const project = (await created.json()) as { project: { id: string } };
 

@@ -107,7 +107,7 @@ it("refuses a cookie write from another origin and allows the same token write",
   const allowed = await app.inject({
     method: "POST",
     url: "/api/projects",
-    payload: { name: "fine" },
+    payload: { name: "fine", accountId: "default" },
     headers: { authorization: `Bearer ${secret}`, origin: "https://evil.example.com" },
   });
   expect(allowed.statusCode).toBe(200);

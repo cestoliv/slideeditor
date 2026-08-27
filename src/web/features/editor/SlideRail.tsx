@@ -98,7 +98,7 @@ function placementFor(element: Element, clientY: number): Placement {
 export function SlideRail({
   store,
   render,
-  uploadBackground = uploadBackgroundItem,
+  uploadBackground: uploadBackgroundProp,
   library = libraryCache,
   onAddSlide,
 }: SlideRailProps) {
@@ -106,6 +106,17 @@ export function SlideRail({
   const slides = useEditor(store, (state) => state.project.slides);
   const ratio = useEditor(store, (state) => state.project.ratio);
   const activeSlideId = useEditor(store, (state) => state.activeSlideId);
+  const accountId = useEditor(store, (state) => state.project.accountId);
+  // A dropped or picked file lands in the project's own account, so a
+  // replacement background never points at a slideshow it cannot belong to.
+  // Kept stable across renders by keying it on `accountId` rather than
+  // building it fresh every render, so BackgroundPicker's own memoisation
+  // downstream of this prop is not defeated on every keystroke and re-render.
+  const defaultUploadBackground = useCallback(
+    (file: File) => uploadBackgroundItem(file, accountId),
+    [accountId],
+  );
+  const uploadBackground = uploadBackgroundProp ?? defaultUploadBackground;
 
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
@@ -337,6 +348,7 @@ export function SlideRail({
         onChoose={applyBackground}
         cache={library}
         upload={uploadBackground}
+        accountId={accountId}
       />
 
       <Dialog.Root

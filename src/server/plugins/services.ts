@@ -9,7 +9,9 @@ import { loadToken } from "../auth/legacyToken.js";
 import { SessionStore } from "../auth/sessions.js";
 import { TokenStore } from "../auth/tokens.js";
 import type { DataPaths } from "../db/open.js";
+import { AccountService } from "../services/accounts.js";
 import { EventBus } from "../services/events.js";
+import { FontService } from "../services/fonts.js";
 import { LibraryService } from "../services/library.js";
 import { MediaStore } from "../services/media.js";
 import { ProjectService } from "../services/projects.js";
@@ -18,6 +20,8 @@ declare module "fastify" {
   interface FastifyInstance {
     library: LibraryService;
     projects: ProjectService;
+    accounts: AccountService;
+    fonts: FontService;
     events: EventBus;
     media: MediaStore;
     token: string;
@@ -54,11 +58,15 @@ export function registerServices(
 ): void {
   const media = new MediaStore(paths.media);
   const events = new EventBus();
-  const library = new LibraryService(db, media);
-  const projects = new ProjectService(db, events, library);
+  const accounts = new AccountService(db);
+  const library = new LibraryService(db, media, accounts);
+  const projects = new ProjectService(db, events, library, accounts);
+  const fonts = new FontService({ db, media });
 
   app.decorate("library", library);
   app.decorate("projects", projects);
+  app.decorate("accounts", accounts);
+  app.decorate("fonts", fonts);
   app.decorate("events", events);
   app.decorate("media", media);
   app.decorate("token", loadToken(paths.token));

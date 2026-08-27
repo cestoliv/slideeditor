@@ -6,7 +6,9 @@ import {
   validateComposition,
 } from "../../shared/compose/index.js";
 import { outputHeight } from "../../shared/geometry/index.js";
+import { BUILTIN_DEFAULTS } from "../../shared/schema/index.js";
 import type { LibraryItem, SlideDocument } from "../../shared/schema/index.js";
+import type { Composition } from "../../shared/compose/index.js";
 import { addItem, createTestApp, type TestApp } from "../testing.js";
 import type { LibraryService } from "./library.js";
 
@@ -43,7 +45,16 @@ async function fixture(): Promise<Fixture> {
   };
 }
 
-/** Everything must sit inside the canvas and clear of the text block. */
+/**
+ * Everything must sit inside the canvas and clear of the text block — except
+ * the text block itself, which is allowed to be the one thing that does not
+ * fit. layoutTexts (shared/compose/compose.ts) fixes the account's text size
+ * with no shrink-to-fit ladder: a block too tall for the slide is centered
+ * instead, so it overflows the top and bottom edges by the same amount
+ * rather than being clipped, shrunk, or floored off one edge only. Both
+ * shapes are well-formed; only a block clipped, shrunk, or overflowing one
+ * edge more than the other would be a real layout bug.
+ */
 function assertWellFormed(document: SlideDocument, label: string): void {
   const height = outputHeight(document.ratio);
   document.slides.forEach((slide, index) => {
@@ -64,14 +75,33 @@ function assertWellFormed(document: SlideDocument, label: string): void {
       ).toBe(true);
     }
     for (const text of slide.texts) {
-      expect(
-        text.y >= -0.001 && text.y + text.height <= 1.001,
-        `${where}: text outside vertically`,
-      ).toBe(true);
+      expect(text.height > 0, `${where}: text has no height`).toBe(true);
     }
     const textTop = slide.texts.length
       ? Math.min(...slide.texts.map((text) => text.y))
       : 1;
+    const textBottom = slide.texts.length
+      ? Math.max(...slide.texts.map((text) => text.y + text.height))
+      : 1;
+    if (textTop >= -0.001 && textBottom <= 1.001) {
+      // Fits: every text individually stays inside the frame, the ordinary case.
+      for (const text of slide.texts) {
+        expect(
+          text.y >= -0.001 && text.y + text.height <= 1.001,
+          `${where}: text outside vertically`,
+        ).toBe(true);
+      }
+    } else {
+      // Does not fit: centered instead, so the overflow above 0 and below 1
+      // must match — a block clipped at one edge, or floored/shrunk instead
+      // of centered, would show up here as an asymmetry.
+      const topOverflow = -textTop;
+      const bottomOverflow = textBottom - 1;
+      expect(
+        Math.abs(topOverflow - bottomOverflow) < 0.001,
+        `${where}: text block overflows asymmetrically (top ${String(topOverflow)}, bottom ${String(bottomOverflow)})`,
+      ).toBe(true);
+    }
     for (const overlay of slide.overlays) {
       expect(
         overlay.y + (overlay.height ?? 0) <= textTop + 0.001,
@@ -104,6 +134,7 @@ it("lays out every ratio without overflow or overlap", async () => {
     const document = composeDocument({
       ratio,
       library: f.library,
+      defaults: BUILTIN_DEFAULTS,
       slides: [
         { background: f.background.id, assets: [f.wide.id], texts: ["Short line"] },
         {
@@ -132,6 +163,7 @@ it("keeps every asset undistorted", async () => {
   const document = composeDocument({
     ratio,
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     slides: [
       {
         background: f.background.id,
@@ -157,6 +189,7 @@ it("gives a partial last row the same item size as a full row", async () => {
   const document = composeDocument({
     ratio: { w: 4, h: 5 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     slides: [
       {
         background: f.background.id,
@@ -172,16 +205,22 @@ it("gives a partial last row the same item size as a full row", async () => {
   ).toBe(true);
 });
 
-it("shrinks text rather than running off the canvas", async () => {
+it("keeps the account's text size even when the block cannot fit", async () => {
   const f = await fixture();
   const long = "word ".repeat(90).trim();
   const document = composeDocument({
     ratio: { w: 1.91, h: 1 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     slides: [{ background: f.background.id, assets: [], texts: [long, long] }],
   });
+  // No fitting ladder any more: a block this long overflows the canvas rather
+  // than shrinking, so the size stays the account's own...
+  expect(document.slides[0]!.texts[0]!.size).toBe(BUILTIN_DEFAULTS.text.size);
+  expect(document.slides[0]!.texts[1]!.size).toBe(BUILTIN_DEFAULTS.text.size);
+  // ...and the overflow itself is still well-formed: centered symmetrically
+  // rather than clipped, shrunk, or floored off one edge alone.
   assertWellFormed(document, "long text");
-  expect(document.slides[0]!.texts[0]!.size).toBeLessThanOrEqual(64);
 });
 
 it("produces identical geometry for identical input", async () => {
@@ -190,6 +229,7 @@ it("produces identical geometry for identical input", async () => {
     composeDocument({
       ratio: { w: 9, h: 16 },
       library: f.library,
+      defaults: BUILTIN_DEFAULTS,
       slides: [
         {
           background: f.background.id,
@@ -208,6 +248,7 @@ it("leaves an unchanged slide byte-identical on edit", async () => {
   const first = composeDocument({
     ratio: { w: 9, h: 16 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     slides: [
       { background: f.background.id, assets: [f.wide.id], texts: ["Keep me"] },
       { background: f.background.id, assets: [f.square.id], texts: ["Change me"] },
@@ -220,6 +261,7 @@ it("leaves an unchanged slide byte-identical on edit", async () => {
   const second = composeDocument({
     ratio: { w: 9, h: 16 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     previous: first,
     slides: [
       { background: f.background.id, assets: [f.wide.id], texts: ["Keep me"] },
@@ -242,6 +284,7 @@ it("preserves geometry for items that survive a slide edit", async () => {
   const first = composeDocument({
     ratio: { w: 9, h: 16 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     slides: [{ background: f.background.id, assets: [f.wide.id], texts: ["Stays"] }],
   });
   first.slides[0]!.overlays[0]!.x = 0.77;
@@ -251,6 +294,7 @@ it("preserves geometry for items that survive a slide edit", async () => {
   const second = composeDocument({
     ratio: { w: 9, h: 16 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     previous: first,
     slides: [
       {
@@ -271,12 +315,14 @@ it("relays out from scratch when the ratio changes", async () => {
   const first = composeDocument({
     ratio: { w: 9, h: 16 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     slides: [{ background: f.background.id, assets: [f.wide.id], texts: ["Line"] }],
   });
   first.slides[0]!.overlays[0]!.x = 0.77;
   const second = composeDocument({
     ratio: { w: 1, h: 1 },
     library: f.library,
+    defaults: BUILTIN_DEFAULTS,
     previous: first,
     slides: [{ background: f.background.id, assets: [f.wide.id], texts: ["Line"] }],
   });
@@ -296,7 +342,12 @@ it("round-trips a composition", async () => {
       texts: ["One", "Two"],
     },
   ];
-  const document = composeDocument({ ratio: { w: 4, h: 5 }, library: f.library, slides });
+  const document = composeDocument({
+    ratio: { w: 4, h: 5 },
+    library: f.library,
+    slides,
+    defaults: BUILTIN_DEFAULTS,
+  });
   const back = toComposition({ id: "x", name: "n", version: 1, ...document });
   expect(back.slides[0]?.background).toEqual(slides[0]?.background);
   expect(back.slides[0]?.assets).toEqual(slides[0]?.assets);
@@ -307,9 +358,14 @@ it("round-trips a composition", async () => {
 // server's own HttpError. The engine is shared with the browser now, so it
 // throws ComposeError and the 400 is Task 8's to map (src/shared/compose/compose.ts:29-38).
 it("rejects malformed compositions", () => {
-  expect(() => validateComposition([])).toThrow(ComposeError);
-  expect(() => validateComposition([{ texts: ["no background"] }])).toThrow(ComposeError);
-  expect(() => validateComposition(null)).toThrow(ComposeError);
+  const context = { accountId: "default", lookupItem: () => null };
+  expect(() => validateComposition([], context)).toThrow(ComposeError);
+  expect(() =>
+    validateComposition([{ texts: ["no background"] } as Composition], context),
+  ).toThrow(ComposeError);
+  expect(() => validateComposition(null as unknown as Composition[], context)).toThrow(
+    ComposeError,
+  );
 });
 
 it("rejects a ratio outside the supported band", async () => {
@@ -318,7 +374,72 @@ it("rejects a ratio outside the supported band", async () => {
     composeDocument({
       ratio: { w: 1, h: 5 },
       library: f.library,
+      defaults: BUILTIN_DEFAULTS,
       slides: [{ background: f.background.id }],
     }),
   ).toThrow(ComposeError);
+});
+
+it("rejects a composition referencing another account's library item", async () => {
+  app = createTestApp();
+  const { library, accounts } = app.services;
+  const other = accounts.create({ name: "Other", defaults: BUILTIN_DEFAULTS });
+  const theirBackground = await addItem(library, "background", "Their Bg", {
+    accountId: other.id,
+  });
+  const context = { accountId: "default", lookupItem: (id: string) => library.get(id) };
+
+  expect(() =>
+    validateComposition([{ background: theirBackground.id }], context),
+  ).toThrow(/different account/);
+});
+
+it("rejects a composition whose assets reference another account's library item", async () => {
+  app = createTestApp();
+  const { library, accounts } = app.services;
+  const other = accounts.create({ name: "Other", defaults: BUILTIN_DEFAULTS });
+  const background = await addItem(library, "background", "Bg", { accountId: "default" });
+  const theirAsset = await addItem(library, "asset", "Their Asset", {
+    accountId: other.id,
+  });
+  const context = { accountId: "default", lookupItem: (id: string) => library.get(id) };
+
+  expect(() =>
+    validateComposition(
+      [{ background: background.id, assets: [theirAsset.id] }],
+      context,
+    ),
+  ).toThrow(/different account/);
+});
+
+it("allows a composition whose assets all belong to the caller's own account", async () => {
+  app = createTestApp();
+  const { library } = app.services;
+  const background = await addItem(library, "background", "Bg", { accountId: "default" });
+  const asset = await addItem(library, "asset", "Asset", { accountId: "default" });
+  const context = { accountId: "default", lookupItem: (id: string) => library.get(id) };
+
+  expect(() =>
+    validateComposition([{ background: background.id, assets: [asset.id] }], context),
+  ).not.toThrow();
+});
+
+it("allows a composition referencing a library item in the same account", async () => {
+  app = createTestApp();
+  const { library } = app.services;
+  const background = await addItem(library, "background", "Bg", { accountId: "default" });
+  const context = { accountId: "default", lookupItem: (id: string) => library.get(id) };
+
+  expect(() =>
+    validateComposition([{ background: background.id }], context),
+  ).not.toThrow();
+});
+
+it("does not throw for an id that does not exist — existence is require()'s job", async () => {
+  app = createTestApp();
+  const { library } = app.services;
+  const context = { accountId: "default", lookupItem: (id: string) => library.get(id) };
+  expect(() =>
+    validateComposition([{ background: "does-not-exist" }], context),
+  ).not.toThrow();
 });

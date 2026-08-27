@@ -29,6 +29,7 @@ export type InlineTextEditorProps = {
   /** The layer's text at the moment editing started. */
   value: string;
   layout: TextLayout;
+  family: string;
   caret: CaretRequest;
   /** Runs on every keystroke with the editor's text, already stripped. */
   onInput: (value: string) => void;
@@ -39,6 +40,7 @@ export type InlineTextEditorProps = {
 export function InlineTextEditor({
   value,
   layout,
+  family,
   caret,
   onInput,
   onBlur,
@@ -64,7 +66,7 @@ export function InlineTextEditor({
     else placeTextCaret(element, request.clientX, request.clientY);
   }, []);
 
-  const style: CSSProperties = { ...textBlockStyle(layout) };
+  const style: CSSProperties = { ...textBlockStyle(family, layout) };
 
   return (
     <span

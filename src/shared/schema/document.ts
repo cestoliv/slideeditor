@@ -1,10 +1,21 @@
 import { z } from "zod";
 import { textColorOf } from "../geometry/color.js";
+import { DEFAULT_FONT_FAMILY } from "../text/constants.js";
 
 // New projects are created with an explicit ratio (app.js:2121), so this
 // fallback exists for legacy or corrupt documents: projectRatio (app.js:444-449)
 // and normalizeDocument (server/projects.mjs:160-167) both guard the same way.
 export const DEFAULT_RATIO = { w: 9, h: 16 } as const;
+
+/**
+ * The narrowest and widest aspect (w/h) composeDocument's normalizeRatio will
+ * lay a slide out at (shared/compose/compose.ts). accountDefaultsSchema
+ * reuses these same two numbers to reject an account default outside them at
+ * creation time, rather than letting an account exist whose default no
+ * create_slideshow call can ever satisfy.
+ */
+export const RATIO_ASPECT_MIN = 0.4;
+export const RATIO_ASPECT_MAX = 2.5;
 
 // z.coerce so a stored "4" round-trips the way normalizeDocument's Number()
 // call does (server/projects.mjs:162-163), and .positive() alone already
@@ -66,6 +77,10 @@ const rawTextLayerSchema = z.object({
   background: textBackgroundSchema,
   backgroundShape: z.enum(["lines", "full"]).catch("full"),
   align: z.enum(["left", "center", "right"]).catch("center"),
+  // Absent for every document saved before this field existed, and .catch
+  // (not .default) resolves that the same way as a malformed value: to
+  // DEFAULT_FONT_FAMILY, so no document migration or JSON rewrite is needed.
+  fontFamily: z.string().catch(DEFAULT_FONT_FAMILY),
   rotation: z.number().catch(0),
   z: z.number().optional(),
 });

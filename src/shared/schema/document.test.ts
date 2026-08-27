@@ -60,6 +60,39 @@ describe("parseDocument", () => {
     expect(text.rotation).toBe(0);
   });
 
+  it("falls back to the default font family when none is stored", () => {
+    const document = parseDocument({
+      slides: [{ id: "s1", backgroundItemId: "b1", texts: [{ id: "t1", text: "hi" }] }],
+    });
+    expect(document.slides[0]!.texts[0]!.fontFamily).toBe("TikTok Sans");
+  });
+
+  it("falls back to the default font family when the stored value is malformed", () => {
+    const document = parseDocument({
+      slides: [
+        {
+          id: "s1",
+          backgroundItemId: "b1",
+          texts: [{ id: "t1", text: "hi", fontFamily: 42 }],
+        },
+      ],
+    });
+    expect(document.slides[0]!.texts[0]!.fontFamily).toBe("TikTok Sans");
+  });
+
+  it("keeps a stored font family", () => {
+    const document = parseDocument({
+      slides: [
+        {
+          id: "s1",
+          backgroundItemId: "b1",
+          texts: [{ id: "t1", text: "hi", fontFamily: "Inter" }],
+        },
+      ],
+    });
+    expect(document.slides[0]!.texts[0]!.fontFamily).toBe("Inter");
+  });
+
   /*
    * outlineWidth was modelled here and defaulted to 12 (app.js:128) until Task
    * 16 retired it. Neither render path ever read it: both derive the stroke
@@ -373,6 +406,7 @@ describe("parseDocument", () => {
               background: "white",
               backgroundShape: "lines",
               align: "left",
+              fontFamily: "TikTok Sans",
               rotation: 0,
               z: 2,
             },
@@ -389,6 +423,7 @@ describe("parseDocument", () => {
               background: "black",
               backgroundShape: "full",
               align: "right",
+              fontFamily: "TikTok Sans",
               rotation: 12,
               z: 3,
             },
@@ -418,6 +453,7 @@ describe("parseDocument", () => {
               background: "white",
               backgroundShape: "full",
               align: "center",
+              fontFamily: "TikTok Sans",
               rotation: 0,
               z: 1,
             },

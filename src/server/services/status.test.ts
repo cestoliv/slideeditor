@@ -10,15 +10,17 @@ afterEach(() => {
 
 it("starts every slideshow as a draft", () => {
   app = createTestApp();
-  expect(app.services.projects.create({ name: "New" }).status).toBe("draft");
+  expect(app.services.projects.create({ accountId: "default", name: "New" }).status).toBe(
+    "draft",
+  );
 });
 
 it("hides published slideshows from the default list", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const draft = projects.create({ name: "Draft" });
-  const ready = projects.create({ name: "Ready" });
-  const done = projects.create({ name: "Done" });
+  const draft = projects.create({ accountId: "default", name: "Draft" });
+  const ready = projects.create({ accountId: "default", name: "Ready" });
+  const done = projects.create({ accountId: "default", name: "Done" });
   projects.setStatus(ready.id, "ready");
   projects.setStatus(done.id, "published");
 
@@ -49,7 +51,7 @@ it("hides published slideshows from the default list", () => {
 it("leaves the version alone when the status changes", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Labelled" });
+  const project = projects.create({ accountId: "default", name: "Labelled" });
   projects.save(project.id, { name: "Labelled", document: project, version: 1 });
   const before = projects.get(project.id)?.version;
 
@@ -66,7 +68,7 @@ it("leaves the version alone when the status changes", () => {
 it("keeps the status when the document is edited", () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Posted" });
+  const project = projects.create({ accountId: "default", name: "Posted" });
   projects.setStatus(project.id, "published");
   projects.save(project.id, {
     name: "Posted",
@@ -82,7 +84,7 @@ it("announces a status change on the event stream", () => {
   app = createTestApp();
   const seen: unknown[] = [];
   app.events.broadcast = (payload) => seen.push(payload);
-  const project = app.services.projects.create({ name: "Watched" });
+  const project = app.services.projects.create({ accountId: "default", name: "Watched" });
   app.services.projects.setStatus(project.id, "ready");
   expect(seen.at(-1)).toEqual({
     type: "project.status",
@@ -94,7 +96,7 @@ it("announces a status change on the event stream", () => {
 it("rejects an unknown status", async () => {
   app = createTestApp();
   const { projects } = app.services;
-  const project = projects.create({ name: "Strict" });
+  const project = projects.create({ accountId: "default", name: "Strict" });
   const statusError = asHttpError(
     await catchError(() => projects.setStatus(project.id, "archived")),
   );

@@ -1,5 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
 import type { Project, ProjectSummary } from "@shared/schema/index.js";
 import { ProjectsProvider, ProjectsStore, useProjects } from "./projects.js";
 import type { ProjectsClient, Subscribe } from "./projects.js";
@@ -19,6 +20,7 @@ function summary(id: string, name: string): ProjectSummary {
     status: "draft",
     description: "",
     hashtags: "",
+    accountId: DEFAULT_ACCOUNT_ID,
     slideCount: 0,
     coverItemId: null,
     coverUrl: null,
@@ -34,6 +36,7 @@ const unusedProject: Project = {
   status: "draft",
   description: "",
   hashtags: "",
+  accountId: DEFAULT_ACCOUNT_ID,
   createdAt: 1,
   updatedAt: 1,
   ratio: { w: 9, h: 16 },
@@ -101,4 +104,80 @@ it("lets the stream go when the app unmounts", async () => {
   await expect.element(screen.getByText("none")).toBeVisible();
   screen.unmount();
   expect(stopped).toBeGreaterThanOrEqual(1);
+});
+
+it("passes the chosen account to every refresh", async () => {
+  const seen: (string | undefined)[] = [];
+  const client: ProjectsClient = {
+    listProjects: (status, accountId) => {
+      seen.push(accountId);
+      return Promise.resolve({ projects: [] });
+    },
+    createProject: () => Promise.reject(new Error("not used")),
+    deleteProject: () => Promise.reject(new Error("not used")),
+  };
+  const store = new ProjectsStore(client);
+  await store.refresh();
+  store.setAccountFilter("a1");
+  await vi.waitFor(() => {
+    expect(seen.at(-1)).toBe("a1");
+  });
+  store.setAccountFilter(undefined);
+  await vi.waitFor(() => {
+    expect(seen.at(-1)).toBeUndefined();
+  });
+});
+
+it("creates a slideshow without naming a ratio, so the account's own default applies", async () => {
+  // ProjectService.create (src/server/services/projects.ts) only seeds the
+  // account's default ratio when the document it is handed carries none of
+  // its own — a document sent with DEFAULT_RATIO already filled in silently
+  // overrides an account set to anything else. This asserts the client sends
+  // no document at all, the same bare-create path POST /api/slideshows and
+  // MCP's create_slideshow already take, rather than re-checking the
+  // fallback itself, which belongs to the server's own suite.
+  let seenDocument: unknown = "not called";
+  const client: ProjectsClient = {
+    listProjects: () => Promise.resolve({ projects: [] }),
+    createProject: (input) => {
+      seenDocument = input.document;
+      return Promise.resolve({ project: unusedProject });
+    },
+    deleteProject: () => Promise.reject(new Error("not used")),
+  };
+  const store = new ProjectsStore(client);
+  await store.create("account-1");
+  expect(seenDocument).toBeUndefined();
+});
+
+it("keeps the account filter and Show published composed, so flipping one never resets the other", async () => {
+  const seen: { status: string | undefined; accountId: string | undefined }[] = [];
+  const client: ProjectsClient = {
+    listProjects: (status, accountId) => {
+      seen.push({ status, accountId });
+      return Promise.resolve({ projects: [] });
+    },
+    createProject: () => Promise.reject(new Error("not used")),
+    deleteProject: () => Promise.reject(new Error("not used")),
+  };
+  const store = new ProjectsStore(client);
+  await store.refresh();
+
+  store.setAccountFilter("a1");
+  await vi.waitFor(() => {
+    expect(seen.at(-1)).toEqual({ status: undefined, accountId: "a1" });
+  });
+
+  // Show published narrows further within the chosen account, rather than
+  // dropping the account filter back to every account.
+  store.setShowPublished(true);
+  await vi.waitFor(() => {
+    expect(seen.at(-1)).toEqual({ status: "all", accountId: "a1" });
+  });
+
+  // And the account filter survives Show published being switched off again.
+  store.setShowPublished(false);
+  await vi.waitFor(() => {
+    expect(seen.at(-1)).toEqual({ status: undefined, accountId: "a1" });
+  });
 });

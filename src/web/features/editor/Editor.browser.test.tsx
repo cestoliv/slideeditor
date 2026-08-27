@@ -5,8 +5,15 @@ import { page, userEvent } from "vitest/browser";
 // The editor paints from the token layer, so the tests load it the way the app does.
 import "../../design/tokens.css";
 import "../../design/reset.css";
-import type { LibraryItem, Project, SlideshowStatus } from "@shared/schema/index.js";
+import { BUILTIN_DEFAULTS, DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
+import type {
+  Account,
+  LibraryItem,
+  Project,
+  SlideshowStatus,
+} from "@shared/schema/index.js";
 import { ToastProvider } from "../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../app/accounts.js";
 import { LibraryCache } from "../../app/useLibrary.js";
 import { RETRY_LIMIT, RETRY_MAX_MS, SAVE_DEBOUNCE_MS } from "./persistence.js";
 import type { ServerEvent } from "../../app/events.js";
@@ -108,6 +115,7 @@ function libraryItemFor(id: string): LibraryItem {
     description: "",
     usage: "",
     tags: [],
+    accountId: DEFAULT_ACCOUNT_ID,
     mediaId: id,
     ext: "png",
     url: `/media/${id}.png`,
@@ -145,7 +153,33 @@ type MountOptions = {
   client: EditorClient;
   subscribe?: (onEvent: (event: ServerEvent) => void) => () => void;
   library?: LibraryCache;
+  /** Defaults to one account matching the fixture's own accountId. */
+  accounts?: Account[];
+  /** A caller that needs its own listAccounts (slow, failing) passes this instead. */
+  accountsStore?: AccountsStore;
 };
+
+function defaultAccount(): Account {
+  return {
+    id: DEFAULT_ACCOUNT_ID,
+    name: "Default",
+    defaults: BUILTIN_DEFAULTS,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
+function accountsStoreWith(accounts: Account[]): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
 
 function field(): HTMLInputElement {
   const element = document.querySelector<HTMLInputElement>(
@@ -191,28 +225,89 @@ function stageImageSource(): string | null {
  * Mounted on a real route, so leaving the editor is observable as a navigation
  * rather than as an internal flag. The dashboard stands in as a marker.
  */
-function mount({ client, subscribe, library }: MountOptions) {
+function mount({ client, subscribe, library, accounts, accountsStore }: MountOptions) {
   return render(
     <MemoryRouter initialEntries={["/projects/project-1"]}>
       <ToastProvider>
-        <Routes>
-          <Route path="/" element={<p>Somewhere else</p>} />
-          <Route
-            path="/projects/:id"
-            element={
-              <Editor
-                projectId="project-1"
-                client={client}
-                library={library ?? emptyLibrary()}
-                subscribe={subscribe ?? (() => () => undefined)}
-              />
-            }
-          />
-        </Routes>
+        <AccountsProvider
+          store={accountsStore ?? accountsStoreWith(accounts ?? [defaultAccount()])}
+        >
+          <Routes>
+            <Route path="/" element={<p>Somewhere else</p>} />
+            <Route
+              path="/projects/:id"
+              element={
+                <Editor
+                  projectId="project-1"
+                  client={client}
+                  library={library ?? emptyLibrary()}
+                  subscribe={subscribe ?? (() => () => undefined)}
+                />
+              }
+            />
+          </Routes>
+        </AccountsProvider>
       </ToastProvider>
     </MemoryRouter>,
   );
 }
+
+/*
+ * Finding 4: `accountId` is undefined on the editor's very first render (the
+ * project has not loaded yet), and useLibrary's effect used to fire
+ * regardless — a full unscoped, stats-joined library fetch that was then
+ * immediately discarded once the real, scoped accountId arrived a render
+ * later. Deferring the project read lets this test observe the moment in
+ * between: no library fetch should have started at all yet, and once the
+ * project resolves, the only fetch that ever happens is the one scoped to
+ * its real account.
+ */
+it("does not fetch the library unscoped while the slideshow itself is still loading", async () => {
+  const project = fixtureProject({ slides: 1, accountId: "a1" });
+  const client = fakeClient(project);
+  let resolveProject!: () => void;
+  const deferred = new Promise<void>((resolve) => {
+    resolveProject = resolve;
+  });
+  client.getProject = async () => {
+    await deferred;
+    return { project: structuredClone(project) };
+  };
+  const calls: (string | undefined)[] = [];
+  const library = new LibraryCache({
+    listLibrary: ({ account } = {}) => {
+      calls.push(account);
+      return Promise.resolve({ items: [], total: 0 });
+    },
+  });
+
+  const screen = await mount({
+    client,
+    library,
+    accounts: [
+      {
+        id: "a1",
+        name: "Brand A",
+        defaults: BUILTIN_DEFAULTS,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+  });
+
+  // Still loading: nothing has fetched the library yet.
+  expect(calls).toEqual([]);
+
+  resolveProject();
+  await expect
+    .element(screen.getByRole("button", { name: "Open slide 1" }))
+    .toBeVisible();
+
+  // Exactly one fetch, scoped to the slideshow's real account — never an
+  // unscoped one first.
+  expect(calls).toEqual(["a1"]);
+  screen.unmount();
+});
 
 it("opens the slideshow and puts its name in the header", async () => {
   const client = fakeClient(fixtureProject({ slides: 2 }));
@@ -227,6 +322,110 @@ it("opens the slideshow and puts its name in the header", async () => {
   await vi.waitFor(() => {
     expect(document.title).toBe("Fixture · Slide Studio");
   });
+  screen.unmount();
+});
+
+it("shows the slideshow's owning account in the header", async () => {
+  const client = fakeClient(fixtureProject({ accountId: "a1" }));
+  const screen = await mount({
+    client,
+    accounts: [
+      {
+        id: "a1",
+        name: "Main brand",
+        defaults: BUILTIN_DEFAULTS,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+  });
+
+  await expect.element(screen.getByText("Main brand")).toBeVisible();
+  screen.unmount();
+});
+
+function failingAccountsStore(): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.reject(new Error("offline")),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
+
+it("tells the reader once when the account catalogue fails to load, rather than staying silent", async () => {
+  const client = fakeClient(fixtureProject({ accountId: "a1" }));
+  const screen = await mount({ client, accountsStore: failingAccountsStore() });
+
+  await vi.waitFor(() => {
+    expect(toastText()).toContain("Couldn’t load this account’s style.");
+  });
+  screen.unmount();
+});
+
+/*
+ * The fallback that lets a cold page add text at all (Editor.tsx's
+ * `account?.defaults ?? BUILTIN_DEFAULTS`) must not be mistaken for a second,
+ * silent failure path: a fetch that simply hasn't answered yet is not an
+ * error, and must not toast one while a double-click still works against the
+ * built-in look in the meantime.
+ */
+it("lets a double-click add text before a slow accounts fetch resolves, with no error while it's pending", async () => {
+  const project = fixtureProject({ texts: 0, overlays: 0, accountId: "a1" });
+  const client = fakeClient(project);
+  let releaseAccounts = (_accounts: Account[]) => {
+    /* replaced once the store asks for its accounts, below */
+  };
+  const pending = new AccountsStore({
+    listAccounts: () =>
+      new Promise((resolve) => {
+        releaseAccounts = (accounts) => {
+          resolve({ accounts });
+        };
+      }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+  const screen = await mount({ client, accountsStore: pending });
+  await expect
+    .element(screen.getByRole("textbox", { name: "Slideshow name" }))
+    .toHaveValue("Fixture");
+
+  const stage = await page.getByTestId("stage").element();
+  const rect = stage.getBoundingClientRect();
+  stage.dispatchEvent(
+    new MouseEvent("dblclick", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    }),
+  );
+
+  await vi.waitFor(() => {
+    expect(live(client).slides[0]?.texts).toHaveLength(1);
+  });
+  expect(toastText()).not.toContain("Couldn’t load");
+
+  releaseAccounts([
+    {
+      id: "a1",
+      name: "Main brand",
+      defaults: BUILTIN_DEFAULTS,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ]);
+  await expect.element(screen.getByText("Main brand")).toBeVisible();
+  expect(toastText()).not.toContain("Couldn’t load");
   screen.unmount();
 });
 

@@ -28,6 +28,16 @@ export function guardFor(target: string): Guard {
   // An agent follows the media URLs the MCP tools hand it, so a token reaches
   // media even though a browser session does too.
   if (path.startsWith("/api/") || path.startsWith("/media/")) return "any";
+  // /fonts/<slug>.<ext> serves only the handful of open-source font binaries
+  // bundled under assets/ (routes/fonts.ts's BUILTIN_FONTS_DIR) — never a
+  // per-account or per-user file, unlike /media/, which also serves uploaded
+  // library images through the same URL shape and stays guarded for that
+  // reason. The login screen has to render a brand face before any
+  // credential exists, so this is deliberately public. Named explicitly
+  // rather than left to fall through to the same "none" default, so a future
+  // route added under this prefix does not inherit public access by
+  // accident without someone re-deciding this.
+  if (path.startsWith("/fonts/")) return "none";
   return "none";
 }
 

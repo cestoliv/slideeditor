@@ -2,12 +2,25 @@
  * The font asset binding, and nothing else. Colours, spacing, and element
  * defaults live in tokens.css and reset.css.
  *
- * The @assets alias lets Vite fingerprint the font and emit it into the build.
+ * The @assets alias lets Vite fingerprint the font and emit it into the
+ * build, which is what makes this usable before sign-in: it ships as part
+ * of the app's own static bundle rather than through /api/fonts (behind the
+ * session cookie) or the catalogue's /fonts/* route (whose auth status this
+ * file does not want to depend on either way), so it is there for the login
+ * screen regardless of how either of those is gated.
+ *
+ * font-weight matches the catalogue's own seeded row for this family
+ * (migration 6's built-in TikTok Sans entry, weightMin/weightMax 300-900,
+ * not this face's own full instance range) — declaring 100 900 here made a
+ * pre-auth request for a weight below 300 synthesise a bold instead of using
+ * a real instance the fetched catalogue would have served for the same
+ * weight, an editor/export-style mismatch between the two declarations
+ * rather than within one.
  */
 @font-face {
   font-family: "TikTok Sans";
   src: url("@assets/TikTokSans.ttf") format("truetype");
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 300 900;
   font-display: swap;
 }

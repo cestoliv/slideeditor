@@ -1,11 +1,18 @@
 import { z } from "zod";
 import {
+  accountSchema,
+  fontEntrySchema,
   libraryItemSchema,
   libraryUseSchema,
+  parseFontEntries,
   parseProject,
   projectSummarySchema,
 } from "@shared/schema/index.js";
 import type {
+  Account,
+  AccountDefaults,
+  DroppedFontEntry,
+  FontEntry,
   LibraryItem,
   LibraryKind,
   LibrarySort,
@@ -61,6 +68,10 @@ const libraryRemoveSchema = z.object({
 });
 const projectListSchema = z.object({ projects: z.array(projectSummarySchema) });
 const projectRemoveSchema = z.object({ removed: z.string() });
+const accountListSchema = z.object({ accounts: z.array(accountSchema) });
+const accountEnvelope = z.object({ account: accountSchema });
+const accountRemoveSchema = z.object({ removed: z.string() });
+const fontEnvelope = z.object({ font: fontEntrySchema });
 
 const sessionSchema = z.object({
   authenticated: z.boolean(),
@@ -140,7 +151,34 @@ type CallOptions = {
   method?: HttpMethod;
   /** Omit it entirely for a request that carries none, so no content type is set. */
   body?: unknown;
+  /**
+   * Aborts the request after this many ms rather than leaving it to hang
+   * indefinitely. Defaults to DEFAULT_TIMEOUT_MS when omitted — every call
+   * gets a bound unless it says otherwise. This used to be opt-in, on the
+   * reasoning that most calls happen inside a form submit or a save the
+   * caller is already waiting on and showing its own state for, so an
+   * unbounded wait was the right default and only fontFaces.ts's boot-time
+   * catalogue fetch (no such indicator, and its result gates
+   * whenCatalogueReady() for the rest of the page's life) opted in. In
+   * practice that left getProject, listAccounts, listLibrary and the save
+   * path themselves able to hang forever against a server that accepts the
+   * connection and never answers — a spinner is not recovery, and the editor
+   * had no way out of it — while silently also bounding a second caller
+   * (AccountsStore.refresh()'s own font fetch) that never asked to be. Pass
+   * `null` explicitly to opt OUT for a call that genuinely needs to wait
+   * longer than the default — createLibraryItem's upload is the one place
+   * that does, see its own call site.
+   */
+  timeoutMs?: number | null;
 };
+
+/**
+ * Generous enough that a slow connection making an ordinary request is still
+ * worth waiting on; a connection that will never answer at all is not. Every
+ * call() gets this unless it passes its own `timeoutMs`, explicit `null`
+ * included — see CallOptions.timeoutMs's own doc comment.
+ */
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 async function call(path: string, options: CallOptions = {}): Promise<unknown> {
   if (!path.startsWith("/")) {
@@ -152,12 +190,15 @@ async function call(path: string, options: CallOptions = {}): Promise<unknown> {
   const headers = new Headers();
   if (hasBody) headers.set("Content-Type", "application/json");
 
+  const timeoutMs =
+    options.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : options.timeoutMs;
   const response = await fetch(path, {
     method: options.method ?? "GET",
     headers,
     // The session rides in a HttpOnly cookie, which script cannot read and
     // therefore cannot leak. Nothing here holds a credential any more.
     credentials: "same-origin",
+    ...(timeoutMs !== null ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
   });
   const payload = readPayload(await response.text());
@@ -214,6 +255,7 @@ export type LibraryQuery = {
   sort?: LibrarySort;
   limit?: number;
   offset?: number;
+  account?: string;
 };
 
 export type LibraryCreateInput = {
@@ -232,6 +274,7 @@ export type LibraryCreateInput = {
    */
   width?: number;
   height?: number;
+  accountId: string;
 };
 
 export type LibraryPatch = Partial<{
@@ -244,8 +287,12 @@ export type LibraryPatch = Partial<{
 
 export type ProjectCreateInput = {
   name?: string;
+  accountId: string;
   document?: SlideDocument;
 };
+
+export type AccountCreateInput = { name: string; defaults: AccountDefaults };
+export type AccountUpdateInput = Partial<{ name: string; defaults: AccountDefaults }>;
 
 export type ProjectSaveInput = {
   name: string;
@@ -275,6 +322,7 @@ export const api = {
       sort: query.sort,
       limit: query.limit,
       offset: query.offset,
+      account: query.account,
     });
     return libraryListSchema.parse(await call(path));
   },
@@ -285,7 +333,13 @@ export const api = {
 
   async createLibraryItem(input: LibraryCreateInput): Promise<{ item: LibraryItem }> {
     return libraryItemEnvelope.parse(
-      await call("/api/library", { method: "POST", body: input }),
+      // Unbounded: `input.data` is a whole image as base64, and how long that
+      // takes to reach the server scales with its size and the connection,
+      // not with anything DEFAULT_TIMEOUT_MS was sized for. LibraryAdmin.tsx
+      // already shows its own "uploading" state for the whole call, so — per
+      // the reasoning CallOptions.timeoutMs's own doc comment still makes for
+      // an exception — there is a visible indicator this can lean on instead.
+      await call("/api/library", { method: "POST", body: input, timeoutMs: null }),
     );
   },
 
@@ -309,17 +363,22 @@ export const api = {
     return libraryRemoveSchema.parse(await call(path, { method: "DELETE" }));
   },
 
-  async listProjects(status?: string): Promise<{ projects: ProjectSummary[] }> {
+  async listProjects(
+    status?: string,
+    accountId?: string,
+  ): Promise<{ projects: ProjectSummary[] }> {
     // No status leaves the server on its default filter, which hides published
     // work (DEFAULT_STATUS_FILTER in @shared/schema).
-    return projectListSchema.parse(await call(withQuery("/api/projects", { status })));
+    return projectListSchema.parse(
+      await call(withQuery("/api/projects", { status, account: accountId })),
+    );
   },
 
-  async createProject(input: ProjectCreateInput = {}): Promise<{ project: Project }> {
+  async createProject(input: ProjectCreateInput): Promise<{ project: Project }> {
     return projectEnvelope(
       await call("/api/projects", {
         method: "POST",
-        body: { name: input.name, document: input.document },
+        body: { name: input.name, accountId: input.accountId, document: input.document },
       }),
     );
   },
@@ -380,6 +439,63 @@ export const api = {
 
   async deleteToken(id: string): Promise<void> {
     await call(`/api/auth/tokens/${segment(id)}`, { method: "DELETE" });
+  },
+
+  async listAccounts(): Promise<{ accounts: Account[] }> {
+    return accountListSchema.parse(await call("/api/accounts"));
+  },
+
+  async createAccount(input: AccountCreateInput): Promise<{ account: Account }> {
+    return accountEnvelope.parse(
+      await call("/api/accounts", { method: "POST", body: input }),
+    );
+  },
+
+  async updateAccount(
+    id: string,
+    input: AccountUpdateInput,
+  ): Promise<{ account: Account }> {
+    return accountEnvelope.parse(
+      await call(`/api/accounts/${segment(id)}`, { method: "PUT", body: input }),
+    );
+  },
+
+  async deleteAccount(id: string): Promise<{ removed: string }> {
+    return accountRemoveSchema.parse(
+      await call(`/api/accounts/${segment(id)}`, { method: "DELETE" }),
+    );
+  },
+
+  async listFonts(): Promise<{ fonts: FontEntry[]; dropped: DroppedFontEntry[] }> {
+    // Bounded by call()'s own DEFAULT_TIMEOUT_MS: fontFaces.ts awaits this to
+    // resolve whenCatalogueReady() for every consumer on the page, so a
+    // request that never settles must not wedge that promise for the rest of
+    // the session.
+    const payload = await call("/api/fonts");
+    // `dropped` names any entry the server sent that this client could not
+    // use — AccountsStore.refresh() (accounts.tsx) is what actually surfaces
+    // it to someone who can act on it; see parseFontEntries's own comment.
+    return parseFontEntries(payload);
+  },
+
+  async addGoogleFont(family: string): Promise<{ font: FontEntry }> {
+    return fontEnvelope.parse(
+      // Unbounded, the same exception createLibraryItem takes and for the
+      // same reason: the handler makes up to three outbound trips of its own
+      // (two Google Fonts css2 requests, then the .woff2 itself), so how
+      // long this takes scales with Google's own response time and the
+      // connection, not with anything DEFAULT_TIMEOUT_MS was sized for. On a
+      // slow link the default aborted this before the server's own attempt
+      // finished, so AccountsAdmin's addFont() rejected and toasted failure
+      // for a font the server went on to commit anyway — present in the
+      // account's row, absent from the picker and the injected @font-face
+      // rules until an unrelated refresh happened to pull it in.
+      await call("/api/fonts", { method: "POST", body: { family }, timeoutMs: null }),
+    );
+  },
+
+  async deleteFont(id: string): Promise<void> {
+    await call(`/api/fonts/${segment(id)}`, { method: "DELETE" });
   },
 };
 

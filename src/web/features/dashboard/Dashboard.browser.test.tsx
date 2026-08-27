@@ -1,11 +1,15 @@
 import { expect, it } from "vitest";
 import { render } from "vitest-browser-react";
+import { userEvent } from "vitest/browser";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
-import type { Project, ProjectSummary } from "@shared/schema/index.js";
+import { BUILTIN_DEFAULTS, DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
+import type { Account, Project, ProjectSummary } from "@shared/schema/index.js";
 // The dashboard paints from the token layer, so the tests load it the way the app does.
 import "../../design/tokens.css";
 import "../../design/reset.css";
 import { ToastProvider } from "../../design/index.js";
+import { AccountsProvider, AccountsStore } from "../../app/accounts.js";
+import type { AccountsClient } from "../../app/accounts.js";
 import { ProjectsProvider, ProjectsStore } from "../../app/projects.js";
 import type { ProjectsClient, Subscribe } from "../../app/projects.js";
 import type { ServerEvent } from "@shared/schema/index.js";
@@ -23,12 +27,32 @@ function summary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     status: "draft",
     description: "",
     hashtags: "",
+    accountId: DEFAULT_ACCOUNT_ID,
     slideCount: 3,
     coverItemId: null,
     coverUrl: null,
     createdAt: 1,
     updatedAt: 1000,
     ...overrides,
+  };
+}
+
+function account(id: string, name: string): Account {
+  return { id, name, defaults: BUILTIN_DEFAULTS, createdAt: 1, updatedAt: 1 };
+}
+
+/** One account by default, matching every summary()'s accountId, so the picker never blocks a test that isn't about accounts. */
+function fakeAccountsClient(
+  accounts: Account[] = [account(DEFAULT_ACCOUNT_ID, "Default")],
+): AccountsClient {
+  return {
+    listAccounts: () => Promise.resolve({ accounts }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
   };
 }
 
@@ -40,6 +64,7 @@ function project(id: string): Project {
     status: "draft",
     description: "",
     hashtags: "",
+    accountId: DEFAULT_ACCOUNT_ID,
     createdAt: 1,
     updatedAt: 1,
     ratio: { w: 9, h: 16 },
@@ -50,6 +75,7 @@ function project(id: string): Project {
 type Fake = ProjectsClient & {
   projects: ProjectSummary[];
   statuses: (string | undefined)[];
+  accountIds: (string | undefined)[];
   removed: string[];
   created: number;
 };
@@ -63,14 +89,17 @@ function fakeClient(projects: ProjectSummary[]): Fake {
   const fake: Fake = {
     projects,
     statuses: [],
+    accountIds: [],
     removed: [],
     created: 0,
-    listProjects: (status?: string) => {
+    listProjects: (status?: string, accountId?: string) => {
       fake.statuses.push(status);
-      const visible =
+      fake.accountIds.push(accountId);
+      const visible = (
         status === "all"
           ? [...fake.projects]
-          : fake.projects.filter((item) => item.status !== "published");
+          : fake.projects.filter((item) => item.status !== "published")
+      ).filter((item) => accountId === undefined || item.accountId === accountId);
       return Promise.resolve({ projects: visible });
     },
     createProject: () => {
@@ -94,17 +123,23 @@ function EditorProbe() {
   return <p>Editor for {id}</p>;
 }
 
-async function mount(client: ProjectsClient, subscribe: Subscribe = noStream) {
+async function mount(
+  client: ProjectsClient,
+  subscribe: Subscribe = noStream,
+  accounts: Account[] = [account(DEFAULT_ACCOUNT_ID, "Default")],
+) {
   return render(
     <MemoryRouter initialEntries={["/"]}>
       <ToastProvider>
-        <ProjectsProvider store={new ProjectsStore(client)} subscribe={subscribe}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/projects/:id" element={<EditorProbe />} />
-            <Route path="/library/:kind" element={<p>Library</p>} />
-          </Routes>
-        </ProjectsProvider>
+        <AccountsProvider store={new AccountsStore(fakeAccountsClient(accounts))}>
+          <ProjectsProvider store={new ProjectsStore(client)} subscribe={subscribe}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/projects/:id" element={<EditorProbe />} />
+              <Route path="/library/:kind" element={<p>Library</p>} />
+            </Routes>
+          </ProjectsProvider>
+        </AccountsProvider>
       </ToastProvider>
     </MemoryRouter>,
   );
@@ -150,8 +185,138 @@ it("creates a slideshow from the New button and navigates to it", async () => {
   const client = fakeClient([]);
   const screen = await mount(client);
   await screen.getByRole("button", { name: "New slideshow" }).click();
+  await screen.getByRole("button", { name: "Create" }).click();
   await expect.element(screen.getByText("Editor for p-new")).toBeVisible();
   expect(client.created).toBe(1);
+});
+
+it("narrows the list to the chosen account", async () => {
+  const fake = fakeClient([{ ...summary({ id: "p1", name: "Alpha" }) }]);
+  const store = new ProjectsStore(fake);
+  const screen = await render(
+    <MemoryRouter>
+      <ToastProvider>
+        <AccountsProvider
+          store={
+            new AccountsStore({
+              listAccounts: () =>
+                Promise.resolve({
+                  accounts: [account("a1", "Main brand"), account("a2", "Side project")],
+                }),
+              listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+              createAccount: () => Promise.reject(new Error("not used")),
+              updateAccount: () => Promise.reject(new Error("not used")),
+              deleteAccount: () => Promise.reject(new Error("not used")),
+              addGoogleFont: () => Promise.reject(new Error("not used")),
+              deleteFont: () => Promise.reject(new Error("not used")),
+            })
+          }
+        >
+          <ProjectsProvider store={store} subscribe={noStream}>
+            <Dashboard />
+          </ProjectsProvider>
+        </AccountsProvider>
+      </ToastProvider>
+    </MemoryRouter>,
+  );
+  await expect.element(screen.getByText("Alpha")).toBeVisible();
+  await userEvent.click(screen.getByLabelText("Account"));
+  await userEvent.click(screen.getByRole("option", { name: "Side project" }));
+  await expect.poll(() => fake.accountIds.at(-1)).toBe("a2");
+});
+
+it("composes the account filter with Show published, narrowing rather than resetting", async () => {
+  const client = fakeClient([
+    summary({ id: "a-draft", name: "Main draft", accountId: "a1", status: "draft" }),
+    summary({
+      id: "a-pub",
+      name: "Main published",
+      accountId: "a1",
+      status: "published",
+    }),
+    summary({ id: "b-draft", name: "Side draft", accountId: "a2", status: "draft" }),
+    summary({
+      id: "b-pub",
+      name: "Side published",
+      accountId: "a2",
+      status: "published",
+    }),
+  ]);
+  const screen = await mount(client, noStream, [
+    account("a1", "Main brand"),
+    account("a2", "Side project"),
+  ]);
+
+  // Both filters at their defaults: every account, drafts only.
+  await expect.element(screen.getByText("Main draft")).toBeVisible();
+  await expect.element(screen.getByText("Side draft")).toBeVisible();
+  await expect.element(screen.getByText("Main published")).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Side published")).not.toBeInTheDocument();
+
+  // Narrow to one account: the published filter still applies alongside it.
+  await userEvent.click(screen.getByLabelText("Account"));
+  await userEvent.click(screen.getByRole("option", { name: "Main brand" }));
+  await expect.element(screen.getByText("Main draft")).toBeVisible();
+  await expect.element(screen.getByText("Side draft")).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Main published")).not.toBeInTheDocument();
+
+  // Flip Show published while the account filter is still set: it narrows
+  // further within that account rather than resetting the account filter
+  // back to every account.
+  await screen.getByRole("switch", { name: "Show published" }).click();
+  await expect.element(screen.getByText("Main draft")).toBeVisible();
+  await expect.element(screen.getByText("Main published")).toBeVisible();
+  await expect.element(screen.getByText("Side draft")).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Side published")).not.toBeInTheDocument();
+  expect(client.accountIds.at(-1)).toBe("a1");
+  expect(client.statuses.at(-1)).toBe("all");
+});
+
+it("resets the account filter to every account when the selected account is deleted", async () => {
+  let liveAccounts = [account("a1", "Main brand"), account("a2", "Side project")];
+  const accountsStore = new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: liveAccounts }),
+    listFonts: () => Promise.resolve({ fonts: [], dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: (id: string) => {
+      liveAccounts = liveAccounts.filter((item) => item.id !== id);
+      return Promise.resolve({ removed: id });
+    },
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+  const client = fakeClient([
+    summary({ id: "p1", name: "Alpha", accountId: "a1" }),
+    summary({ id: "p2", name: "Beta", accountId: "a2" }),
+  ]);
+  const screen = await render(
+    <MemoryRouter>
+      <ToastProvider>
+        <AccountsProvider store={accountsStore}>
+          <ProjectsProvider store={new ProjectsStore(client)} subscribe={noStream}>
+            <Dashboard />
+          </ProjectsProvider>
+        </AccountsProvider>
+      </ToastProvider>
+    </MemoryRouter>,
+  );
+  await expect.element(screen.getByText("Alpha")).toBeVisible();
+
+  await userEvent.click(screen.getByLabelText("Account"));
+  await userEvent.click(screen.getByRole("option", { name: "Main brand" }));
+  await expect.element(screen.getByText("Alpha")).toBeVisible();
+  await expect.element(screen.getByText("Beta")).not.toBeInTheDocument();
+
+  // Deleted out from under the filter, not through this screen's own
+  // controls — the way another tab, or an agent, would do it.
+  await accountsStore.remove("a1");
+
+  await expect
+    .element(screen.getByLabelText("Account"))
+    .toHaveTextContent("All accounts");
+  await expect.element(screen.getByText("Alpha")).toBeVisible();
+  await expect.element(screen.getByText("Beta")).toBeVisible();
 });
 
 it("asks before deleting and deletes on confirm", async () => {
