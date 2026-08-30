@@ -11,6 +11,7 @@ import { dataPaths, openDb } from "./db/open.js";
 import { HttpError } from "./errors.js";
 import { AccountService } from "./services/accounts.js";
 import { EventBus } from "./services/events.js";
+import { ExportService } from "./services/exports.js";
 import { FontService } from "./services/fonts.js";
 import { LibraryService } from "./services/library.js";
 import { MediaStore } from "./services/media.js";
@@ -77,6 +78,7 @@ export interface TestApp {
     media: MediaStore;
     accounts: AccountService;
     fonts: FontService;
+    exports: ExportService;
   };
   close(): void;
 }
@@ -98,10 +100,11 @@ export function createTestApp(
     media,
     ...(options.fetchCss ? { fetchCss: options.fetchCss } : {}),
   });
+  const exports = new ExportService(db);
   return {
     db,
     events,
-    services: { library, projects, media, accounts, fonts },
+    services: { library, projects, media, accounts, fonts, exports },
     close() {
       events.close();
       db.close();

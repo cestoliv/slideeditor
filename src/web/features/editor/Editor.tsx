@@ -37,6 +37,7 @@ import type { ThumbnailRenderer } from "./useSlideThumbnail.js";
 // Task 17. The export actions in the header, and the renderer the rail draws with.
 import { ExportMenu } from "./export/ExportMenu.js";
 import { renderSlideBlob } from "./export/render.js";
+import { usePublishOnReady } from "./export/usePublishOnReady.js";
 import styles from "./Editor.module.css";
 
 /*
@@ -378,6 +379,15 @@ type OpenEditorProps = {
  */
 function OpenEditor({ store, items, library, render }: OpenEditorProps) {
   const { toast } = useToast();
+  // The pixels an agent exports can only be drawn here, so this tab renders
+  // them to the server as soon as the slideshow is marked ready.
+  usePublishOnReady({
+    store,
+    library: items,
+    onError: (message) => {
+      toast(message, { tone: "danger" });
+    },
+  });
   const { accounts, error: accountsError } = useAccounts();
   const name = useEditor(store, (state) => state.project.name);
   /*

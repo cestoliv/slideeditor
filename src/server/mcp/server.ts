@@ -28,11 +28,13 @@ export function createMcpServer(context: ToolContext): McpServer {
   registerTool(server, tools.set_slideshow_status, context);
   registerTool(server, tools.create_slideshow, context);
   registerTool(server, tools.update_slideshow, context);
+  registerTool(server, tools.export_slideshow, context);
+  registerTool(server, tools.revoke_export, context);
   return server;
 }
 
 /**
- * The eight tools have eight different input shapes, and the SDK's callback type
+ * The ten tools have ten different input shapes, and the SDK's callback type
  * is generic over the shape it was handed. This takes the erased shape, which
  * `ToolDefinition.handler` is a method rather than a property to allow.
  */
@@ -59,6 +61,7 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
     projects: app.projects,
     accounts: app.accounts,
     fonts: app.fonts,
+    exports: app.exports,
     baseUrl: app.baseUrl,
   };
   await app.register((scope, _options, done) => {

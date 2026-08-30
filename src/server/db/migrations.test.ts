@@ -21,9 +21,44 @@ it("creates the auth tables and lands on the current version", () => {
     .all()
     .map((row) => row["name"]);
   expect(names).toEqual(
-    expect.arrayContaining(["auth_credential", "auth_session", "auth_token"]),
+    expect.arrayContaining([
+      "auth_credential",
+      "auth_session",
+      "auth_token",
+      "slideshow_render",
+      "slideshow_export",
+    ]),
   );
-  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(6);
+  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(7);
+  db.close();
+});
+
+it("keys a render on the slideshow, the version and the index", () => {
+  const db = openDb(dataPaths(directory).database);
+  // openDb turns foreign keys on and slideshow_id references project(id).
+  db.prepare(
+    `INSERT INTO project (id, name, document, version, created_at, updated_at)
+     VALUES ('p1', 'Trip', '{}', 1, 0, 0)`,
+  ).run();
+  const insert = db.prepare(
+    `INSERT INTO slideshow_render
+       (slideshow_id, version, idx, media_id, width, height, bytes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insert.run("p1", 1, 0, "abc", 1080, 1440, 100, 0);
+  // The same slot again is a conflict; the next index is not.
+  expect(() => insert.run("p1", 1, 0, "def", 1080, 1440, 100, 0)).toThrow();
+  insert.run("p1", 1, 1, "def", 1080, 1440, 100, 0);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM slideshow_render").get()?.["n"]).toBe(2);
+  db.prepare(
+    `INSERT INTO slideshow_export (token, slideshow_id, version, expires_at, created_at)
+     VALUES ('t1', 'p1', 1, 9e15, 0)`,
+  ).run();
+  // A grant reads its renders without a credential, so deleting the slideshow
+  // has to take both with it.
+  db.prepare("DELETE FROM project WHERE id = 'p1'").run();
+  expect(db.prepare("SELECT COUNT(*) AS n FROM slideshow_render").get()?.["n"]).toBe(0);
+  expect(db.prepare("SELECT COUNT(*) AS n FROM slideshow_export").get()?.["n"]).toBe(0);
   db.close();
 });
 
@@ -64,9 +99,10 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.exec("DROP TABLE auth_token");
   before.exec("DROP TABLE auth_session");
   before.exec("DROP TABLE auth_credential");
-  // fs_migration and account/font are created by migrations after this one,
-  // so a database genuinely at version 3 never had them either. Same for the
-  // account_id columns and their indexes on project/library_item.
+  // fs_migration, account/font and slideshow_render/slideshow_export are
+  // created by migrations after this one, so a database genuinely at version
+  // 3 never had them either. Same for the account_id columns and their
+  // indexes on project/library_item.
   before.exec("DROP TABLE fs_migration");
   before.exec("DROP INDEX project_account_idx");
   before.exec("DROP INDEX library_item_account_idx");
@@ -74,10 +110,12 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.exec("ALTER TABLE library_item DROP COLUMN account_id");
   before.exec("DROP TABLE font");
   before.exec("DROP TABLE account");
+  before.exec("DROP TABLE slideshow_render");
+  before.exec("DROP TABLE slideshow_export");
   before.close();
 
   const after = openDb(paths.database, paths.token);
-  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(6);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(7);
   expect(after.prepare("SELECT name FROM auth_token").get()?.["name"]).toBe("legacy");
   after.close();
 });

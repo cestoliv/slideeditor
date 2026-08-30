@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { TestProject } from "vitest/node";
 import "../provided.js";
 
-// Vitest has to know where to forward /api, /media and /mcp before this file
+// Vitest has to know where to forward /api, /media, /mcp and /export before this file
 // runs, so the port is fixed rather than picked by the kernel. It matches the
 // e2e project's proxy in vitest.config.ts.
 const PORT = Number(process.env["SLIDE_STUDIO_E2E_PORT"]) || 4174;
@@ -52,7 +52,7 @@ async function listen(app: App, dataDir: string): Promise<string> {
     throw new Error(
       [
         `The end-to-end server cannot bind 127.0.0.1:${PORT}, because something else already holds it.`,
-        "The port is fixed because vitest.config.ts proxies the browser's /api, /media and /mcp to it.",
+        "The port is fixed because vitest.config.ts proxies the browser's /api, /media, /mcp and /export to it.",
         `Set SLIDE_STUDIO_E2E_PORT to move both, or free the port. A stray server from an interrupted`,
         `run is the usual cause: lsof -ti tcp:${PORT} names it.`,
       ].join("\n"),
