@@ -72,6 +72,13 @@ const accountListSchema = z.object({ accounts: z.array(accountSchema) });
 const accountEnvelope = z.object({ account: accountSchema });
 const accountRemoveSchema = z.object({ removed: z.string() });
 const fontEnvelope = z.object({ font: fontEntrySchema });
+const renderEnvelope = z.object({
+  index: z.number(),
+  mediaId: z.string(),
+  width: z.number(),
+  height: z.number(),
+  bytes: z.number(),
+});
 
 const sessionSchema = z.object({
   authenticated: z.boolean(),
@@ -407,6 +414,29 @@ export const api = {
       await call(`/api/projects/${segment(id)}/status`, {
         method: "PATCH",
         body: { status },
+      }),
+    );
+  },
+
+  async putProjectRender(
+    id: string,
+    index: number,
+    input: { version: number; data: string },
+  ): Promise<{
+    index: number;
+    mediaId: string;
+    width: number;
+    height: number;
+    bytes: number;
+  }> {
+    return renderEnvelope.parse(
+      await call(`/api/projects/${segment(id)}/renders/${String(index)}`, {
+        method: "PUT",
+        body: input,
+        // Unbounded for the same reason createLibraryItem is: the body is a
+        // full resolution PNG as base64, and how long that takes has nothing
+        // to do with what DEFAULT_TIMEOUT_MS was sized for.
+        timeoutMs: null,
       }),
     );
   },

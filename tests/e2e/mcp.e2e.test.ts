@@ -31,7 +31,7 @@ it("handshakes with the MCP endpoint through the proxy", async () => {
   expect(body).toContain('"name":"slide-studio"');
 });
 
-it("lists the eight tools through the proxy", async () => {
+it("lists the ten tools through the proxy", async () => {
   const response = await fetch("/mcp", {
     method: "POST",
     headers: MCP_HEADERS,
@@ -48,6 +48,8 @@ it("lists the eight tools through the proxy", async () => {
     "set_slideshow_status",
     "create_slideshow",
     "update_slideshow",
+    "export_slideshow",
+    "revoke_export",
   ]) {
     expect(body, tool).toContain(`"${tool}"`);
   }

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { addItem, createTestApp, type TestApp } from "../testing.js";
+import {
+  addItem,
+  asHttpError,
+  catchError,
+  createTestApp,
+  type TestApp,
+} from "../testing.js";
 import { tools, type ToolContext, type ToolResult } from "./tools.js";
 
 let harness: TestApp;
@@ -14,6 +20,7 @@ beforeEach(() => {
     projects: harness.services.projects,
     accounts: harness.services.accounts,
     fonts: harness.services.fonts,
+    exports: harness.services.exports,
     baseUrl: () => "http://localhost:4173",
   };
 });
@@ -502,6 +509,18 @@ const PINNED = [
     description:
       "Replace a slideshow's composition. Pass the `version` you read from get_slideshow: a stale version is rejected so you cannot overwrite the human's work. Slides whose composition is unchanged keep the layout the human adjusted, and geometry is preserved for any asset or text that is still present. A caption field you leave out keeps what is stored, so editing the slides never wipes a caption the human has been working on. Send an empty string to clear one on purpose.",
   },
+  {
+    name: "export_slideshow",
+    title: "Export a slideshow as image URLs",
+    description:
+      "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and no token, and they stop working after 45 minutes. Each slide also carries its width, height, byte count and sha256, so you can check that what was downloaded is what was rendered. A `status` of `pending` means the human has not opened the editor since this version became ready: the pixels are drawn in the browser, so ask them to open the edit URL, then call again. Call revoke_export once the import is done.",
+  },
+  {
+    name: "revoke_export",
+    title: "Revoke a slideshow's export URLs",
+    description:
+      "Stop every temporary URL this slideshow has handed out, before they expire on their own. Call it once the scheduling tool has finished downloading. The rendered images are kept, so a later export_slideshow still works without the human re-rendering anything.",
+  },
 ];
 
 it("keeps every tool's name, title and description word for word", () => {
@@ -764,4 +783,233 @@ it("takes a slideshow with no caption as one carrying none", async () => {
   };
   expect(read.slideshow.description).toBe("");
   expect(read.slideshow.hashtags).toBe("");
+});
+
+/** A ready one-slide slideshow with its render already filed. */
+async function readySlideshow(): Promise<{ id: string; version: number }> {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: backgroundId }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  harness.services.exports.putRender(created.id, created.version, 0, {
+    mediaId: "a".repeat(64),
+    width: 1080,
+    height: 1440,
+    bytes: 4321,
+  });
+  return created;
+}
+
+it("hands back one signed URL per slide, in order", async () => {
+  const { id, version } = await readySlideshow();
+  const body = payload(
+    await tools.export_slideshow.handler({ id, version }, context),
+  ) as {
+    slideshowId: string;
+    version: number;
+    status: string;
+    ratio: { w: number; h: number };
+    expiresAt: string;
+    slides: {
+      index: number;
+      url: string;
+      mimeType: string;
+      width: number;
+      height: number;
+      bytes: number;
+      sha256: string;
+    }[];
+  };
+  expect(body.slideshowId).toBe(id);
+  expect(body.version).toBe(version);
+  expect(body.status).toBe("ready");
+  expect(body.ratio).toEqual({ w: 9, h: 16 });
+  expect(Number.isNaN(Date.parse(body.expiresAt))).toBe(false);
+  expect(body.slides).toHaveLength(1);
+  const first = body.slides[0];
+  // 1-based for the caller, whatever the table stores.
+  expect(first?.index).toBe(1);
+  expect(first?.url).toMatch(/^http:\/\/localhost:4173\/export\/[0-9a-f]{64}\/01\.png$/);
+  expect(first?.mimeType).toBe("image/png");
+  expect(first?.width).toBe(1080);
+  expect(first?.height).toBe(1440);
+  expect(first?.bytes).toBe(4321);
+  expect(first?.sha256).toBe("a".repeat(64));
+});
+
+// Every other export test files one slide, so nothing else reaches the index
+// where the printed number grows a second digit. This one pins the 1-based
+// offset and the ordering there: slide 10 reports index 10 and ends at
+// "10.png", the first name that fills Task 4's /^(\d{2})\.png$/ route match
+// without padding. Catching a pad narrowed to one digit is the one-slide
+// case's job above, since padStart(1, "0") leaves "10" alone.
+it("numbers the tenth slide 10 and serves it at 10.png", async () => {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        slides: Array.from({ length: 10 }, () => ({ background: backgroundId })),
+      },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  for (let index = 0; index < 10; index += 1) {
+    harness.services.exports.putRender(created.id, created.version, index, {
+      mediaId: "a".repeat(64),
+      width: 1080,
+      height: 1440,
+      bytes: 100,
+    });
+  }
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id: created.id, version: created.version },
+      context,
+    ),
+  ) as { slides: { index: number; url: string }[] };
+  const tenth = body.slides[9];
+  expect(tenth?.index).toBe(10);
+  expect(tenth?.url).toMatch(/\/10\.png$/);
+});
+
+it("warns when the URLs it just built point at this machine only", async () => {
+  const { id, version } = await readySlideshow();
+  const body = payload(
+    await tools.export_slideshow.handler({ id, version }, context),
+  ) as { warning?: string };
+  expect(body.warning).toContain("--public-url");
+});
+
+it("omits the warning when the base URL is reachable", async () => {
+  const { id, version } = await readySlideshow();
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id, version },
+      { ...context, baseUrl: () => "https://studio.example.com" },
+    ),
+  ) as { warning?: string; slides: { url: string }[] };
+  expect(body.warning).toBeUndefined();
+  expect(body.slides[0]?.url.startsWith("https://studio.example.com/export/")).toBe(true);
+});
+
+// The CLI's own wildcard bind, which the auth layer already treats as public
+// (src/server/auth/mode.ts's resolveAuthMode) even though it is unreachable
+// as a URL host: nothing on another machine can dial 0.0.0.0.
+it("warns when the base URL is the wildcard bind address", async () => {
+  const { id, version } = await readySlideshow();
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id, version },
+      { ...context, baseUrl: () => "http://0.0.0.0:4173" },
+    ),
+  ) as { warning?: string };
+  expect(body.warning).toContain("--public-url");
+});
+
+it("refuses to export a slideshow that is still a draft", async () => {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: backgroundId }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  const error = asHttpError(
+    await catchError(() =>
+      tools.export_slideshow.handler(
+        { id: created.id, version: created.version },
+        context,
+      ),
+    ),
+  );
+  expect(error.status).toBe(409);
+  expect(error.message).toContain("draft");
+});
+
+it("refuses a version other than the one stored", async () => {
+  const { id } = await readySlideshow();
+  const error = asHttpError(
+    await catchError(() => tools.export_slideshow.handler({ id, version: 99 }, context)),
+  );
+  expect(error.status).toBe(409);
+  expect(error.details?.["currentVersion"]).toBe(1);
+});
+
+it("refuses a slideshow that does not exist", async () => {
+  const error = asHttpError(
+    await catchError(() =>
+      tools.export_slideshow.handler({ id: "nope", version: 1 }, context),
+    ),
+  );
+  expect(error.status).toBe(404);
+});
+
+it("reports pending, not failure, when the editor has not rendered yet", async () => {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: backgroundId }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id: created.id, version: created.version },
+      context,
+    ),
+  ) as { status: string; slides?: unknown[]; editUrl: string };
+  expect(body.status).toBe("pending");
+  expect(body.slides).toBeUndefined();
+  expect(body.editUrl).toContain(created.id);
+});
+
+it("reports pending while only some slides have rendered", async () => {
+  const first = await background("One");
+  const second = await background("Two");
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        slides: [{ background: first }, { background: second }],
+      },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  harness.services.exports.putRender(created.id, created.version, 0, {
+    mediaId: "b".repeat(64),
+    width: 1080,
+    height: 1920,
+    bytes: 10,
+  });
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id: created.id, version: created.version },
+      context,
+    ),
+  ) as { status: string };
+  expect(body.status).toBe("pending");
+});
+
+it("revokes every grant and leaves the renders in place", async () => {
+  const { id, version } = await readySlideshow();
+  await tools.export_slideshow.handler({ id, version }, context);
+  await tools.export_slideshow.handler({ id, version }, context);
+  const body = payload(await tools.revoke_export.handler({ id }, context)) as {
+    id: string;
+    revoked: number;
+  };
+  expect(body).toEqual({ id, revoked: 2 });
+  // The renders survive, so the next export costs one row.
+  const again = payload(
+    await tools.export_slideshow.handler({ id, version }, context),
+  ) as { status: string };
+  expect(again.status).toBe("ready");
 });

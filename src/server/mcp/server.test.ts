@@ -43,7 +43,7 @@ function textOf(result: ToolOutcome): string {
   return first?.type === "text" ? first.text : "";
 }
 
-it("serves the eight tools over the transport", async () => {
+it("serves the ten tools over the transport", async () => {
   const client = await connect();
   try {
     const listed = await client.listTools();
@@ -56,6 +56,8 @@ it("serves the eight tools over the transport", async () => {
       "set_slideshow_status",
       "create_slideshow",
       "update_slideshow",
+      "export_slideshow",
+      "revoke_export",
     ]);
     // The SDK builds the JSON schema from the raw zod shape it was handed.
     expect(listed.tools[1]?.inputSchema.properties).toMatchObject({

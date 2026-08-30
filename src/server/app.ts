@@ -13,6 +13,7 @@ import { registerServices } from "./plugins/services.js";
 import { accountRoutes } from "./routes/accounts.js";
 import { authRoutes } from "./routes/auth.js";
 import { eventRoutes } from "./routes/events.js";
+import { exportRoutes } from "./routes/exports.js";
 import { fontRoutes } from "./routes/fonts.js";
 import { healthRoutes } from "./routes/health.js";
 import { libraryRoutes } from "./routes/library.js";
@@ -96,6 +97,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
   slideshowRoutes(app);
   eventRoutes(app);
   mediaRoutes(app);
+  exportRoutes(app);
   fontRoutes(app);
   // The agent surface belongs to the server, not to the entry point that built
   // it, so an embedder and the end-to-end setup get it too.

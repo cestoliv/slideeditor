@@ -429,3 +429,28 @@ it("does not bound adding a Google font, which can legitimately run long", async
   await api.addGoogleFont("Bebas Neue");
   expect(calls[0]?.init?.signal).toBeUndefined();
 });
+
+/*
+ * putProjectRender uploads one slide render (routes/projects.ts:69) as a full
+ * resolution PNG in base64, the same exception createLibraryItem and
+ * addGoogleFont already take above, and for the same reason: how long the
+ * body takes to cross has nothing to do with what DEFAULT_TIMEOUT_MS was
+ * sized for.
+ */
+it("puts a slide's render at its 0-based index, unbounded", async () => {
+  const calls = stubFetch(() =>
+    json({ index: 0, mediaId: "media-9", width: 1080, height: 1920, bytes: 12345 }),
+  );
+  const result = await api.putProjectRender("p1", 0, { version: 3, data: "AAAA" });
+  expect(calls[0]?.url).toBe("/api/projects/p1/renders/0");
+  expect(calls[0]?.init?.method).toBe("PUT");
+  expect(calls[0]?.init?.body).toBe(JSON.stringify({ version: 3, data: "AAAA" }));
+  expect(calls[0]?.init?.signal).toBeUndefined();
+  expect(result).toEqual({
+    index: 0,
+    mediaId: "media-9",
+    width: 1080,
+    height: 1920,
+    bytes: 12345,
+  });
+});

@@ -8,6 +8,7 @@ import type { Composition, CompositionSource } from "../../shared/compose/index.
 import type { Slide } from "../../shared/schema/index.js";
 import { HttpError } from "../errors.js";
 import type { AccountService } from "../services/accounts.js";
+import type { ExportService, StoredRender } from "../services/exports.js";
 import type { FontService } from "../services/fonts.js";
 import type { LibraryService } from "../services/library.js";
 import type {
@@ -23,11 +24,12 @@ export interface ToolContext {
   projects: ProjectService;
   accounts: AccountService;
   fonts: FontService;
+  exports: ExportService;
   baseUrl: () => string;
 }
 
 /**
- * The envelope all eight tools return. There are no output schemas and no
+ * The envelope all ten tools return. There are no output schemas and no
  * structured content, only one JSON text block (server/mcp.mjs:160-162).
  */
 export type ToolResult = {
@@ -387,7 +389,144 @@ const updateSlideshow = defineTool({
   },
 });
 
-/** The eight tools, list_accounts first so an agent can see its brand before anything else. */
+/**
+ * Whether a scheduling tool on another machine could fetch a URL built from
+ * this base. Loopback is the default base URL and is right for a laptop and
+ * wrong here; `0.0.0.0` is the CLI's own wildcard bind (resolveAuthMode in
+ * src/server/auth/mode.ts treats it as public) and just as unfetchable as a
+ * literal address, so it belongs in this check even though it is not
+ * loopback. Checked by hostname rather than by string, so a port or a scheme
+ * cannot hide it.
+ *
+ * Not the same `isLoopback` src/server/auth/host.ts exports: that one reads a
+ * request's remote address and never matches "localhost", which is exactly
+ * the case this warning exists for.
+ */
+function isUnreachableBase(base: string): boolean {
+  try {
+    const host = new URL(base).hostname.toLowerCase();
+    return (
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "[::1]" ||
+      host === "::1" ||
+      host.startsWith("127.")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** `/export/<token>/01.png`: the slide number a reader counts from, padded. */
+function exportUrl(base: string, token: string, index: number): string {
+  return `${base}/export/${token}/${String(index + 1).padStart(2, "0")}.png`;
+}
+
+function toExportSlide(base: string, token: string, render: StoredRender) {
+  return {
+    index: render.index + 1,
+    url: exportUrl(base, token, render.index),
+    mimeType: "image/png",
+    width: render.width,
+    height: render.height,
+    bytes: render.bytes,
+    // MediaStore names a file after the sha256 of its bytes, so the id is
+    // already the checksum a caller verifies its upload against.
+    sha256: render.mediaId,
+  };
+}
+
+const exportSlideshow = defineTool({
+  name: "export_slideshow",
+  title: "Export a slideshow as image URLs",
+  description:
+    "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as " +
+    "Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to " +
+    "be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and " +
+    "no token, and they stop working after 45 minutes. Each slide also carries its width, height, byte count " +
+    "and sha256, so you can check that what was downloaded is what was rendered. A `status` of `pending` means " +
+    "the human has not opened the editor since this version became ready: the pixels are drawn in the browser, " +
+    "so ask them to open the edit URL, then call again. Call revoke_export once the import is done.",
+  inputSchema: {
+    id: z.string().describe("Slideshow id."),
+    version: z
+      .number()
+      .int()
+      .describe(
+        "Version read from get_slideshow. A version other than the stored one is refused.",
+      ),
+  },
+  async handler({ id, version }, { projects, exports, baseUrl }) {
+    const project = projects.require(id);
+    if (project.status !== "ready") {
+      throw new HttpError(
+        409,
+        `Only a ready slideshow can be exported, and this one is ${project.status}.`,
+        { status: project.status, editUrl: editUrl(baseUrl(), project.id) },
+      );
+    }
+    if (version !== project.version) {
+      throw new HttpError(409, "That version is not the one stored.", {
+        currentVersion: project.version,
+      });
+    }
+
+    const base = baseUrl();
+    const renders = exports.rendersFor(project.id, project.version);
+    // Short as well as empty: an upload that failed halfway leaves a partial
+    // set, and half a slideshow is not an export.
+    if (renders.length < project.slides.length) {
+      return json({
+        slideshowId: project.id,
+        version: project.version,
+        status: "pending",
+        rendered: renders.length,
+        slideCount: project.slides.length,
+        editUrl: editUrl(base, project.id),
+        message:
+          "The slides are drawn in the browser. Ask the human to open the edit URL with the slideshow " +
+          "marked ready, then call export_slideshow again.",
+      });
+    }
+
+    const { token, expiresAt } = exports.grant(project.id, project.version);
+    return json({
+      slideshowId: project.id,
+      version: project.version,
+      status: "ready",
+      ratio: project.ratio,
+      expiresAt: new Date(expiresAt).toISOString(),
+      slides: renders.map((render) => toExportSlide(base, token, render)),
+      // The export itself succeeded; only its reachability is in doubt, so this
+      // is a field rather than a refusal.
+      ...(isUnreachableBase(base)
+        ? {
+            warning:
+              `These URLs point at ${base}, which only this machine can reach. Start the server with ` +
+              "--public-url (or SLIDE_STUDIO_PUBLIC_URL) set to an address the scheduling tool can fetch.",
+          }
+        : {}),
+    });
+  },
+});
+
+const revokeExport = defineTool({
+  name: "revoke_export",
+  title: "Revoke a slideshow's export URLs",
+  description:
+    "Stop every temporary URL this slideshow has handed out, before they expire on their own. Call it once " +
+    "the scheduling tool has finished downloading. The rendered images are kept, so a later export_slideshow " +
+    "still works without the human re-rendering anything.",
+  inputSchema: { id: z.string().describe("Slideshow id.") },
+  async handler({ id }, { projects, exports }) {
+    // require() rather than a bare delete, so revoking a typo is a 404 rather
+    // than a cheerful "revoked 0".
+    const project = projects.require(id);
+    return json({ id: project.id, revoked: exports.revoke(project.id) });
+  },
+});
+
+/** The ten tools, list_accounts first so an agent can see its brand before anything else. */
 export const tools = {
   list_accounts: listAccounts,
   list_library: listLibrary,
@@ -397,4 +536,6 @@ export const tools = {
   set_slideshow_status: setSlideshowStatus,
   create_slideshow: createSlideshow,
   update_slideshow: updateSlideshow,
+  export_slideshow: exportSlideshow,
+  revoke_export: revokeExport,
 };

@@ -343,6 +343,95 @@ it("rejects a POST /api/projects document whose background belongs to another ac
   expect(response.json().error).toContain("different account");
 });
 
+it("files a render against the slideshow's current version", async () => {
+  const { id } = await createProject();
+  const png = pngFixture(1080, 1440);
+  const response = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${id}/renders/0`,
+    payload: { version: 1, data: png },
+  });
+  expect(response.statusCode).toBe(200);
+  const body = response.json() as {
+    index: number;
+    width: number;
+    height: number;
+    bytes: number;
+    mediaId: string;
+  };
+  expect(body.index).toBe(0);
+  expect(body.width).toBe(1080);
+  expect(body.height).toBe(1440);
+  expect(body.bytes).toBe(Buffer.from(png, "base64").byteLength);
+  // The media id is the sha256 of the bytes, which is what the export reports.
+  expect(body.mediaId).toMatch(/^[0-9a-f]{64}$/);
+  expect(app.exports.rendersFor(id, 1)).toHaveLength(1);
+});
+
+it("refuses a render filed against a version the slideshow has moved past", async () => {
+  const { id } = await createProject();
+  const response = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${id}/renders/0`,
+    payload: { version: 99, data: pngFixture(1080, 1440) },
+  });
+  expect(response.statusCode).toBe(409);
+  expect(app.exports.rendersFor(id, 99)).toEqual([]);
+});
+
+it("refuses a render for a slideshow that does not exist", async () => {
+  const response = await app.inject({
+    method: "PUT",
+    url: "/api/projects/nope/renders/0",
+    payload: { version: 1, data: pngFixture(10, 10) },
+  });
+  expect(response.statusCode).toBe(404);
+});
+
+it("refuses an index that is not a slide of this slideshow", async () => {
+  const { id } = await createProject();
+  for (const index of ["-1", "99", "abc"]) {
+    const response = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${id}/renders/${index}`,
+      payload: { version: 1, data: pngFixture(10, 10) },
+    });
+    expect(response.statusCode, index).toBe(400);
+  }
+});
+
+it("refuses a body that is not a PNG", async () => {
+  const { id } = await createProject();
+  const response = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${id}/renders/0`,
+    payload: { version: 1, data: Buffer.from("not a png").toString("base64") },
+  });
+  expect(response.statusCode).toBe(400);
+});
+
+// imageDimensions also recognizes JPEG, so a real one is what proves the
+// route checks for PNG specifically rather than "any image it can measure".
+it("refuses a real JPEG, which imageDimensions can also measure", async () => {
+  const { id } = await createProject();
+  const response = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${id}/renders/0`,
+    payload: { version: 1, data: jpegFixture(300, 200) },
+  });
+  expect(response.statusCode).toBe(400);
+});
+
+it("refuses a render with no version field", async () => {
+  const { id } = await createProject();
+  const response = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${id}/renders/0`,
+    payload: { data: pngFixture(10, 10) },
+  });
+  expect(response.statusCode).toBe(400);
+});
+
 it("rejects a PUT /api/projects/:id document carrying another account's item id", async () => {
   const { id } = await createProject();
   const other = app.accounts.create({ name: "Other", defaults: BUILTIN_DEFAULTS });
@@ -370,3 +459,18 @@ it("rejects a PUT /api/projects/:id document carrying another account's item id"
   expect(response.json().error).toContain("different account");
   expect(response.json().error).toContain("Their Asset");
 });
+
+/** A JPEG with a real SOF0 marker, the same shape as media.test.ts's own `jpeg()`. */
+function jpegFixture(width: number, height: number): string {
+  const sof = Buffer.alloc(7);
+  sof.writeUInt16BE(sof.length + 2, 0);
+  sof[2] = 8;
+  sof.writeUInt16BE(height, 3);
+  sof.writeUInt16BE(width, 5);
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    Buffer.from([0xff, 0xc0]),
+    sof,
+    Buffer.alloc(16),
+  ]).toString("base64");
+}

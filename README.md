@@ -53,6 +53,11 @@ that one directory and you have backed up everything.
 `SLIDE_STUDIO_TRUST_PROXY`, and `SLIDE_STUDIO_PUBLIC_URL` work as environment
 variables too.
 
+An external tool can only fetch the URLs `export_slideshow` returns when
+`--public-url` (or `SLIDE_STUDIO_PUBLIC_URL`) names an address it can reach.
+Without it, `export_slideshow` still succeeds and adds a `warning` field
+saying so.
+
 ## What it does
 
 ### Library
@@ -139,6 +144,8 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 | `create_slideshow`     | Draft a slideshow and its caption. Returns the edit URL.            |
 | `update_slideshow`     | Edit an existing one, guarded by its version                        |
 | `set_slideshow_status` | Move a slideshow between draft, ready, and published                |
+| `export_slideshow`     | Get temporary public image URLs for a ready slideshow's slides      |
+| `revoke_export`        | Revoke a slideshow's export URLs before they expire                 |
 
 ### 4. How to draft a slideshow
 
@@ -230,13 +237,34 @@ Slides whose composition you leave untouched keep the exact layout the human
 gave them. On a slide you do change, any asset or text line that is still there
 keeps its position too. So a small edit stays small.
 
-### 6. Status
+### 6. Exporting a slideshow
+
+Call `export_slideshow` with the slideshow's `id` and `version` to get a public
+image URL for every slide, in order. Hand these to a scheduling tool such as
+Metricool, which imports media by URL rather than a file.
+
+The slideshow must be `ready` before you export it, and `version` must match
+what is stored, the same guard `update_slideshow` uses. Read `version` from
+`get_slideshow` first.
+
+Each URL needs no credential and expires after 45 minutes.
+
+A `status` of `pending` means the editor has not rendered this version yet,
+because the images render in the browser rather than on the server. Ask the
+human to open the edit URL while the slideshow is `ready`, then call
+`export_slideshow` again.
+
+Call `revoke_export` once the scheduling tool finishes downloading. It stops
+the URLs early and keeps the rendered images, so exporting again later does
+not make the human re-render anything.
+
+### 7. Status
 
 `list_slideshows` hides published slideshows by default. Pass `status: "all"` to
 see everything. Leave new drafts as `draft`: `ready` is the human's call once
 they have adjusted the layout, and `published` means they have posted it.
 
-### 7. What to do when a tool fails
+### 8. What to do when a tool fails
 
 - **`No library item with id …`** — the id is wrong or the item was deleted.
   Search again.

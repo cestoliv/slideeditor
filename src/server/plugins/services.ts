@@ -11,6 +11,7 @@ import { TokenStore } from "../auth/tokens.js";
 import type { DataPaths } from "../db/open.js";
 import { AccountService } from "../services/accounts.js";
 import { EventBus } from "../services/events.js";
+import { ExportService } from "../services/exports.js";
 import { FontService } from "../services/fonts.js";
 import { LibraryService } from "../services/library.js";
 import { MediaStore } from "../services/media.js";
@@ -24,6 +25,7 @@ declare module "fastify" {
     fonts: FontService;
     events: EventBus;
     media: MediaStore;
+    exports: ExportService;
     token: string;
     baseUrl: () => string;
     credentials: CredentialStore;
@@ -62,6 +64,7 @@ export function registerServices(
   const library = new LibraryService(db, media, accounts);
   const projects = new ProjectService(db, events, library, accounts);
   const fonts = new FontService({ db, media });
+  const exports = new ExportService(db);
 
   app.decorate("library", library);
   app.decorate("projects", projects);
@@ -69,6 +72,7 @@ export function registerServices(
   app.decorate("fonts", fonts);
   app.decorate("events", events);
   app.decorate("media", media);
+  app.decorate("exports", exports);
   app.decorate("token", loadToken(paths.token));
   app.decorate("baseUrl", baseUrl);
 

@@ -221,4 +221,41 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX project_account_idx ON project(account_id, updated_at DESC);
   CREATE INDEX library_item_account_idx ON library_item(account_id);
   `,
+  `
+  -- A render is the PNG bytes of one slide at one version of one slideshow.
+  -- media_id is the sha256 of those bytes, because MediaStore.put names a file
+  -- after its hash, so the export payload's checksum is already stored here and
+  -- two versions sharing an unchanged slide share the one file.
+  --
+  -- idx is 0-based, matching the slide array. The MCP payload converts to the
+  -- 1-based index a caller reads.
+  CREATE TABLE slideshow_render (
+    slideshow_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL,
+    idx          INTEGER NOT NULL,
+    media_id     TEXT NOT NULL,
+    width        INTEGER NOT NULL,
+    height       INTEGER NOT NULL,
+    bytes        INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (slideshow_id, version, idx)
+  ) STRICT;
+
+  -- A grant is one export_slideshow call: a random token that reads the renders
+  -- above without a credential, until expires_at. Separate from the render so
+  -- revoking is a row delete and a second export of the same version is free.
+  --
+  -- The cascade matters more here than on the renders. A grant is a credential
+  -- that carries none of its own, so a deleted slideshow must not leave one
+  -- serving its pixels until the expiry catches up.
+  CREATE TABLE slideshow_export (
+    token        TEXT PRIMARY KEY,
+    slideshow_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE INDEX slideshow_export_slideshow ON slideshow_export (slideshow_id);
+  `,
 ];

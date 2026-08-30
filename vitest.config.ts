@@ -130,7 +130,14 @@ export default defineConfig({
       {
         resolve: { alias: webAlias },
         optimizeDeps: browserDeps,
-        server: { proxy: { "/api": e2eTarget, "/media": e2eTarget, "/mcp": e2eTarget } },
+        server: {
+          proxy: {
+            "/api": e2eTarget,
+            "/media": e2eTarget,
+            "/mcp": e2eTarget,
+            "/export": e2eTarget,
+          },
+        },
         test: {
           name: "e2e",
           include: ["tests/e2e/**/*.e2e.test.ts"],

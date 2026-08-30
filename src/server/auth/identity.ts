@@ -28,6 +28,14 @@ export function guardFor(target: string): Guard {
   // An agent follows the media URLs the MCP tools hand it, so a token reaches
   // media even though a browser session does too.
   if (path.startsWith("/api/") || path.startsWith("/media/")) return "any";
+  // /export/<token>/NN.png serves a slideshow's rendered slides to a scheduling
+  // tool that holds no cookie and no bearer, which is the whole point of the
+  // route. The token is the credential: it is 32 random bytes, it names one
+  // slideshow at one version, it expires, and it can be revoked. Named
+  // explicitly rather than left to the "none" default below, so a future route
+  // under this prefix does not inherit public access without someone
+  // re-deciding it — the same reason /fonts/ is spelled out.
+  if (path.startsWith("/export/")) return "none";
   // /fonts/<slug>.<ext> serves only the handful of open-source font binaries
   // bundled under assets/ (routes/fonts.ts's BUILTIN_FONTS_DIR) — never a
   // per-account or per-user file, unlike /media/, which also serves uploaded

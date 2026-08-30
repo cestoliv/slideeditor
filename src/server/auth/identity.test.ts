@@ -20,6 +20,15 @@ it("names the guard each path needs", () => {
   expect(guardFor("/fonts/tiktok-sans.ttf")).toBe("none");
 });
 
+it("leaves the export links public, because a third party fetches them", () => {
+  expect(guardFor("/export/abc123/01.png")).toBe("none");
+  expect(guardFor("/EXPORT/abc123/01.png")).toBe("none");
+});
+
+it("still guards media, which the same token cannot open publicly", () => {
+  expect(guardFor("/media/abc.png")).toBe("any");
+});
+
 it("ignores the query string when naming a guard", () => {
   expect(guardFor("/api/projects?status=draft")).toBe("any");
 });
