@@ -137,9 +137,12 @@ it("moves a text layer and keeps the move after a reload", async () => {
   await openApp(editPath(created.editUrl));
   const reloaded = page.getByLabelText("Text layer: Pack light");
   const after = await relativeTo(stage(), reloaded);
+  // frameAfter, not frame: `moved` was measured against the stage as it stood
+  // after the gesture, and dividing it by the stage as it stood before turns
+  // any shift the drag caused into a position the reload is then blamed for.
   const beforeReload = {
-    x: (moved.left - frame.left) / frame.width,
-    y: (moved.top - frame.top) / frame.height,
+    x: (moved.left - frameAfter.left) / frameAfter.width,
+    y: (moved.top - frameAfter.top) / frameAfter.height,
   };
   expect(after.x).toBeCloseTo(beforeReload.x, 2);
   expect(after.y).toBeCloseTo(beforeReload.y, 2);
