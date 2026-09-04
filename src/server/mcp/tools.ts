@@ -8,9 +8,16 @@ import type { Composition, CompositionSource } from "../../shared/compose/index.
 import type { Slide } from "../../shared/schema/index.js";
 import { HttpError } from "../errors.js";
 import type { AccountService } from "../services/accounts.js";
-import type { ExportService, StoredRender } from "../services/exports.js";
+import { convertRender, extensionFor, mimeTypeFor } from "../services/convert.js";
+import {
+  DEFAULT_QUALITY,
+  type ExportFormat,
+  type ExportService,
+  type StoredRender,
+} from "../services/exports.js";
 import type { FontService } from "../services/fonts.js";
 import type { LibraryService } from "../services/library.js";
+import type { MediaStore } from "../services/media.js";
 import type {
   ProjectListOptions,
   ProjectService,
@@ -25,6 +32,9 @@ export interface ToolContext {
   accounts: AccountService;
   fonts: FontService;
   exports: ExportService;
+  // export_slideshow converts a render before it grants a URL, which means
+  // reading the PNG bytes and writing the converted ones.
+  media: MediaStore;
   baseUrl: () => string;
 }
 
@@ -417,23 +427,85 @@ function isUnreachableBase(base: string): boolean {
   }
 }
 
-/** `/export/<token>/01.png`: the slide number a reader counts from, padded. */
-function exportUrl(base: string, token: string, index: number): string {
-  return `${base}/export/${token}/${String(index + 1).padStart(2, "0")}.png`;
+/** `/export/<token>/01.jpg`: the slide number a reader counts from, padded. */
+function exportUrl(
+  base: string,
+  token: string,
+  index: number,
+  format: ExportFormat,
+): string {
+  const name = String(index + 1).padStart(2, "0");
+  return `${base}/export/${token}/${name}.${extensionFor(format)}`;
 }
 
-function toExportSlide(base: string, token: string, render: StoredRender) {
+function toExportSlide(
+  base: string,
+  token: string,
+  slide: StoredRender,
+  format: ExportFormat,
+) {
   return {
-    index: render.index + 1,
-    url: exportUrl(base, token, render.index),
-    mimeType: "image/png",
-    width: render.width,
-    height: render.height,
-    bytes: render.bytes,
+    index: slide.index + 1,
+    url: exportUrl(base, token, slide.index, format),
+    mimeType: mimeTypeFor(format),
+    width: slide.width,
+    height: slide.height,
+    bytes: slide.bytes,
     // MediaStore names a file after the sha256 of its bytes, so the id is
     // already the checksum a caller verifies its upload against.
-    sha256: render.mediaId,
+    sha256: slide.mediaId,
   };
+}
+
+/**
+ * Every slide, converted to one format at one quality.
+ *
+ * A slide already filed at this key is read back rather than re-encoded, which
+ * is what makes a second export of the same settings free. The whole set
+ * finishes before the caller mints a grant, so a conversion that throws leaves
+ * no token serving half a slideshow.
+ */
+async function convertedSlides(
+  context: ToolContext,
+  slideshowId: string,
+  version: number,
+  renders: StoredRender[],
+  format: "jpeg" | "webp",
+  quality: number,
+): Promise<StoredRender[]> {
+  const stored = new Map(
+    context.exports
+      .variantsFor(slideshowId, version, format, quality)
+      .map((variant) => [variant.index, variant]),
+  );
+  const slides: StoredRender[] = [];
+  for (const render of renders) {
+    const existing = stored.get(render.index);
+    if (existing !== undefined) {
+      slides.push(existing);
+      continue;
+    }
+    const png = await context.media.read(render.mediaId, "png");
+    const converted = await convertRender(png, format, quality);
+    const mediaId = await context.media.put(converted.bytes, extensionFor(format));
+    const variant = {
+      index: render.index,
+      mediaId,
+      width: converted.width,
+      height: converted.height,
+      bytes: converted.bytes.byteLength,
+    };
+    context.exports.putVariant(
+      slideshowId,
+      version,
+      render.index,
+      format,
+      quality,
+      variant,
+    );
+    slides.push(variant);
+  }
+  return slides;
 }
 
 const exportSlideshow = defineTool({
@@ -443,10 +515,13 @@ const exportSlideshow = defineTool({
     "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as " +
     "Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to " +
     "be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and " +
-    "no token, and they stop working after 45 minutes. Each slide also carries its width, height, byte count " +
-    "and sha256, so you can check that what was downloaded is what was rendered. A `status` of `pending` means " +
-    "the human has not opened the editor since this version became ready: the pixels are drawn in the browser, " +
-    "so ask them to open the edit URL, then call again. Call revoke_export once the import is done.",
+    "no token, and they stop working after 45 minutes. Slides come back as JPEG at quality 92 unless you ask " +
+    "for `png` or `webp`, always over an opaque white background, so a transparent pixel never reaches a feed " +
+    "composited against something else. `quality` runs from 1 to 100 and is refused with `png`, which is " +
+    "lossless. Each slide also carries its width, height, byte count and sha256, so you can check that what " +
+    "was downloaded is what was rendered. A `status` of `pending` means the human has not opened the editor " +
+    "since this version became ready: the pixels are drawn in the browser, so ask them to open the edit URL, " +
+    "then call again. Call revoke_export once the import is done.",
   inputSchema: {
     id: z.string().describe("Slideshow id."),
     version: z
@@ -455,8 +530,23 @@ const exportSlideshow = defineTool({
       .describe(
         "Version read from get_slideshow. A version other than the stored one is refused.",
       ),
+    // Optional rather than defaulted: a zod default is indistinguishable from a
+    // value a caller typed, and refusing `quality` on png needs to tell those
+    // apart.
+    format: z
+      .enum(["png", "jpeg", "webp"])
+      .optional()
+      .describe("Image format. Defaults to jpeg, which is what a feed wants."),
+    quality: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Encoder quality from 1 to 100, for jpeg and webp. Defaults to 92."),
   },
-  async handler({ id, version }, { projects, exports, baseUrl }) {
+  async handler({ id, version, format, quality }, context) {
+    const { projects, exports, baseUrl } = context;
     const project = projects.require(id);
     if (project.status !== "ready") {
       throw new HttpError(
@@ -469,6 +559,14 @@ const exportSlideshow = defineTool({
       throw new HttpError(409, "That version is not the one stored.", {
         currentVersion: project.version,
       });
+    }
+    // A caller that thinks it capped a file size is worse off than one that
+    // gets an error, so this is a refusal rather than a quietly ignored field.
+    if (format === "png" && quality !== undefined) {
+      throw new HttpError(
+        400,
+        "PNG is lossless and ignores `quality`. Drop `quality`, or ask for jpeg or webp.",
+      );
     }
 
     const base = baseUrl();
@@ -489,14 +587,35 @@ const exportSlideshow = defineTool({
       });
     }
 
-    const { token, expiresAt } = exports.grant(project.id, project.version);
+    const chosen = format ?? "jpeg";
+    // PNG stores 100 rather than the caller's number, because there is no
+    // caller's number to store: the branch above refused one.
+    const chosenQuality = chosen === "png" ? 100 : (quality ?? DEFAULT_QUALITY);
+    const slides =
+      chosen === "png"
+        ? renders
+        : await convertedSlides(
+            context,
+            project.id,
+            project.version,
+            renders,
+            chosen,
+            chosenQuality,
+          );
+
+    const { token, expiresAt } = exports.grant(project.id, project.version, {
+      format: chosen,
+      quality: chosenQuality,
+    });
     return json({
       slideshowId: project.id,
       version: project.version,
       status: "ready",
+      format: chosen,
+      quality: chosenQuality,
       ratio: project.ratio,
       expiresAt: new Date(expiresAt).toISOString(),
-      slides: renders.map((render) => toExportSlide(base, token, render)),
+      slides: slides.map((slide) => toExportSlide(base, token, slide, chosen)),
       // The export itself succeeded; only its reachability is in doubt, so this
       // is a field rather than a refusal.
       ...(isUnreachableBase(base)
@@ -515,8 +634,8 @@ const revokeExport = defineTool({
   title: "Revoke a slideshow's export URLs",
   description:
     "Stop every temporary URL this slideshow has handed out, before they expire on their own. Call it once " +
-    "the scheduling tool has finished downloading. The rendered images are kept, so a later export_slideshow " +
-    "still works without the human re-rendering anything.",
+    "the scheduling tool has finished downloading. It revokes PNG, JPEG and WebP URLs alike. The rendered " +
+    "images are kept, so a later export_slideshow still works without the human re-rendering anything.",
   inputSchema: { id: z.string().describe("Slideshow id.") },
   async handler({ id }, { projects, exports }) {
     // require() rather than a bare delete, so revoking a typo is a 404 rather

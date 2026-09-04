@@ -74,10 +74,16 @@ type ExportAnswer = {
   rendered?: number;
   slideCount?: number;
   slides?: ExportSlide[];
+  format?: string;
+  quality?: number;
 };
 
-async function exportSlideshow(id: string, version: number): Promise<ExportAnswer> {
-  const answer = await callTool("export_slideshow", { id, version });
+async function exportSlideshow(
+  id: string,
+  version: number,
+  extra: { format?: string; quality?: number } = {},
+): Promise<ExportAnswer> {
+  const answer = await callTool("export_slideshow", { id, version, ...extra });
   if (answer.isError) throw new Error(`export_slideshow refused: ${answer.text}`);
   return JSON.parse(answer.text) as ExportAnswer;
 }
@@ -97,7 +103,7 @@ async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
     .join("");
 }
 
-/** The colour at the middle of a PNG, as three channels. */
+/** The colour at the middle of an image, as three channels. */
 async function centreColor(blob: Blob): Promise<[number, number, number]> {
   const bitmap = await createImageBitmap(blob);
   const canvas = document.createElement("canvas");
@@ -153,7 +159,7 @@ it("hands an agent public image URLs once a person marks the slideshow ready", a
   await expect
     .poll(
       async () => {
-        answer = await exportSlideshow(created.id, created.version);
+        answer = await exportSlideshow(created.id, created.version, { format: "png" });
         return answer.status;
       },
       { timeout: 20000 },
@@ -201,6 +207,51 @@ it("hands an agent public image URLs once a person marks the slideshow ready", a
     }
   }
 
+  // The same pixels, converted on the server. This is the only place the JPEG
+  // a scheduling tool downloads is checked against the browser that drew it.
+  const jpeg = await exportSlideshow(created.id, created.version, {
+    format: "jpeg",
+    quality: 92,
+  });
+  expect(jpeg.format).toBe("jpeg");
+  expect(jpeg.quality).toBe(92);
+  const jpegSlides = jpeg.slides ?? [];
+  expect(jpegSlides).toHaveLength(2);
+
+  for (const [position, slide] of jpegSlides.entries()) {
+    const label = `jpeg slide ${String(slide.index)}`;
+    expect(slide.mimeType, label).toBe("image/jpeg");
+    expect(slide.url, label).toMatch(/\/0[12]\.jpg$/);
+
+    const response = await download(slide.url);
+    expect(response.status, label).toBe(200);
+    expect(response.headers.get("content-type"), label).toBe("image/jpeg");
+
+    const bytes = await response.arrayBuffer();
+    // SOI plus the APP0 marker: the file is a JPEG, not a PNG with a new name.
+    expect([...new Uint8Array(bytes).subarray(0, 3)], label).toEqual([0xff, 0xd8, 0xff]);
+    expect(bytes.byteLength, label).toBe(slide.bytes);
+    expect(await sha256Hex(bytes), label).toBe(slide.sha256);
+
+    const blob = new Blob([bytes], { type: "image/jpeg" });
+    const bitmap = await createImageBitmap(blob);
+    expect([bitmap.width, bitmap.height], label).toEqual([slide.width, slide.height]);
+    expect([bitmap.width, bitmap.height], label).toEqual([1080, 1350]);
+
+    // Which slide this URL serves, again. The tolerance is wider than the PNG
+    // pass's because JPEG subsamples chroma, and it is still far narrower than
+    // the distance between the two background colours.
+    const centre = await centreColor(blob);
+    const expected = colors[position]!;
+    for (const channel of [0, 1, 2]) {
+      const drift = Math.abs(centre[channel]! - expected[channel]!);
+      expect(drift, `${label} channel ${String(channel)}`).toBeLessThanOrEqual(12);
+    }
+  }
+
+  // A JPEG token serves one format and no other, from a caller's side of it.
+  expect((await download(jpegSlides[0]!.url.replace(/\.jpg$/, ".png"))).status).toBe(404);
+
   // Revoking ends the grant and keeps the pixels, which is the promise that
   // lets an agent revoke the moment the import finishes.
   const first = slides[0]!;
@@ -209,7 +260,7 @@ it("hands an agent public image URLs once a person marks the slideshow ready", a
   expect((JSON.parse(revoked.text) as { revoked: number }).revoked).toBeGreaterThan(0);
   expect((await download(first.url)).status).toBe(404);
 
-  const again = await exportSlideshow(created.id, created.version);
+  const again = await exportSlideshow(created.id, created.version, { format: "png" });
   expect(again.status).toBe("ready");
   const reissued = again.slides?.[0];
   expect(reissued?.url).not.toBe(first.url);

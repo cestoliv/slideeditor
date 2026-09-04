@@ -115,18 +115,18 @@ it("resolves a token to the render at that index", () => {
   fileRender(exports, 0);
   fileRender(exports, 1);
   const { token } = exports.grant("p1", 1);
-  expect(exports.resolve(token, 1)?.mediaId).toBe(hashId("media-1-v1"));
-  expect(exports.resolve(token, 9)).toBeNull();
-  expect(exports.resolve("not-a-token", 0)).toBeNull();
+  expect(exports.resolve(token, 1, "png")?.mediaId).toBe(hashId("media-1-v1"));
+  expect(exports.resolve(token, 9, "png")).toBeNull();
+  expect(exports.resolve("not-a-token", 0, "png")).toBeNull();
 });
 
 it("stops resolving once the grant has expired", () => {
   const exports = service();
   fileRender(exports, 0);
   const { token } = exports.grant("p1", 1);
-  expect(exports.resolve(token, 0)).not.toBeNull();
+  expect(exports.resolve(token, 0, "png")).not.toBeNull();
   clock += EXPORT_TTL_MS + 1;
-  expect(exports.resolve(token, 0)).toBeNull();
+  expect(exports.resolve(token, 0, "png")).toBeNull();
 });
 
 it("revokes every grant for a slideshow and leaves the renders alone", () => {
@@ -135,8 +135,8 @@ it("revokes every grant for a slideshow and leaves the renders alone", () => {
   const first = exports.grant("p1", 1);
   const second = exports.grant("p1", 1);
   expect(exports.revoke("p1")).toBe(2);
-  expect(exports.resolve(first.token, 0)).toBeNull();
-  expect(exports.resolve(second.token, 0)).toBeNull();
+  expect(exports.resolve(first.token, 0, "png")).toBeNull();
+  expect(exports.resolve(second.token, 0, "png")).toBeNull();
   expect(exports.rendersFor("p1", 1)).toHaveLength(1);
 });
 
@@ -148,7 +148,7 @@ it("takes its renders and grants with a deleted slideshow", () => {
   // The grant is a credential that needs none of its own, so it cannot outlive
   // the slideshow it publishes. ON DELETE CASCADE is what enforces that.
   expect(exports.rendersFor("p1", 1)).toEqual([]);
-  expect(exports.resolve(token, 0)).toBeNull();
+  expect(exports.resolve(token, 0, "png")).toBeNull();
 });
 
 it("resolves a grant against the version it was minted for", () => {
@@ -157,7 +157,7 @@ it("resolves a grant against the version it was minted for", () => {
   const stale = exports.grant("p1", 1);
   fileRender(exports, 0, 2);
   // Version 1's rows are gone, so the grant that named it resolves to nothing.
-  expect(exports.resolve(stale.token, 0)).toBeNull();
+  expect(exports.resolve(stale.token, 0, "png")).toBeNull();
 });
 
 it("resolves a token to its own slideshow's render, not another slideshow's render at the same index and version", () => {
@@ -173,10 +173,10 @@ it("resolves a token to its own slideshow's render, not another slideshow's rend
   // the same row to both tokens. Which row that is depends on SQLite's
   // iteration order, which no rule fixes, so asserting one direction alone
   // would catch the bug only on the runs where the order happens to help.
-  expect(exports.resolve(exports.grant("p1", 1).token, 0)?.mediaId).toBe(
+  expect(exports.resolve(exports.grant("p1", 1).token, 0, "png")?.mediaId).toBe(
     hashId("media-0-v1"),
   );
-  expect(exports.resolve(exports.grant("other", 1).token, 0)?.mediaId).toBe(
+  expect(exports.resolve(exports.grant("other", 1).token, 0, "png")?.mediaId).toBe(
     hashId("other-media"),
   );
 });
@@ -193,8 +193,8 @@ it("revoking one slideshow's grants leaves another slideshow's grant resolvable"
   const forP1 = exports.grant("p1", 1);
   const forOther = exports.grant("other", 1);
   expect(exports.revoke("p1")).toBe(1);
-  expect(exports.resolve(forP1.token, 0)).toBeNull();
-  expect(exports.resolve(forOther.token, 0)?.mediaId).toBe(hashId("other-media"));
+  expect(exports.resolve(forP1.token, 0, "png")).toBeNull();
+  expect(exports.resolve(forOther.token, 0, "png")?.mediaId).toBe(hashId("other-media"));
 });
 
 it("rejects a media id that is not a sha256 hex digest", async () => {
@@ -210,4 +210,183 @@ it("rejects a media id that is not a sha256 hex digest", async () => {
     ),
   );
   expect(error.status).toBe(500);
+});
+
+it("files a variant and reads it back for its own format and quality", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("jpeg-0"),
+    width: 1080,
+    height: 1440,
+    bytes: 4321,
+  });
+  expect(exports.variantsFor("p1", 1, "jpeg", 92)).toEqual([
+    { index: 0, mediaId: hashId("jpeg-0"), width: 1080, height: 1440, bytes: 4321 },
+  ]);
+  // A different quality is a different file, so it is a different row.
+  expect(exports.variantsFor("p1", 1, "jpeg", 40)).toEqual([]);
+  expect(exports.variantsFor("p1", 1, "webp", 92)).toEqual([]);
+});
+
+it("overwrites a variant filed twice at the same key", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  const variant = { mediaId: hashId("first"), width: 1080, height: 1440, bytes: 10 };
+  exports.putVariant("p1", 1, 0, "jpeg", 92, variant);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, { ...variant, mediaId: hashId("second") });
+  const stored = exports.variantsFor("p1", 1, "jpeg", 92);
+  expect(stored).toHaveLength(1);
+  expect(stored[0]?.mediaId).toBe(hashId("second"));
+});
+
+it("returns variants in slide order whatever order they were filed in", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  fileRender(exports, 1);
+  for (const index of [1, 0]) {
+    exports.putVariant("p1", 1, index, "jpeg", 92, {
+      mediaId: hashId(`jpeg-${String(index)}`),
+      width: 1080,
+      height: 1440,
+      bytes: 10 + index,
+    });
+  }
+  expect(exports.variantsFor("p1", 1, "jpeg", 92).map((one) => one.index)).toEqual([
+    0, 1,
+  ]);
+});
+
+it("drops an older version's variants when a newer render is filed", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("old"),
+    width: 1080,
+    height: 1440,
+    bytes: 10,
+  });
+  fileRender(exports, 0, 2);
+  expect(exports.variantsFor("p1", 1, "jpeg", 92)).toEqual([]);
+});
+
+it("drops a slide's variant when a different render replaces it at the same version", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("jpeg-0"),
+    width: 1080,
+    height: 1440,
+    bytes: 10,
+  });
+  // Same version and slide, different pixels: the browser re-rasterised.
+  exports.putRender("p1", 1, 0, {
+    mediaId: hashId("media-0-v1-again"),
+    width: 1080,
+    height: 1440,
+    bytes: 11,
+  });
+  expect(exports.variantsFor("p1", 1, "jpeg", 92)).toEqual([]);
+});
+
+it("takes its variants with a deleted slideshow", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("jpeg-0"),
+    width: 1080,
+    height: 1440,
+    bytes: 10,
+  });
+  db.prepare("DELETE FROM project WHERE id = 'p1'").run();
+  expect(exports.variantsFor("p1", 1, "jpeg", 92)).toEqual([]);
+});
+
+it("keeps two slideshows' variants apart at the same index and key", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putRender("other", 1, 0, {
+    mediaId: hashId("other-media"),
+    width: 1,
+    height: 1,
+    bytes: 1,
+  });
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("p1-jpeg"),
+    width: 1080,
+    height: 1440,
+    bytes: 10,
+  });
+  exports.putVariant("other", 1, 0, "jpeg", 92, {
+    mediaId: hashId("other-jpeg"),
+    width: 1,
+    height: 1,
+    bytes: 20,
+  });
+  expect(exports.variantsFor("p1", 1, "jpeg", 92)[0]?.mediaId).toBe(hashId("p1-jpeg"));
+  expect(exports.variantsFor("other", 1, "jpeg", 92)[0]?.mediaId).toBe(
+    hashId("other-jpeg"),
+  );
+});
+
+it("resolves a jpeg grant to the variant and a png grant to the render", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("jpeg-0"),
+    width: 1080,
+    height: 1440,
+    bytes: 4321,
+  });
+  const jpeg = exports.grant("p1", 1, { format: "jpeg", quality: 92 });
+  expect(exports.resolve(jpeg.token, 0, "jpg")?.mediaId).toBe(hashId("jpeg-0"));
+  const png = exports.grant("p1", 1);
+  expect(exports.resolve(png.token, 0, "png")?.mediaId).toBe(hashId("media-0-v1"));
+});
+
+it("resolves a jpeg grant minted with no quality to the variant filed at 92", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("jpeg-0"),
+    width: 1080,
+    height: 1440,
+    bytes: 4321,
+  });
+  const jpeg = exports.grant("p1", 1, { format: "jpeg" });
+  expect(exports.resolve(jpeg.token, 0, "jpg")?.mediaId).toBe(hashId("jpeg-0"));
+});
+
+it("refuses an extension the grant was not minted for", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 92, {
+    mediaId: hashId("jpeg-0"),
+    width: 1080,
+    height: 1440,
+    bytes: 4321,
+  });
+  const jpeg = exports.grant("p1", 1, { format: "jpeg", quality: 92 });
+  // The larger original is one path edit away, so this is the assertion that
+  // stops a jpeg token from reaching it.
+  expect(exports.resolve(jpeg.token, 0, "png")).toBeNull();
+  expect(exports.resolve(jpeg.token, 0, "webp")).toBeNull();
+  const png = exports.grant("p1", 1);
+  expect(exports.resolve(png.token, 0, "jpg")).toBeNull();
+  expect(exports.resolve(png.token, 0, "gif")).toBeNull();
+});
+
+it("resolves only the quality its grant names", () => {
+  const exports = service();
+  fileRender(exports, 0);
+  exports.putVariant("p1", 1, 0, "jpeg", 40, {
+    mediaId: hashId("jpeg-40"),
+    width: 1080,
+    height: 1440,
+    bytes: 900,
+  });
+  const cheap = exports.grant("p1", 1, { format: "jpeg", quality: 40 });
+  const dear = exports.grant("p1", 1, { format: "jpeg", quality: 92 });
+  expect(exports.resolve(cheap.token, 0, "jpg")?.mediaId).toBe(hashId("jpeg-40"));
+  expect(exports.resolve(dear.token, 0, "jpg")).toBeNull();
 });
