@@ -31,7 +31,8 @@ export interface Rgb {
  */
 export interface TextColorSource {
   style?: "plain" | "outline" | "boxed";
-  background?: "white" | "black";
+  /** A hex colour, already normalized by the time anything here sees it. */
+  background?: string;
   color?: string;
 }
 
@@ -66,13 +67,36 @@ export function normalizeHexColor(
 }
 
 /**
+ * Widens the two legacy tone names into the hex colours they always rendered
+ * as. This is the only place in the codebase that still understands "white"
+ * and "black" as background values; textBackgroundSchema and
+ * accountDefaultsSchema both normalize through this on the way in, so nothing
+ * downstream ever reads a tone again, only a colour.
+ */
+export function normalizeTextBackground(value: string | null | undefined): string {
+  const tone = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (tone === "white") return "#FFFFFF";
+  if (tone === "black") return "#111111";
+  return normalizeHexColor(value, "#FFFFFF");
+}
+
+/**
  * The colour a text renders in (app.js:232-235). A boxed text on anything but a
  * black box defaults to dark, because a legacy text with no stored colour would
  * otherwise render white on white.
+ *
+ * background used to be compared against the literal "black"; now that it is
+ * any hex colour, outlineColorFor(text.background) asks the same
+ * light-or-dark question of every colour rather than just the original two.
+ * Verified before relying on it: outlineColorFor("#FFFFFF") is "#111111" and
+ * outlineColorFor("#111111") is "#FFFFFF", so a legacy tone still resolves the
+ * way it always did.
  */
 export function textColorOf(text: TextColorSource): string {
   const legacyDefault =
-    text.style === "boxed" && text.background !== "black" ? "#111111" : "#FFFFFF";
+    text.style === "boxed" ? outlineColorFor(text.background) : "#FFFFFF";
   return normalizeHexColor(text.color, legacyDefault);
 }
 
@@ -120,10 +144,18 @@ export function outlineColorFor(hex: string | null | undefined): string {
  * Flips a boxed text whose colour matches its own pill (app.js:266-270).
  * Returns the same layer when nothing needs changing, so a caller can compare
  * references to see whether it acted.
+ *
+ * Compares against text.background directly now that it is a hex colour,
+ * rather than rebuilding it from the retired white/black enum. Falls back to
+ * "#FFFFFF" when background is absent or empty, matching textColorOf's own
+ * legacy default (the schema never produces either, but a hand-built fixture
+ * that skips validation can). The match stays exact on purpose: a luminance
+ * threshold would silently rewrite a colour the author picked on purpose,
+ * which is why one was rejected here.
  */
 export function ensureBoxedTextContrast<T extends TextColorSource>(text: T): T {
   if (text.style !== "boxed") return text;
-  const backgroundColor = text.background === "black" ? "#111111" : "#FFFFFF";
+  const backgroundColor = text.background || "#FFFFFF";
   if (textColorOf(text) !== backgroundColor) return text;
   return { ...text, color: outlineColorFor(backgroundColor) };
 }

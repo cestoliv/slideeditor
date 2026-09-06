@@ -245,43 +245,21 @@ export function TextInspector({ store, text, ratio }: TextInspectorProps) {
         <>
           <div className={styles.group}>
             <div className={styles.label}>Background</div>
-            <div
-              className={`${styles.options ?? ""} ${styles.options2 ?? ""}`}
-              role="group"
-              aria-label="Box background"
-            >
-              {(["white", "black"] as const).map((tone) => (
-                <button
-                  key={tone}
-                  className={`${styles.option ?? ""} ${styles.toneOption ?? ""}`}
-                  type="button"
-                  aria-label={tone === "black" ? "Black background" : "White background"}
-                  aria-pressed={
-                    tone === "black"
-                      ? text.background === "black"
-                      : text.background !== "black"
-                  }
-                  onClick={() => {
-                    writeOnce((live) => {
-                      live.background = tone;
-                      live.color = ensureBoxedTextContrast(live).color;
-                    });
-                  }}
-                >
-                  <span
-                    className={`${styles.toneSwatch ?? ""} ${
-                      (tone === "black"
-                        ? styles.toneSwatchBlack
-                        : styles.toneSwatchWhite) ?? ""
-                    }`}
-                    aria-hidden="true"
-                  >
-                    Aa
-                  </span>
-                  {tone === "black" ? "Black" : "White"}
-                </button>
-              ))}
-            </div>
+            <ColorPicker
+              noun="background"
+              value={text.background}
+              onEditStart={entry.begin}
+              onEditEnd={entry.end}
+              onChange={(color) => {
+                write((live) => {
+                  live.background = color;
+                  // app.js:2328's rule, kept: a boxed text whose colour
+                  // matches its own pill would be invisible, so the colour
+                  // flips rather than the box.
+                  live.color = ensureBoxedTextContrast(live).color;
+                });
+              }}
+            />
           </div>
 
           <div className={styles.group}>

@@ -139,7 +139,7 @@ it("styles a double-click-added text layer with its slideshow's own account defa
         size: 40,
         style: "boxed",
         color: "#111111",
-        background: "white",
+        background: "#FFFFFF",
         backgroundShape: "full",
         align: "left",
       },

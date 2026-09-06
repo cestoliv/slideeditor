@@ -17,9 +17,15 @@ import styles from "./text.module.css";
  * because neither one is allowed to work a number out for itself.
  */
 
-/** The pill colour, which is the box's tone rather than the text's (app.js:2822). */
+/**
+ * The pill colour, which is the box's own colour rather than the text's
+ * (app.js:2822). textBackgroundSchema has already normalized it to hex by the
+ * time a TextLayer reaches here, so this returns it as-is; the canvas exporter
+ * (export/render.ts) reads it through this same function, which is what keeps
+ * the two renderers from drifting apart.
+ */
 export function pillFillFor(layer: TextLayer): string {
-  return layer.background === "black" ? "#111111" : "#ffffff";
+  return layer.background;
 }
 
 /** Ported verbatim from roundedRectSvgPath (app.js:2785-2799). */

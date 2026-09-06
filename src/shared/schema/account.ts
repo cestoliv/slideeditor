@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { normalizeHexColor } from "../geometry/color.js";
+import { normalizeHexColor, normalizeTextBackground } from "../geometry/color.js";
 import {
   DEFAULT_RATIO,
   RATIO_ASPECT_MAX,
@@ -22,7 +22,9 @@ export type AccountDefaults = {
     size: number;
     style: "plain" | "outline" | "boxed";
     color: string;
-    background: "white" | "black";
+    /** A hex colour. normalizeTextBackground still accepts the two legacy
+     * tone names, "white" and "black", case-insensitively. */
+    background: string;
     backgroundShape: "lines" | "full";
     align: "left" | "center" | "right";
   };
@@ -104,7 +106,14 @@ export const accountDefaultsSchema: z.ZodType<AccountDefaults> = z.object({
     size: boundedSizeSchema,
     style: z.enum(["plain", "outline", "boxed"]).catch("plain"),
     color: hexColorSchema,
-    background: z.enum(["white", "black"]).catch("white"),
+    // Same treatment as textBackgroundSchema (document.ts): widened from a
+    // "white"|"black" enum to any hex colour, silently repaired rather than
+    // rejected like color above, since a bad background used to fall back
+    // rather than 400.
+    background: z
+      .string()
+      .catch("")
+      .transform((value) => normalizeTextBackground(value)),
     backgroundShape: z.enum(["lines", "full"]).catch("lines"),
     align: z.enum(["left", "center", "right"]).catch("center"),
   }),
@@ -130,7 +139,7 @@ export const BUILTIN_DEFAULTS: AccountDefaults = {
     size: 64,
     style: "plain",
     color: "#FFFFFF",
-    background: "white",
+    background: "#FFFFFF",
     backgroundShape: "lines",
     align: "center",
   },
