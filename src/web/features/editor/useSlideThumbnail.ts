@@ -27,6 +27,16 @@ export type SlideThumbnailOptions = {
   /** Without one, the rail shows its placeholder rather than a stale picture. */
   render?: ThumbnailRenderer | undefined;
   debounceMs?: number | undefined;
+  /** Bumping this redraws a slide whose signature hasn't changed - how a failed render is retried. */
+  attempt?: number | undefined;
+};
+
+export type ThumbnailStatus = "loading" | "ready" | "error";
+
+export type SlideThumbnailResult = {
+  /** The last blob drawn, or null. A failed redraw keeps whatever picture is already up. */
+  url: string | null;
+  status: ThumbnailStatus;
 };
 
 /**
@@ -49,10 +59,16 @@ export function thumbnailSignature(slide: Slide, ratio: Ratio): string {
 export function useSlideThumbnail(
   slide: Slide,
   options: SlideThumbnailOptions,
-): string | null {
-  const { ratio, render, debounceMs = THUMBNAIL_DEBOUNCE_MS } = options;
+): SlideThumbnailResult {
+  const { ratio, render, debounceMs = THUMBNAIL_DEBOUNCE_MS, attempt = 0 } = options;
   const signature = thumbnailSignature(slide, ratio);
+  // thumbnailSignature stays a pure read of what a thumbnail draws, so a retry
+  // (which draws nothing new) is folded in here rather than into it.
+  const drawKey = `${signature}#${String(attempt)}`;
   const [url, setUrl] = useState<string | null>(null);
+  // Without a render function, the rail's placeholder (status "loading") is
+  // exactly the right thing to show forever.
+  const [status, setStatus] = useState<ThumbnailStatus>("loading");
   // The URL is held twice: in state for the render, and in a ref so teardown
   // can hand it back without listing it as a dependency of the effect that
   // replaces it. Revoking from that effect's cleanup would kill the picture
@@ -68,10 +84,21 @@ export function useSlideThumbnail(
 
   useEffect(() => {
     if (render === undefined) return;
-    if (drawnRef.current === signature) return;
+    // Skipping a key already drawn means it was drawn successfully - a failed
+    // attempt never reaches the line that sets drawnRef - so "ready" is exactly
+    // right here. Otherwise reverting to an earlier signature after a later
+    // one failed left status stuck on "error" over a picture that is correct.
+    if (drawnRef.current === drawKey) {
+      setStatus("ready");
+      return;
+    }
 
     let cancelled = false;
     const draw = () => {
+      // "In flight" starts here, not when the debounce timer was set, so a
+      // picture already on screen keeps showing "ready" through the quiet
+      // period rather than flickering to "loading" on every keystroke.
+      setStatus("loading");
       void render(slide, { width, height })
         .then((blob) => {
           /*
@@ -86,14 +113,19 @@ export function useSlideThumbnail(
           const next = URL.createObjectURL(blob);
           const previous = urlRef.current;
           urlRef.current = next;
-          drawnRef.current = signature;
+          drawnRef.current = drawKey;
           setUrl(next);
+          setStatus("ready");
           if (previous !== null) URL.revokeObjectURL(previous);
         })
         .catch((error: unknown) => {
           // app.js:1637 logs and leaves the placeholder up. A slide that cannot
-          // be drawn must not take the rail down with it.
+          // be drawn must not take the rail down with it. The url is untouched,
+          // so whatever picture was already up stays up; status alone reports
+          // the failure, for the rail's retry affordance to act on.
           console.error(error);
+          if (cancelled) return;
+          setStatus("error");
         });
     };
 
@@ -114,7 +146,7 @@ export function useSlideThumbnail(
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [signature, render, slide, width, height, debounceMs]);
+  }, [drawKey, render, slide, width, height, debounceMs]);
 
   useEffect(
     () => () => {
@@ -124,5 +156,5 @@ export function useSlideThumbnail(
     [],
   );
 
-  return url;
+  return { url, status };
 }

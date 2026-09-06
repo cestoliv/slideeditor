@@ -31,12 +31,16 @@ function recorder(): Recorder {
 }
 
 function Probe({ slide, render }: { slide: Slide; render: ThumbnailRenderer }) {
-  const url = useSlideThumbnail(slide, { ratio: RATIO, render });
+  const { url } = useSlideThumbnail(slide, { ratio: RATIO, render });
   return <span data-testid="url">{url ?? "none"}</span>;
 }
 
 function shownUrl(): string {
   return document.querySelector('[data-testid="url"]')?.textContent ?? "";
+}
+
+function shownStatus(): string {
+  return document.querySelector('[data-testid="status"]')?.textContent ?? "";
 }
 
 it("draws the first thumbnail at the ratio's thumbnail size", async () => {
@@ -113,7 +117,7 @@ it("redraws when the slideshow's ratio changes under the same slide", async () =
     const slide = fixtureProject().slides[0];
     if (slide === undefined) throw new Error("The fixture lost its slide.");
     function Ratio({ ratio }: { ratio: Ratio }) {
-      const url = useSlideThumbnail(slide!, { ratio, render: drawn.render });
+      const { url } = useSlideThumbnail(slide!, { ratio, render: drawn.render });
       return <span data-testid="url">{url ?? "none"}</span>;
     }
 
@@ -275,10 +279,125 @@ it("shows nothing at all when no renderer is wired up", async () => {
   const slide = fixtureProject().slides[0];
   if (slide === undefined) throw new Error("The fixture lost its slide.");
   function Bare() {
-    const url = useSlideThumbnail(slide!, { ratio: RATIO });
-    return <span data-testid="url">{url ?? "none"}</span>;
+    const { url, status } = useSlideThumbnail(slide!, { ratio: RATIO });
+    return (
+      <>
+        <span data-testid="url">{url ?? "none"}</span>
+        <span data-testid="status">{status}</span>
+      </>
+    );
   }
   const screen = await render(<Bare />);
   expect(shownUrl()).toBe("none");
+  // No render function means no blob will ever land, which is exactly the
+  // rail's placeholder condition.
+  expect(shownStatus()).toBe("loading");
   screen.unmount();
+});
+
+function StatusProbe({
+  slide,
+  render,
+  attempt,
+}: {
+  slide: Slide;
+  render: ThumbnailRenderer;
+  attempt?: number;
+}) {
+  const { url, status } = useSlideThumbnail(slide, { ratio: RATIO, render, attempt });
+  return (
+    <>
+      <span data-testid="url">{url ?? "none"}</span>
+      <span data-testid="status">{status}</span>
+    </>
+  );
+}
+
+it("reports an error status when the render rejects", async () => {
+  const slide = fixtureProject().slides[0];
+  if (slide === undefined) throw new Error("The fixture lost its slide.");
+  const failing: ThumbnailRenderer = () => Promise.reject(new Error("boom"));
+  // The hook's own catch always logs (app.js:1637). Silence it here so the
+  // expected failure doesn't read as test noise.
+  const loggedError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const screen = await render(<StatusProbe slide={slide} render={failing} />);
+    await vi.waitFor(() => {
+      expect(shownStatus()).toBe("error");
+    });
+    // A first render that never landed leaves no picture behind.
+    expect(shownUrl()).toBe("none");
+    screen.unmount();
+  } finally {
+    loggedError.mockRestore();
+  }
+});
+
+it("redraws and reaches ready when attempt is bumped after a failure", async () => {
+  const slide = fixtureProject().slides[0];
+  if (slide === undefined) throw new Error("The fixture lost its slide.");
+  let calls = 0;
+  const flaky: ThumbnailRenderer = () => {
+    calls += 1;
+    return calls === 1
+      ? Promise.reject(new Error("boom"))
+      : Promise.resolve(new Blob(["retry"], { type: "image/png" }));
+  };
+  const loggedError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const screen = await render(<StatusProbe slide={slide} render={flaky} attempt={0} />);
+    await vi.waitFor(() => {
+      expect(shownStatus()).toBe("error");
+    });
+
+    // Nothing about the slide changed, so only the bumped attempt can be
+    // what redraws it - that's the retry the rail's indicator will trigger.
+    screen.rerender(<StatusProbe slide={slide} render={flaky} attempt={1} />);
+    await vi.waitFor(() => {
+      expect(shownStatus()).toBe("ready");
+    });
+    expect(shownUrl()).toMatch(/^blob:/);
+    expect(calls).toBe(2);
+    screen.unmount();
+  } finally {
+    loggedError.mockRestore();
+  }
+});
+
+it("clears a stale error when the signature reverts to one already drawn", async () => {
+  const slide = fixtureProject().slides[0];
+  if (slide === undefined) throw new Error("The fixture lost its slide.");
+  const originalText = slide.texts[0]!.text;
+  const renderer: ThumbnailRenderer = (drawnSlide) =>
+    drawnSlide.texts[0]?.text === "Changed"
+      ? Promise.reject(new Error("boom"))
+      : Promise.resolve(new Blob(["ok"], { type: "image/png" }));
+  const loggedError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const screen = await render(<StatusProbe slide={slide} render={renderer} />);
+    await vi.waitFor(() => {
+      expect(shownStatus()).toBe("ready");
+    });
+    const drawnUrl = shownUrl();
+
+    slide.texts[0]!.text = "Changed";
+    screen.rerender(<StatusProbe slide={slide} render={renderer} />);
+    await vi.waitFor(() => {
+      expect(shownStatus()).toBe("error");
+    });
+    // The failed redraw must not have dropped the picture already on screen.
+    expect(shownUrl()).toBe(drawnUrl);
+
+    // Undoing the edit lands back on a signature already drawn successfully -
+    // the error was about the edit, not about this (unchanged) picture.
+    slide.texts[0]!.text = originalText;
+    screen.rerender(<StatusProbe slide={slide} render={renderer} />);
+    await vi.waitFor(() => {
+      expect(shownStatus()).toBe("ready");
+    });
+    expect(shownUrl()).toBe(drawnUrl);
+    screen.unmount();
+  } finally {
+    loggedError.mockRestore();
+  }
 });

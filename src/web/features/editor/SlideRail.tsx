@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from "react";
-import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties, DragEvent as ReactDragEvent, ReactNode } from "react";
 import {
   OUTPUT_WIDTH,
   constrainImagePosition,
@@ -7,6 +7,7 @@ import {
 } from "@shared/geometry/index.js";
 import type { LibraryItem, Slide } from "@shared/schema/index.js";
 import {
+  Badge,
   Button,
   Dialog,
   DropdownMenu,
@@ -14,6 +15,7 @@ import {
   IconButton,
   useToast,
 } from "../../design/index.js";
+import type { BadgeTone } from "../../design/index.js";
 import { libraryCache } from "../../app/useLibrary.js";
 import type { LibraryCache } from "../../app/useLibrary.js";
 import { useEditor } from "./store.js";
@@ -22,7 +24,7 @@ import { uploadBackgroundItem } from "./backgrounds.js";
 import type { BackgroundUploader } from "./backgrounds.js";
 import { BackgroundPicker } from "./BackgroundPicker.js";
 import { useSlideThumbnail } from "./useSlideThumbnail.js";
-import type { ThumbnailRenderer } from "./useSlideThumbnail.js";
+import type { ThumbnailRenderer, ThumbnailStatus } from "./useSlideThumbnail.js";
 import styles from "./SlideRail.module.css";
 
 /*
@@ -122,6 +124,16 @@ export function SlideRail({
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
   /*
+   * Keyed by slide id, never pruned: a removed slide's entry just stops being
+   * read once it drops out of `slides`, which costs nothing worth a cleanup
+   * effect. A slide missing here hasn't reported yet, which reads the same as
+   * "loading" - the hook's own initial status - so no entry needs seeding.
+   */
+  const [thumbnailStatuses, setThumbnailStatuses] = useState<
+    Record<string, ThumbnailStatus>
+  >({});
+  const [thumbnailAttempts, setThumbnailAttempts] = useState<Record<string, number>>({});
+  /*
    * The slide whose background is being replaced, which is also what holds the
    * picker open. app.js:3005 kept the same id on its module state, because the
    * choice arrives long after the menu item was pressed.
@@ -206,6 +218,67 @@ export function SlideRail({
     setDropTarget(null);
   }, []);
 
+  const handleThumbnailStatus = useCallback(
+    (slideId: string, status: ThumbnailStatus) => {
+      setThumbnailStatuses((current) =>
+        current[slideId] === status ? current : { ...current, [slideId]: status },
+      );
+    },
+    [],
+  );
+
+  // Every count is read straight off `slides` rather than off the records
+  // themselves, so a slide gone from the document is gone from the count too,
+  // with no pass to prune what it left behind in either record.
+  const readyCount = slides.filter(
+    (slide) => thumbnailStatuses[slide.id] === "ready",
+  ).length;
+  const erroredCount = slides.filter(
+    (slide) => thumbnailStatuses[slide.id] === "error",
+  ).length;
+  const total = slides.length;
+  const allReady = readyCount === total;
+
+  const jumpToUnready = useCallback(() => {
+    const target = slides.find((slide) => thumbnailStatuses[slide.id] !== "ready");
+    if (target === undefined) return;
+    store.setActiveSlide(target.id);
+    // The bump is unconditional, not just for the errored case: landing on a
+    // slide still loading and asking it to draw again costs nothing, and the
+    // one control does not need to first work out why the slide isn't ready.
+    setThumbnailAttempts((current) => ({
+      ...current,
+      [target.id]: (current[target.id] ?? 0) + 1,
+    }));
+  }, [slides, thumbnailStatuses, store]);
+
+  // aria-label replaces the Badge's own text for the accessibility tree
+  // rather than adding to it, so the count has to be said again here - an
+  // aria-label alone would read the sentence but never the number.
+  let indicatorTone: BadgeTone;
+  let indicatorContent: ReactNode;
+  let indicatorLabel: string;
+  if (erroredCount > 0) {
+    indicatorTone = "danger";
+    indicatorContent = `${String(erroredCount)} failed`;
+    indicatorLabel = `${String(erroredCount)} failed. Jump to a slide that failed to render and try again`;
+  } else if (!allReady) {
+    indicatorTone = "neutral";
+    indicatorContent = `${String(readyCount)}/${String(total)} rendered`;
+    indicatorLabel = `${String(readyCount)}/${String(total)} rendered. Jump to a slide that is still rendering`;
+  } else {
+    indicatorTone = "success";
+    // A rail of one would otherwise read "1 slides".
+    const counted = `${String(total)} ${total === 1 ? "slide" : "slides"}`;
+    indicatorContent = (
+      <>
+        <Icon name="check" />
+        {counted}
+      </>
+    );
+    indicatorLabel = `${counted}. Every slide has rendered`;
+  }
+
   const pendingIndex = slides.findIndex((slide) => slide.id === pendingRemoval);
   const pending = pendingIndex < 0 ? null : slides[pendingIndex];
 
@@ -219,7 +292,16 @@ export function SlideRail({
     >
       <div className={styles.heading}>
         <h2>Slides</h2>
-        <span className={styles.count}>{slides.length}</span>
+        <button
+          type="button"
+          className={styles.count}
+          data-testid="render-indicator"
+          aria-label={indicatorLabel}
+          aria-disabled={allReady}
+          onClick={jumpToUnready}
+        >
+          <Badge tone={indicatorTone}>{indicatorContent}</Badge>
+        </button>
       </div>
 
       <div className={styles.list} data-testid="slide-list">
@@ -289,7 +371,13 @@ export function SlideRail({
                 <span className={styles.number}>
                   {String(index + 1).padStart(2, "0")}
                 </span>
-                <SlideThumbnail slide={slide} ratio={ratio} render={render} />
+                <SlideThumbnail
+                  slide={slide}
+                  ratio={ratio}
+                  render={render}
+                  attempt={thumbnailAttempts[slide.id] ?? 0}
+                  onStatus={handleThumbnailStatus}
+                />
               </button>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
@@ -387,19 +475,44 @@ type SlideThumbnailProps = {
   slide: Slide;
   ratio: { w: number; h: number };
   render?: ThumbnailRenderer | undefined;
+  attempt: number;
+  /** Reports every status change up, so the rail's own indicator never re-derives it. */
+  onStatus: (slideId: string, status: ThumbnailStatus) => void;
 };
 
-/** app.js:1575-1579. The picture, or the spinner that stands in for it. */
-function SlideThumbnail({ slide, ratio, render }: SlideThumbnailProps) {
-  const url = useSlideThumbnail(slide, { ratio, render });
+/** app.js:1575-1579. The picture, the spinner, or - new here - the mark a failed draw leaves. */
+function SlideThumbnail({
+  slide,
+  ratio,
+  render,
+  attempt,
+  onStatus,
+}: SlideThumbnailProps) {
+  const { url, status } = useSlideThumbnail(slide, { ratio, render, attempt });
+  useEffect(() => {
+    onStatus(slide.id, status);
+  }, [onStatus, slide.id, status]);
+
   return (
     <span className={styles.thumb}>
-      {url === null ? (
+      {url !== null ? (
+        <img src={url} alt="" draggable={false} aria-hidden="true" />
+      ) : status === "error" ? (
+        // A draw that has never once landed has no picture to fall back on, so
+        // the endless spinner - which promises an ending that never comes -
+        // is replaced rather than layered under.
+        <span
+          className={styles.failed}
+          role="img"
+          aria-label="This slide failed to render"
+          title="This slide failed to render"
+        >
+          !
+        </span>
+      ) : (
         <span className={styles.pending} aria-hidden="true">
           <span />
         </span>
-      ) : (
-        <img src={url} alt="" draggable={false} aria-hidden="true" />
       )}
     </span>
   );
