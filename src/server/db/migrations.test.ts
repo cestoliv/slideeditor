@@ -27,9 +27,10 @@ it("creates the auth tables and lands on the current version", () => {
       "auth_token",
       "slideshow_render",
       "slideshow_export",
+      "slideshow_render_variant",
     ]),
   );
-  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(7);
+  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(8);
   db.close();
 });
 
@@ -99,10 +100,10 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.exec("DROP TABLE auth_token");
   before.exec("DROP TABLE auth_session");
   before.exec("DROP TABLE auth_credential");
-  // fs_migration, account/font and slideshow_render/slideshow_export are
-  // created by migrations after this one, so a database genuinely at version
-  // 3 never had them either. Same for the account_id columns and their
-  // indexes on project/library_item.
+  // fs_migration, account/font and slideshow_render/slideshow_export/
+  // slideshow_render_variant are created by migrations after this one, so a
+  // database genuinely at version 3 never had them either. Same for the
+  // account_id columns and their indexes on project/library_item.
   before.exec("DROP TABLE fs_migration");
   before.exec("DROP INDEX project_account_idx");
   before.exec("DROP INDEX library_item_account_idx");
@@ -112,10 +113,11 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.exec("DROP TABLE account");
   before.exec("DROP TABLE slideshow_render");
   before.exec("DROP TABLE slideshow_export");
+  before.exec("DROP TABLE slideshow_render_variant");
   before.close();
 
   const after = openDb(paths.database, paths.token);
-  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(7);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(8);
   expect(after.prepare("SELECT name FROM auth_token").get()?.["name"]).toBe("legacy");
   after.close();
 });

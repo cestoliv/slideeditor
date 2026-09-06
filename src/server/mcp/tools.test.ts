@@ -4,6 +4,8 @@ import {
   asHttpError,
   catchError,
   createTestApp,
+  noisyPng,
+  solidPng,
   type TestApp,
 } from "../testing.js";
 import { tools, type ToolContext, type ToolResult } from "./tools.js";
@@ -21,6 +23,7 @@ beforeEach(() => {
     accounts: harness.services.accounts,
     fonts: harness.services.fonts,
     exports: harness.services.exports,
+    media: harness.services.media,
     baseUrl: () => "http://localhost:4173",
   };
 });
@@ -513,13 +516,13 @@ const PINNED = [
     name: "export_slideshow",
     title: "Export a slideshow as image URLs",
     description:
-      "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and no token, and they stop working after 45 minutes. Each slide also carries its width, height, byte count and sha256, so you can check that what was downloaded is what was rendered. A `status` of `pending` means the human has not opened the editor since this version became ready: the pixels are drawn in the browser, so ask them to open the edit URL, then call again. Call revoke_export once the import is done.",
+      "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and no token, and they stop working after 45 minutes. Slides come back as JPEG at quality 92 unless you ask for `png` or `webp`, always over an opaque white background, so a transparent pixel never reaches a feed composited against something else. `quality` runs from 1 to 100 and is refused with `png`, which is lossless. Each slide also carries its width, height, byte count and sha256, so you can check that what was downloaded is what was rendered. A `status` of `pending` means the human has not opened the editor since this version became ready: the pixels are drawn in the browser, so ask them to open the edit URL, then call again. Call revoke_export once the import is done.",
   },
   {
     name: "revoke_export",
     title: "Revoke a slideshow's export URLs",
     description:
-      "Stop every temporary URL this slideshow has handed out, before they expire on their own. Call it once the scheduling tool has finished downloading. The rendered images are kept, so a later export_slideshow still works without the human re-rendering anything.",
+      "Stop every temporary URL this slideshow has handed out, before they expire on their own. Call it once the scheduling tool has finished downloading. It revokes PNG, JPEG and WebP URLs alike. The rendered images are kept, so a later export_slideshow still works without the human re-rendering anything.",
   },
 ];
 
@@ -785,8 +788,18 @@ it("takes a slideshow with no caption as one carrying none", async () => {
   expect(read.slideshow.hashtags).toBe("");
 });
 
-/** A ready one-slide slideshow with its render already filed. */
-async function readySlideshow(): Promise<{ id: string; version: number }> {
+/**
+ * A ready slideshow with one real rendered PNG on disk.
+ *
+ * The bytes have to exist now that export_slideshow converts them, so this
+ * files them through MediaStore rather than naming a hash nothing wrote.
+ * Takes the PNG bytes rather than always building them, because a flat
+ * solidPng compresses to the same size at every JPEG quality and one test
+ * below needs bytes that do not.
+ */
+async function readySlideshow(
+  png: Buffer = solidPng(1080, 1440),
+): Promise<{ id: string; version: number }> {
   const backgroundId = await background();
   const created = payload(
     await tools.create_slideshow.handler(
@@ -795,11 +808,14 @@ async function readySlideshow(): Promise<{ id: string; version: number }> {
     ),
   ) as { id: string; version: number };
   await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  const mediaId = await harness.services.media.put(png, "png");
+  // Read back from IHDR, which every PNG puts first, so the row cannot claim a
+  // size the file does not have when a test passes its own fixture.
   harness.services.exports.putRender(created.id, created.version, 0, {
-    mediaId: "a".repeat(64),
-    width: 1080,
-    height: 1440,
-    bytes: 4321,
+    mediaId,
+    width: png.readUInt32BE(16),
+    height: png.readUInt32BE(20),
+    bytes: png.byteLength,
   });
   return created;
 }
@@ -807,11 +823,13 @@ async function readySlideshow(): Promise<{ id: string; version: number }> {
 it("hands back one signed URL per slide, in order", async () => {
   const { id, version } = await readySlideshow();
   const body = payload(
-    await tools.export_slideshow.handler({ id, version }, context),
+    await tools.export_slideshow.handler({ id, version, format: "png" }, context),
   ) as {
     slideshowId: string;
     version: number;
     status: string;
+    format: string;
+    quality: number;
     ratio: { w: number; h: number };
     expiresAt: string;
     slides: {
@@ -827,6 +845,7 @@ it("hands back one signed URL per slide, in order", async () => {
   expect(body.slideshowId).toBe(id);
   expect(body.version).toBe(version);
   expect(body.status).toBe("ready");
+  expect(body.format).toBe("png");
   expect(body.ratio).toEqual({ w: 9, h: 16 });
   expect(Number.isNaN(Date.parse(body.expiresAt))).toBe(false);
   expect(body.slides).toHaveLength(1);
@@ -837,8 +856,8 @@ it("hands back one signed URL per slide, in order", async () => {
   expect(first?.mimeType).toBe("image/png");
   expect(first?.width).toBe(1080);
   expect(first?.height).toBe(1440);
-  expect(first?.bytes).toBe(4321);
-  expect(first?.sha256).toBe("a".repeat(64));
+  expect(first?.sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(first?.bytes).toBeGreaterThan(0);
 });
 
 // Every other export test files one slide, so nothing else reaches the index
@@ -859,23 +878,126 @@ it("numbers the tenth slide 10 and serves it at 10.png", async () => {
     ),
   ) as { id: string; version: number };
   await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  const png = solidPng(1080, 1440);
+  const mediaId = await harness.services.media.put(png, "png");
   for (let index = 0; index < 10; index += 1) {
     harness.services.exports.putRender(created.id, created.version, index, {
-      mediaId: "a".repeat(64),
+      mediaId,
       width: 1080,
       height: 1440,
-      bytes: 100,
+      bytes: png.byteLength,
     });
   }
   const body = payload(
     await tools.export_slideshow.handler(
-      { id: created.id, version: created.version },
+      { id: created.id, version: created.version, format: "png" },
       context,
     ),
   ) as { slides: { index: number; url: string }[] };
   const tenth = body.slides[9];
   expect(tenth?.index).toBe(10);
   expect(tenth?.url).toMatch(/\/10\.png$/);
+});
+
+it("converts to jpeg at quality 92 when no format is named", async () => {
+  const { id, version } = await readySlideshow();
+  const body = payload(
+    await tools.export_slideshow.handler({ id, version }, context),
+  ) as {
+    format: string;
+    quality: number;
+    slides: { url: string; mimeType: string; bytes: number; sha256: string }[];
+  };
+  expect(body.format).toBe("jpeg");
+  expect(body.quality).toBe(92);
+  const first = body.slides[0];
+  expect(first?.url).toMatch(/\/01\.jpg$/);
+  expect(first?.mimeType).toBe("image/jpeg");
+  // The answer describes the converted file, so the checksum has to be the
+  // checksum of bytes that exist.
+  const stored = await harness.services.media.read(first?.sha256 ?? "", "jpg");
+  expect(stored.byteLength).toBe(first?.bytes);
+});
+
+it("converts to webp when webp is asked for", async () => {
+  const { id, version } = await readySlideshow();
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id, version, format: "webp", quality: 70 },
+      context,
+    ),
+  ) as { format: string; quality: number; slides: { url: string; mimeType: string }[] };
+  expect(body.format).toBe("webp");
+  expect(body.quality).toBe(70);
+  expect(body.slides[0]?.url).toMatch(/\/01\.webp$/);
+  expect(body.slides[0]?.mimeType).toBe("image/webp");
+});
+
+it("refuses a quality alongside png", async () => {
+  const { id, version } = await readySlideshow();
+  const error = asHttpError(
+    await catchError(() =>
+      tools.export_slideshow.handler(
+        { id, version, format: "png", quality: 60 },
+        context,
+      ),
+    ),
+  );
+  expect(error.status).toBe(400);
+  expect(error.message).toContain("lossless");
+});
+
+it("converts once and reuses the file on a second export", async () => {
+  const { id, version } = await readySlideshow();
+  const first = payload(
+    await tools.export_slideshow.handler({ id, version }, context),
+  ) as { slides: { sha256: string; url: string }[] };
+  const second = payload(
+    await tools.export_slideshow.handler({ id, version }, context),
+  ) as { slides: { sha256: string; url: string }[] };
+  // A new token every time, the same converted file underneath it.
+  expect(second.slides[0]?.url).not.toBe(first.slides[0]?.url);
+  expect(second.slides[0]?.sha256).toBe(first.slides[0]?.sha256);
+  const rows = harness.db
+    .prepare("SELECT COUNT(*) AS n FROM slideshow_render_variant WHERE slideshow_id = ?")
+    .get(id);
+  expect(rows?.["n"]).toBe(1);
+});
+
+it("keeps two qualities of the same version apart", async () => {
+  // Small on purpose. The claim is that quality reaches the encoder, which
+  // noise proves at any size, and a full 1080x1440 of random bytes costs
+  // several seconds of PNG encoding before the two JPEG passes even start.
+  const { id, version } = await readySlideshow(await noisyPng(240, 320));
+  const dear = payload(
+    await tools.export_slideshow.handler({ id, version, quality: 92 }, context),
+  ) as { slides: { bytes: number }[] };
+  const cheap = payload(
+    await tools.export_slideshow.handler({ id, version, quality: 30 }, context),
+  ) as { slides: { bytes: number }[] };
+  expect(cheap.slides[0]?.bytes).toBeLessThan(dear.slides[0]?.bytes ?? 0);
+});
+
+it("reports pending before it converts anything", async () => {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: backgroundId }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id: created.id, version: created.version, format: "jpeg" },
+      context,
+    ),
+  ) as { status: string };
+  expect(body.status).toBe("pending");
+  const rows = harness.db
+    .prepare("SELECT COUNT(*) AS n FROM slideshow_render_variant")
+    .get();
+  expect(rows?.["n"]).toBe(0);
 });
 
 it("warns when the URLs it just built point at this machine only", async () => {

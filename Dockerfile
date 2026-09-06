@@ -1,5 +1,7 @@
-# node:sqlite is built into Node, and nothing here loads a native module, so
-# musl is safe. Revisit this line if a dependency ever adds one.
+# sharp loads a native libvips, so this base image is load-bearing. sharp
+# publishes @img/sharp-linuxmusl-x64 and @img/sharp-linuxmusl-arm64, which is
+# what makes musl safe here. A dependency whose native module has no musl
+# prebuild needs a glibc base instead.
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

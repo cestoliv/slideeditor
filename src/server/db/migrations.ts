@@ -258,4 +258,33 @@ export const MIGRATIONS: string[] = [
 
   CREATE INDEX slideshow_export_slideshow ON slideshow_export (slideshow_id);
   `,
+  `
+  -- A variant is one render re-encoded for one format at one quality. PNG has
+  -- no row: the render is the PNG. media_id is the sha256 of the converted
+  -- bytes, the same content addressing slideshow_render uses, so two slides
+  -- that encode to identical bytes share one file.
+  --
+  -- The primary key is what makes a conversion happen once. A second export at
+  -- the same format and quality reads these rows and re-encodes nothing.
+  CREATE TABLE slideshow_render_variant (
+    slideshow_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL,
+    idx          INTEGER NOT NULL,
+    format       TEXT NOT NULL,
+    quality      INTEGER NOT NULL,
+    media_id     TEXT NOT NULL,
+    width        INTEGER NOT NULL,
+    height       INTEGER NOT NULL,
+    bytes        INTEGER NOT NULL,
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (slideshow_id, version, idx, format, quality)
+  ) STRICT;
+
+  -- A token is minted for one format at one quality: export_slideshow answers
+  -- with the byte count and the sha256 before anything is downloaded, and both
+  -- only exist once the conversion has run. The defaults describe the rows that
+  -- already exist, because a grant minted before this migration was a PNG one.
+  ALTER TABLE slideshow_export ADD COLUMN format TEXT NOT NULL DEFAULT 'png';
+  ALTER TABLE slideshow_export ADD COLUMN quality INTEGER NOT NULL DEFAULT 100;
+  `,
 ];

@@ -3,12 +3,15 @@ import { typeForExtension } from "../services/media.js";
 
 /*
  * A slide's file name inside an export: the 1-based slide number, padded to two
- * digits, plus .png. Matched before the database is touched, the way
- * routes/media.ts matches MEDIA_NAME before touching the filesystem. Two digits
- * exactly, so a slideshow with a hundred slides fails here rather than serving
- * an ambiguous name.
+ * digits, plus the extension of one of the three formats. Matched before the
+ * database is touched, the way routes/media.ts matches MEDIA_NAME before
+ * touching the filesystem. Two digits exactly, so a slideshow with a hundred
+ * slides fails here rather than serving an ambiguous name.
+ *
+ * A name that parses is still not a name this token serves. The extension has
+ * to match the grant's own format, which ExportService.resolve checks.
  */
-const SLIDE_NAME = /^(\d{2})\.png$/;
+const SLIDE_NAME = /^(\d{2})\.(png|jpg|webp)$/;
 
 /**
  * The one route in this server that answers without a credential.
@@ -35,17 +38,19 @@ export function exportRoutes(app: FastifyInstance): void {
       // The URL is 1-based and the table is 0-based.
       const index = Number(match[1]) - 1;
       if (index < 0) return notFound(reply);
+      const ext = match[2] ?? "";
 
-      const render = app.exports.resolve(request.params.token, index);
-      // An unknown token, an expired one, a revoked one and an index with no
-      // row all arrive here as null, and all leave as 404. Saying which would
-      // tell a stranger whether a token ever existed.
+      const render = app.exports.resolve(request.params.token, index, ext);
+      // An unknown token, an expired one, a revoked one, an extension the grant
+      // was not minted for and an index with no row all arrive here as null,
+      // and all leave as 404. Saying which would tell a stranger whether a
+      // token ever existed, or which format it holds.
       if (render === null) return notFound(reply);
 
       try {
-        const body = await app.media.read(render.mediaId, "png");
+        const body = await app.media.read(render.mediaId, ext);
         return reply
-          .header("Content-Type", typeForExtension("png"))
+          .header("Content-Type", typeForExtension(ext))
           .header("Content-Length", body.byteLength)
           .send(body);
       } catch {

@@ -45,6 +45,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t slide-studio:ci .
+      # sharp needs a musl prebuild on this base image, and a missing one
+      # otherwise surfaces only as a failed healthcheck after the image is
+      # already published. `require` rather than an import: node -e reads an
+      # eval string as CommonJS regardless of the package's own module type.
+      - name: Loads sharp inside the musl image
+        run: docker run --rm --entrypoint node slide-studio:ci -e "require('sharp')"
       # Asserts a failure: the container must refuse to run unconfigured. A
       # container that starts here would be an unauthenticated editor on a
       # published port.

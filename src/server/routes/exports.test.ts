@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import sharp from "sharp";
 import { makeTempApp, solidPng } from "../testing.js";
 
 let app: FastifyInstance;
@@ -75,9 +76,9 @@ it("says nothing about a token it does not know", async () => {
   expect(response.headers["x-content-type-options"]).toBe("nosniff");
 });
 
-it("refuses a filename that is not a two digit PNG", async () => {
+it("refuses a filename that is not a two digit slide name", async () => {
   const { token } = await fileTwoRenders();
-  for (const file of ["1.png", "01.jpg", "../../etc/passwd", "0001.png"]) {
+  for (const file of ["1.png", "../../etc/passwd", "0001.png"]) {
     const response = await app.inject({
       method: "GET",
       url: `/export/${token}/${encodeURIComponent(file)}`,
@@ -91,7 +92,7 @@ it("stops serving once the grant has expired", async () => {
   // A grant that was already dead when it was minted. FastifyInstance has no
   // `db` decoration, so the expiry is moved through grant()'s ttlMs rather
   // than through a direct UPDATE.
-  const { token } = app.exports.grant(id, 3, -1);
+  const { token } = app.exports.grant(id, 3, { ttlMs: -1 });
   const response = await app.inject({ method: "GET", url: `/export/${token}/01.png` });
   expect(response.statusCode).toBe(404);
 });
@@ -101,6 +102,76 @@ it("stops serving once the export is revoked", async () => {
   expect(app.exports.revoke(id)).toBe(1);
   const response = await app.inject({ method: "GET", url: `/export/${token}/01.png` });
   expect(response.statusCode).toBe(404);
+});
+
+/** Two renders plus their jpeg@92 variants, and a grant minted for that pair. */
+async function fileTwoJpegVariants(): Promise<{ token: string; bytes: number }> {
+  const { id } = app.projects.create({ accountId: "default" });
+  const png = solidPng(40, 60);
+  const jpeg = await sharp(png).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+  const pngId = await app.media.put(png, "png");
+  const jpegId = await app.media.put(jpeg, "jpg");
+  for (const index of [0, 1]) {
+    app.exports.putRender(id, 3, index, {
+      mediaId: pngId,
+      width: 40,
+      height: 60,
+      bytes: png.byteLength,
+    });
+    app.exports.putVariant(id, 3, index, "jpeg", 92, {
+      mediaId: jpegId,
+      width: 40,
+      height: 60,
+      bytes: jpeg.byteLength,
+    });
+  }
+  return {
+    token: app.exports.grant(id, 3, { format: "jpeg", quality: 92 }).token,
+    bytes: jpeg.byteLength,
+  };
+}
+
+it("serves a jpeg grant's slide as image/jpeg", async () => {
+  const { token, bytes } = await fileTwoJpegVariants();
+  const response = await app.inject({ method: "GET", url: `/export/${token}/01.jpg` });
+  expect(response.statusCode).toBe(200);
+  expect(response.headers["content-type"]).toBe("image/jpeg");
+  expect(response.rawPayload.byteLength).toBe(bytes);
+});
+
+it("keeps every header on a converted slide too", async () => {
+  const { token } = await fileTwoJpegVariants();
+  const response = await app.inject({ method: "GET", url: `/export/${token}/01.jpg` });
+  expect(response.headers["cache-control"]).toBe("private, no-store");
+  expect(response.headers["x-robots-tag"]).toBe("noindex, nofollow");
+  expect(response.headers["x-content-type-options"]).toBe("nosniff");
+});
+
+it("refuses to walk a jpeg token to the larger original", async () => {
+  const { token } = await fileTwoJpegVariants();
+  expect(
+    (await app.inject({ method: "GET", url: `/export/${token}/01.png` })).statusCode,
+  ).toBe(404);
+  expect(
+    (await app.inject({ method: "GET", url: `/export/${token}/01.webp` })).statusCode,
+  ).toBe(404);
+});
+
+it("refuses a converted extension on a png grant", async () => {
+  const { token } = await fileTwoRenders();
+  expect(
+    (await app.inject({ method: "GET", url: `/export/${token}/01.jpg` })).statusCode,
+  ).toBe(404);
+});
+
+it("refuses a file name that is not one of the three extensions", async () => {
+  const { token } = await fileTwoRenders();
+  for (const name of ["01.gif", "01.jpeg", "01.PNG", "1.png", "01"]) {
+    expect(
+      (await app.inject({ method: "GET", url: `/export/${token}/${name}` })).statusCode,
+      name,
+    ).toBe(404);
+  }
 });
 
 it("serves a slide with no credential on a password-protected deployment, while other routes stay locked", async () => {

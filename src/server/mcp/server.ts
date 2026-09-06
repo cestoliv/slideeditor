@@ -62,6 +62,7 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
     accounts: app.accounts,
     fonts: app.fonts,
     exports: app.exports,
+    media: app.media,
     baseUrl: app.baseUrl,
   };
   await app.register((scope, _options, done) => {

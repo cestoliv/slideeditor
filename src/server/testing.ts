@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import type { DatabaseSync } from "node:sqlite";
 import type { FastifyInstance } from "fastify";
+import sharp from "sharp";
 import { DEFAULT_ACCOUNT_ID } from "../shared/schema/index.js";
 import type { LibraryItem, LibraryKind } from "../shared/schema/index.js";
 import { dataPaths, openDb } from "./db/open.js";
@@ -67,6 +68,16 @@ export function solidPng(
     chunk("IDAT", deflateSync(raw)),
     chunk("IEND", Buffer.alloc(0)),
   ]);
+}
+
+/** A PNG with per-pixel noise, so JPEG's quality parameter changes its byte count. */
+export async function noisyPng(width: number, height: number): Promise<Buffer> {
+  const raw = Buffer.alloc(width * height * 3);
+  for (let index = 0; index < raw.length; index += 1)
+    raw[index] = Math.floor(Math.random() * 256);
+  return sharp(raw, { raw: { width, height, channels: 3 } })
+    .png()
+    .toBuffer();
 }
 
 export interface TestApp {
