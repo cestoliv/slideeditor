@@ -3,7 +3,7 @@ import { render } from "vitest-browser-react";
 import { userEvent } from "vitest/browser";
 import { MemoryRouter, Route, Routes } from "react-router";
 import type { Account, FontEntry } from "@shared/schema/index.js";
-import { TEXT_WEIGHT } from "@shared/text/index.js";
+import { MAX_TEXT_WIDTH_MIN, TEXT_WEIGHT } from "@shared/text/index.js";
 import "../../design/tokens.css";
 import "../../design/reset.css";
 import { ToastProvider } from "../../design/index.js";
@@ -24,6 +24,7 @@ function defaults(overrides: Partial<Account["defaults"]> = {}): Account["defaul
       background: "#FFFFFF",
       backgroundShape: "lines",
       align: "center",
+      maxWidth: 0.6,
     },
     ...overrides,
   };
@@ -275,6 +276,77 @@ it("saves a chosen text size as part of the account's defaults", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Create account" }));
   await expect.poll(() => client.created.length).toBe(1);
   expect(client.created[0]?.defaults.text.size).toBe(88);
+});
+
+/*
+ * Finding 4 from the follow-up review: userEvent.fill writes a value in one
+ * shot, so it never exercised the per-keystroke path a real admin types
+ * through. Typed here one digit at a time (as AccountsAdmin.tsx's own
+ * comment on the field explains), "7" would have been clamped straight to
+ * "10" mid-typing before the fix that made onChange stop clamping — this
+ * test would have caught that regression.
+ */
+it("saves a chosen text width as the fraction its percent maps to, typed digit by digit", async () => {
+  const client = fakeClient([], [font("f1", "TikTok Sans")]);
+  const screen = await mount(client);
+  await userEvent.fill(screen.getByLabelText("Name"), "New brand");
+  const widthField = screen.getByLabelText("Text width (%)");
+  await userEvent.clear(widthField);
+  await userEvent.type(widthField, "75");
+  await expect.element(widthField).toHaveValue(75);
+  await userEvent.tab();
+  await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await expect.poll(() => client.created.length).toBe(1);
+  expect(client.created[0]?.defaults.text.maxWidth).toBe(0.75);
+});
+
+/*
+ * A browser test against the built server found this: backspacing the
+ * field to empty showed "0" instead of empty, because onChange stored 0
+ * for an unparseable value and the controlled `value` rendered that
+ * straight back. That also meant retyping after a clear landed on a stale
+ * rounded digit ("45" read back as "045"). widthText now mirrors the typed
+ * text (including empty) until blur commits a clamped number.
+ */
+it("lets the text width field go empty, then takes a retyped percent without a leading zero", async () => {
+  const client = fakeClient([], [font("f1", "TikTok Sans")]);
+  const screen = await mount(client);
+  await userEvent.fill(screen.getByLabelText("Name"), "New brand");
+  const widthField = screen.getByLabelText("Text width (%)");
+  await userEvent.clear(widthField);
+  await expect.element(widthField).toHaveValue(null);
+  await userEvent.type(widthField, "45");
+  await expect.element(widthField).toHaveValue(45);
+  await userEvent.tab();
+  await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await expect.poll(() => client.created.length).toBe(1);
+  expect(client.created[0]?.defaults.text.maxWidth).toBe(0.45);
+});
+
+/*
+ * Finding 5 from the follow-up review: nothing proved the account preview
+ * (AccountPreview, driven by the same newTextLayer/useTextLayout/
+ * renderTextDom pipeline as the editor) actually reflects maxWidth. The
+ * preview's box is only ever as tall as a freshly added layer (NEW_TEXT_
+ * HEIGHT), which already clips display to one line at any width, so a line
+ * COUNT never moves. The box's wrapWidth does move with maxWidth, though,
+ * and that changes which words fit on that one displayed line - narrowed
+ * to the editor's own minimum, "Preview text" no longer fits whole and the
+ * line loses characters it used to show. That is the preview layer's width
+ * reaching the DOM, so it is what this asserts on.
+ */
+it("shows less of the preview's line when text width narrows", async () => {
+  const client = fakeClient([], [font("f1", "TikTok Sans")]);
+  const screen = await mount(client);
+  const previewLine = () =>
+    document.querySelector('[data-testid="text-block"]')?.textContent ?? "";
+  const fullLine = previewLine();
+  expect(fullLine).toBe("Preview text");
+  await userEvent.fill(
+    screen.getByLabelText("Text width (%)"),
+    String(MAX_TEXT_WIDTH_MIN * 100),
+  );
+  await expect.poll(() => previewLine().length).toBeLessThan(fullLine.length);
 });
 
 it("loads an existing account's defaults and saves changes to it", async () => {

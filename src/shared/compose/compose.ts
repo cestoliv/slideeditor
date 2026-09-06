@@ -17,7 +17,6 @@ import {
   ASSET_ROW_MAX,
   ASSET_TOP_MARGIN,
   CONTENT_WIDTH,
-  SIDE_MARGIN,
   TEXT_BLOCK_MAX,
   TEXT_BOTTOM_MARGIN,
   TEXT_GAP,
@@ -251,9 +250,12 @@ function composeSlide({
     return reused
       ? { ...reused, z: z++ }
       : {
-          ...newTextLayer(defaults, { x: SIDE_MARGIN, y: placed.y, z: z++ }, newId),
+          ...newTextLayer(
+            defaults,
+            { x: (1 - defaults.text.maxWidth) / 2, y: placed.y, z: z++ },
+            newId,
+          ),
           text: placed.text,
-          width: CONTENT_WIDTH,
           height: placed.height,
         };
   });
@@ -274,7 +276,7 @@ function layoutTexts(
     const boxes = texts.map((text) => ({
       text,
       size,
-      height: textHeight(text, size, height, advance),
+      height: textHeight(text, size, height, advance, defaults.text.maxWidth),
     }));
     const total =
       boxes.reduce((sum, box) => sum + box.height, 0) + gap * (boxes.length - 1);
@@ -327,12 +329,21 @@ function layoutTexts(
  * this only has to be close enough to place the block sensibly. `advance` is
  * the family's average glyph width as a fraction of size (advanceRatioFor):
  * fontFamily is now per-account, and a fixed 0.5 tuned for TikTok Sans
- * undercounts lines for a wider face like Space Mono.
+ * undercounts lines for a wider face like Space Mono. `maxWidth` must be the
+ * same width the box actually gets (composeSlide passes defaults.text.maxWidth
+ * both here and to the box itself), or the line count this estimates and the
+ * width the box is placed at disagree.
  */
-function textHeight(text: string, size: number, height: number, advance: number): number {
+function textHeight(
+  text: string,
+  size: number,
+  height: number,
+  advance: number,
+  maxWidth: number,
+): number {
   const charactersPerLine = Math.max(
     8,
-    Math.floor((CONTENT_WIDTH * DESIGN_WIDTH) / (size * advance)),
+    Math.floor((maxWidth * DESIGN_WIDTH) / (size * advance)),
   );
   const lines = Math.max(1, Math.ceil(text.length / charactersPerLine));
   return (lines * size * TEXT_LINE_HEIGHT) / height;

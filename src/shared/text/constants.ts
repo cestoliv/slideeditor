@@ -34,6 +34,22 @@ export const FONT_SIZE_MIN = 20;
 /** Largest author-selectable font size, in design pixels (app.js:41). */
 export const FONT_SIZE_MAX = 180;
 
+/**
+ * What boundedMaxWidthSchema's `.default` fills in for a row with no
+ * maxWidth key: migration 6's seed row (which predates this field) and any
+ * account created before an admin has set one of their own.
+ */
+export const DEFAULT_MAX_TEXT_WIDTH = 0.6;
+
+/** Narrowest an account may set its text width to. Below this a caption
+ * wraps almost every word onto its own line, which the wrap estimate in
+ * compose.ts can still place but no one would actually choose. */
+export const MAX_TEXT_WIDTH_MIN = 0.1;
+
+/** Widest an account may set its text width to: the full frame, edge to
+ * edge, with no side gutter at all. */
+export const MAX_TEXT_WIDTH_MAX = 1;
+
 /** Rounding of a full-box background, as a multiple of the font size (app.js:4465). */
 export const BOX_FULL_CORNER_RADIUS = 0.18;
 

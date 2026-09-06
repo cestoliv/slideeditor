@@ -142,6 +142,7 @@ it("styles a double-click-added text layer with its slideshow's own account defa
         background: "#FFFFFF",
         backgroundShape: "full",
         align: "left",
+        maxWidth: 0.5,
       },
     },
     createdAt: 1,

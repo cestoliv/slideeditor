@@ -10,7 +10,7 @@ describe("newTextLayer", () => {
       x: 0.1,
       y: 0.2,
       z: 3,
-      width: 0.64,
+      width: BUILTIN_DEFAULTS.text.maxWidth,
       height: 0.08,
       size: BUILTIN_DEFAULTS.text.size,
       style: BUILTIN_DEFAULTS.text.style,
@@ -40,5 +40,14 @@ describe("newTextLayer", () => {
     expect(layer.size).toBe(40);
     expect(layer.color).toBe("#000000");
     expect(layer.align).toBe("left");
+  });
+
+  it("writes a custom account's maxWidth into the layer's width", () => {
+    const custom: AccountDefaults = {
+      ...BUILTIN_DEFAULTS,
+      text: { ...BUILTIN_DEFAULTS.text, maxWidth: 0.5 },
+    };
+    const layer = newTextLayer(custom, { x: 0, y: 0, z: 1 });
+    expect(layer.width).toBe(0.5);
   });
 });
