@@ -10,7 +10,6 @@ import type { Composition, LibraryLookup } from "./compose.js";
 import {
   ASSET_TOP_MARGIN,
   CONTENT_WIDTH,
-  SIDE_MARGIN,
   TEXT_BOTTOM_MARGIN,
   TEXT_TOP_LIMIT,
 } from "./constants.js";
@@ -299,7 +298,7 @@ describe("layout", () => {
     const doc = compose([{ background: "bg1", assets: [], texts: ["One", "Two"] }]);
     for (const text of firstSlide(doc).texts) {
       expect(text.y).toBeGreaterThanOrEqual(0.5);
-      expect(text.x).toBe(SIDE_MARGIN);
+      expect(text.x).toBe((1 - BUILTIN_DEFAULTS.text.maxWidth) / 2);
     }
   });
 
@@ -395,6 +394,19 @@ describe("layout", () => {
     for (const text of firstSlide(doc).texts) {
       expect(text.size).toBe(40);
     }
+  });
+
+  it("composes a text exactly maxWidth wide and centred, for a non-default maxWidth", () => {
+    const custom: AccountDefaults = {
+      ...BUILTIN_DEFAULTS,
+      text: { ...BUILTIN_DEFAULTS.text, maxWidth: 0.5 },
+    };
+    const doc = compose([{ background: "bg1", assets: [], texts: ["One"] }], {
+      defaults: custom,
+    });
+    const text = at(firstSlide(doc).texts, 0);
+    expect(text.width).toBe(0.5);
+    expect(text.x).toBe((1 - 0.5) / 2);
   });
 
   it("centers an unfittable text block rather than shrinking or flooring it to one edge", () => {

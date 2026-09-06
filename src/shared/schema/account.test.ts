@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { FONT_SIZE_MAX, FONT_SIZE_MIN } from "../text/constants.js";
+import {
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  MAX_TEXT_WIDTH_MAX,
+  MAX_TEXT_WIDTH_MIN,
+} from "../text/constants.js";
 import {
   BUILTIN_DEFAULTS,
   DEFAULT_ACCOUNT_ID,
@@ -32,6 +37,7 @@ it("BUILTIN_DEFAULTS reproduces today's rendering values exactly, matching migra
       background: "#FFFFFF",
       backgroundShape: "lines",
       align: "center",
+      maxWidth: 0.6,
     },
   });
 });
@@ -126,13 +132,15 @@ describe("accountDefaultsSchema", () => {
   });
 });
 
-it("parses migration 6's exact seeded defaults blob and matches BUILTIN_DEFAULTS", () => {
+it("parses migration 6's exact seeded defaults blob, filling in maxWidth, and matches BUILTIN_DEFAULTS", () => {
   // Verbatim JSON from migration 6's `account` seed row (src/server/db/migrations,
   // Task 1, commit c6c5c6f), so this test fails if either side ever drifts.
   // The row's own background still reads "white" (there is no data migration,
   // src/shared/geometry/color.ts's normalizeTextBackground widens it on read),
-  // so the parsed result is compared field by field rather than by a single
-  // toEqual against the seed.
+  // and it predates maxWidth, so it has no such key: `.default` must fill it
+  // in rather than reject the row for missing it. The parsed result is
+  // therefore compared field by field rather than by a single toEqual against
+  // the seed.
   const seeded = {
     ratio: { w: 9, h: 16 },
     text: {
@@ -148,9 +156,42 @@ it("parses migration 6's exact seeded defaults blob and matches BUILTIN_DEFAULTS
   const parsed = accountDefaultsSchema.parse(seeded);
   expect(parsed).toEqual({
     ...seeded,
-    text: { ...seeded.text, background: "#FFFFFF" },
+    text: { ...seeded.text, background: "#FFFFFF", maxWidth: 0.6 },
   });
   expect(parsed).toEqual(BUILTIN_DEFAULTS);
+});
+
+describe("text.maxWidth", () => {
+  function defaultsWithMaxWidth(maxWidth: number) {
+    return {
+      ratio: { w: 9, h: 16 },
+      text: { ...BUILTIN_DEFAULTS.text, maxWidth },
+    };
+  }
+
+  it("rejects a text width narrower than the editor's own minimum", () => {
+    const result = accountDefaultsSchema.safeParse(defaultsWithMaxWidth(0.05));
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a text width wider than the full frame", () => {
+    const result = accountDefaultsSchema.safeParse(defaultsWithMaxWidth(1.5));
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a text width at each inclusive bound", () => {
+    expect(
+      accountDefaultsSchema.safeParse(defaultsWithMaxWidth(MAX_TEXT_WIDTH_MIN)).success,
+    ).toBe(true);
+    expect(
+      accountDefaultsSchema.safeParse(defaultsWithMaxWidth(MAX_TEXT_WIDTH_MAX)).success,
+    ).toBe(true);
+  });
+
+  it("round-trips the default text width unchanged", () => {
+    const defaults = accountDefaultsSchema.parse(defaultsWithMaxWidth(0.6));
+    expect(defaults.text.maxWidth).toBe(0.6);
+  });
 });
 
 it("accountSchema parses a full account", () => {

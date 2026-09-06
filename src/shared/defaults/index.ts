@@ -1,8 +1,7 @@
 import type { AccountDefaults } from "../schema/account.js";
 import type { TextLayer } from "../schema/document.js";
 
-/** app.js:2952-2953. What a freshly added text box measures, before a caller resizes it. */
-export const NEW_TEXT_WIDTH = 0.64;
+/** app.js:2952-2953. How tall a freshly added text box measures, before a caller resizes it. */
 export const NEW_TEXT_HEIGHT = 0.08;
 
 /**
@@ -11,9 +10,10 @@ export const NEW_TEXT_HEIGHT = 0.08;
  * account never disturbs a slide that already exists.
  *
  * addTextLayer and composeSlide want different boxes: addTextLayer keeps the
- * one this returns, and composeSlide overrides width and height with its own
- * layout geometry. Only position and stacking order are each caller's own, so
- * `at` carries exactly those.
+ * one this returns, and composeSlide overrides only height with its own
+ * layout geometry — width is already the account's own maxWidth, which is
+ * what composeSlide wants too. Only position and stacking order are each
+ * caller's own, so `at` carries exactly those.
  *
  * `newId` lets composeSlide pass its own injected id generator, so a text
  * layer's id is as deterministic as every other id compose.ts hands out. The
@@ -30,7 +30,7 @@ export function newTextLayer(
     text: "",
     x: at.x,
     y: at.y,
-    width: NEW_TEXT_WIDTH,
+    width: defaults.text.maxWidth,
     height: NEW_TEXT_HEIGHT,
     size: defaults.text.size,
     style: defaults.text.style,

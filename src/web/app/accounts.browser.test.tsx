@@ -20,6 +20,7 @@ function account(id: string, name: string): Account {
         background: "#FFFFFF",
         backgroundShape: "lines",
         align: "center",
+        maxWidth: 0.6,
       },
     },
     createdAt: 1,

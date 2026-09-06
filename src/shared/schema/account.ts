@@ -7,7 +7,14 @@ import {
   ratioSchema,
 } from "./document.js";
 import type { Ratio } from "./document.js";
-import { DEFAULT_FONT_FAMILY, FONT_SIZE_MAX, FONT_SIZE_MIN } from "../text/constants.js";
+import {
+  DEFAULT_FONT_FAMILY,
+  DEFAULT_MAX_TEXT_WIDTH,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  MAX_TEXT_WIDTH_MAX,
+  MAX_TEXT_WIDTH_MIN,
+} from "../text/constants.js";
 
 /**
  * The account every pre-existing slideshow and library item is backfilled
@@ -27,6 +34,7 @@ export type AccountDefaults = {
     background: string;
     backgroundShape: "lines" | "full";
     align: "left" | "center" | "right";
+    maxWidth: number;
   };
 };
 
@@ -71,6 +79,31 @@ const boundedSizeSchema = z
   .max(FONT_SIZE_MAX, `Text size must be at most ${String(FONT_SIZE_MAX)}.`);
 
 /**
+ * A fraction of the frame width, not a percent integer, because that is what
+ * compose.ts and newTextLayer both consume directly — a text layer's own
+ * `width` is already a fraction, so storing one here means neither has to
+ * convert on the way in. Only the account admin field speaks percent, and it
+ * converts at the edge.
+ *
+ * `.default` rather than `.catch`, the same reject-do-not-coerce stance
+ * boundedSizeSchema takes: a legacy account row saved before this field
+ * existed has no `maxWidth` key at all, and `.default` fills that gap with
+ * DEFAULT_MAX_TEXT_WIDTH while still rejecting a present-but-out-of-range
+ * value rather than silently clamping it the way `.catch` would.
+ */
+const boundedMaxWidthSchema = z
+  .number()
+  .min(
+    MAX_TEXT_WIDTH_MIN,
+    `Text width must be at least ${String(MAX_TEXT_WIDTH_MIN * 100)}%.`,
+  )
+  .max(
+    MAX_TEXT_WIDTH_MAX,
+    `Text width must be at most ${String(MAX_TEXT_WIDTH_MAX * 100)}%.`,
+  )
+  .default(DEFAULT_MAX_TEXT_WIDTH);
+
+/**
  * text.color used to be a bare z.string(), so "not-a-color" was stored
  * verbatim: neither CSS nor the canvas paint path errors on it, they just
  * silently ignore it and fall back to no colour at all, with nothing telling
@@ -94,7 +127,7 @@ const hexColorSchema = z.string().transform((value, ctx) => {
   return normalized;
 });
 
-export const accountDefaultsSchema: z.ZodType<AccountDefaults> = z.object({
+export const accountDefaultsSchema: z.ZodType<AccountDefaults, unknown> = z.object({
   ratio: boundedRatioSchema,
   text: z.object({
     // fontFamily's other natural check — that the name is one this
@@ -116,6 +149,7 @@ export const accountDefaultsSchema: z.ZodType<AccountDefaults> = z.object({
       .transform((value) => normalizeTextBackground(value)),
     backgroundShape: z.enum(["lines", "full"]).catch("lines"),
     align: z.enum(["left", "center", "right"]).catch("center"),
+    maxWidth: boundedMaxWidthSchema,
   }),
 });
 
@@ -142,5 +176,6 @@ export const BUILTIN_DEFAULTS: AccountDefaults = {
     background: "#FFFFFF",
     backgroundShape: "lines",
     align: "center",
+    maxWidth: DEFAULT_MAX_TEXT_WIDTH,
   },
 };

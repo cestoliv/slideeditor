@@ -13,7 +13,7 @@ import type {
   SlideDocument,
   TextLayer,
 } from "@shared/schema/index.js";
-import { newTextLayer, NEW_TEXT_HEIGHT, NEW_TEXT_WIDTH } from "@shared/defaults/index.js";
+import { newTextLayer, NEW_TEXT_HEIGHT } from "@shared/defaults/index.js";
 import type { EditorStore } from "../store.js";
 import { isLayerSelected, nextLayerZ } from "../selection.js";
 import type { LayerKind } from "../selection.js";
@@ -192,8 +192,8 @@ export function addTextLayer(
     const layer = newTextLayer(defaults, {
       x:
         point === null
-          ? 0.18
-          : clamp(point.x - NEW_TEXT_WIDTH / 2, 0, 1 - NEW_TEXT_WIDTH),
+          ? clamp(0.18, 0, 1 - defaults.text.maxWidth)
+          : clamp(point.x - defaults.text.maxWidth / 2, 0, 1 - defaults.text.maxWidth),
       y:
         point === null
           ? 0.42

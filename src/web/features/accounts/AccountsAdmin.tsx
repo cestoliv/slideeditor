@@ -3,11 +3,13 @@ import { newTextLayer } from "@shared/defaults/index.js";
 import {
   OUTPUT_WIDTH,
   RATIO_PRESETS,
+  clamp,
   outputHeight,
   ratioLabel,
 } from "@shared/geometry/index.js";
 import { BUILTIN_DEFAULTS } from "@shared/schema/index.js";
 import type { Account, AccountDefaults, FontEntry } from "@shared/schema/index.js";
+import { MAX_TEXT_WIDTH_MAX, MAX_TEXT_WIDTH_MIN } from "@shared/text/index.js";
 import {
   Button,
   Field,
@@ -167,6 +169,17 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
   const [addingFont, setAddingFont] = useState(false);
   const [removingFontId, setRemovingFontId] = useState<string | null>(null);
   /*
+   * The text width field's own typed text, while it differs from what
+   * draft.text.maxWidth would show. Null once blur commits (or nothing has
+   * been typed yet), so the field falls back to that computed value —
+   * including right after switching accounts, since switchTo only runs
+   * once this field has already blurred and cleared its override.
+   * Needed because round-tripping every keystroke through
+   * Math.round(maxWidth * 100) turns a cleared field back into "0" and a
+   * freshly retyped "45" into "045".
+   */
+  const [widthText, setWidthText] = useState<string | null>(null);
+  /*
    * Edits in progress on a slot that is not on screen right now, keyed by
    * account id (or null for "New account"). This page previews typography
    * live, which invites flipping between accounts to compare looks rather
@@ -194,6 +207,7 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
     setEditingId(key);
     setName(pending?.name ?? fallbackName);
     setDraft(pending?.defaults ?? fallbackDefaults);
+    setWidthText(null);
   };
 
   const startNew = () => {
@@ -218,6 +232,7 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
         setEditingId(null);
         setName("");
         setDraft(BUILTIN_DEFAULTS);
+        setWidthText(null);
       }
     } catch (error) {
       // The server's own message already names what remains (Task 8's
@@ -518,6 +533,55 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
               setDraft((current) => ({ ...current, text: { ...current.text, size } }));
             }}
           />
+
+          {
+            // The width every text an agent composes gets, and the width the
+            // editor's Add text button starts from (newTextLayer). Stored as
+            // a fraction (accountDefaultsSchema), shown here as the percent
+            // an admin actually thinks in.
+          }
+          <Field label="Text width (%)">
+            <Input
+              inputSize="sm"
+              type="number"
+              min={MAX_TEXT_WIDTH_MIN * 100}
+              max={MAX_TEXT_WIDTH_MAX * 100}
+              step={1}
+              value={widthText ?? String(Math.round(draft.text.maxWidth * 100))}
+              // Clamping on every keystroke (the way the old version did)
+              // fights typing: MAX_TEXT_WIDTH_MIN is 10, so the first digit of
+              // any two-digit target below it — "7" of "75" — gets bounced up
+              // to "10" before the second digit ever lands, and the field
+              // never reaches the value typed. Left free here and clamped
+              // only on blur, the same "type freely, settle on blur" split
+              // LibraryCard's fields already use. widthText mirrors what was
+              // typed (including empty) so the field can be cleared instead
+              // of showing the "0" that Math.round(0 * 100) would force back
+              // in, and a retyped value never lands on a stale rounded digit.
+              onChange={(event) => {
+                const raw = event.target.value;
+                setWidthText(raw);
+                const percent = Number(raw);
+                if (raw === "" || !Number.isFinite(percent)) return;
+                setDraft((current) => ({
+                  ...current,
+                  text: { ...current.text, maxWidth: percent / 100 },
+                }));
+              }}
+              onBlur={(event) => {
+                const percent = clamp(
+                  Number(event.target.value) || MAX_TEXT_WIDTH_MIN * 100,
+                  MAX_TEXT_WIDTH_MIN * 100,
+                  MAX_TEXT_WIDTH_MAX * 100,
+                );
+                setWidthText(null);
+                setDraft((current) => ({
+                  ...current,
+                  text: { ...current.text, maxWidth: percent / 100 },
+                }));
+              }}
+            />
+          </Field>
 
           <Field label="Text color">
             <ColorPicker
