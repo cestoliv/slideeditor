@@ -5,6 +5,10 @@
 /** Font weight for every rendered text line (app.js:30). */
 export const TEXT_WEIGHT = 500;
 
+/** The CSS `font-weight` range (weightSchema, schema/document.ts). */
+export const TEXT_WEIGHT_MIN = 1;
+export const TEXT_WEIGHT_MAX = 1000;
+
 /** Line advance for plain and outline text, as a multiple of the font size (app.js:31). */
 export const TEXT_LINE_HEIGHT = 1.12;
 
@@ -111,12 +115,46 @@ export function fontStack(family: string): string {
  * weight (src/web/app/fontFaces.ts weightFor) should pass it: a face
  * catalogued at a different weight than requested makes the browser
  * synthesise bold on some render paths and not others, which is exactly the
- * mismatch this shared string exists to prevent.
+ * mismatch this shared string exists to prevent. `italic` defaults to false;
+ * every caller that measures and every caller that paints must pass the same
+ * flag, for the same reason.
  */
 export function textFontString(
   fontSize: number,
   family: string,
   weight: number = TEXT_WEIGHT,
+  italic = false,
 ): string {
-  return `${weight} ${fontSize}px "${family}"`;
+  // The `italic` keyword goes before the weight, per the CSS font shorthand's
+  // own order. Every caller that measures and every caller that paints must
+  // pass the same flag: a difference re-wraps every line, which is the drift
+  // this one shared string exists to prevent.
+  return `${italic ? "italic " : ""}${String(weight)} ${String(fontSize)}px "${family}"`;
 }
+
+/**
+ * Height of an underline or a strikethrough rule, as a multiple of the font
+ * size. Both render paths draw the rule as a rectangle from
+ * computeTextLayout's numbers rather than reading a font's own
+ * underlineThickness: the canvas exporter cannot read one at all, and a DOM
+ * text-decoration the canvas cannot match is exactly the editor/export drift
+ * this module exists to prevent.
+ */
+export const DECORATION_THICKNESS = 0.06;
+
+/**
+ * An underline's distance BELOW a line's centre, as a multiple of the font
+ * size. Measured from the centre because that is where both paths already
+ * position a line (lineCenters, and textBaseline "middle" on the canvas).
+ * Tuned by eye against TikTok Sans at the default size: a face with an
+ * unusual descender sits slightly off, which is a knob to turn rather than a
+ * number to derive, since no font metrics are available here.
+ */
+export const UNDERLINE_OFFSET = 0.42;
+
+/**
+ * A strikethrough's distance from a line's centre, as a multiple of the font
+ * size. Negative, so the rule sits just above the centre, near the middle of
+ * the x-height rather than on the geometric centre of the em box.
+ */
+export const STRIKETHROUGH_OFFSET = -0.05;

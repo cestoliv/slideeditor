@@ -1,6 +1,12 @@
 import { expect, it } from "vitest";
 import { computeTextLayout, fontSizeAt } from "./layout.js";
-import { BOX_LINE_HEIGHT, TEXT_LINE_HEIGHT } from "./constants.js";
+import {
+  BOX_LINE_HEIGHT,
+  DECORATION_THICKNESS,
+  STRIKETHROUGH_OFFSET,
+  TEXT_LINE_HEIGHT,
+  UNDERLINE_OFFSET,
+} from "./constants.js";
 
 const measure = (line: string) => line.length * 10;
 const base = {
@@ -17,6 +23,10 @@ const base = {
   backgroundShape: "lines" as const,
   align: "center" as const,
   fontFamily: "TikTok Sans",
+  weight: null,
+  italic: false,
+  underline: false,
+  strikethrough: false,
   rotation: 0,
   z: 1,
 };
@@ -163,12 +173,21 @@ it("scales every coordinate with the target scale", () => {
     "horizontalPadding",
     "outlineWidth",
     "fullBoxRadius",
+    "decorationThickness",
+    "underlineOffset",
+    "strikethroughOffset",
   ] as const;
   for (const key of scalars) {
     expect(exported[key], key).toBe(stage[key] * 2);
   }
 
-  const vectors = ["lineCenters", "pillWidths", "pillStarts"] as const;
+  const vectors = [
+    "lineCenters",
+    "lineWidths",
+    "lineStarts",
+    "pillWidths",
+    "pillStarts",
+  ] as const;
   for (const key of vectors) {
     expect(exported[key], key).toEqual(stage[key].map((value) => value * 2));
   }
@@ -464,6 +483,105 @@ it("reports a single line that is taller than its box as overflowing", () => {
   });
   expect(layout.totalLineCount).toBe(layout.lines.length);
   expect(layout.contentHeight).toBeGreaterThan(30);
+});
+
+it("reports each line's own width, unpadded and unclamped", () => {
+  const layer = { ...base, text: "abc" };
+  const layout = computeTextLayout({
+    layer,
+    boxWidth: 200,
+    boxHeight: 200,
+    fontSize: 40,
+    measure,
+  });
+  expect(layout.lineWidths).toEqual([30]);
+
+  // A boxed line whose padded pill is wider than its box proves both
+  // adjectives at once: pillWidths adds padding, which pushes it past
+  // boxWidth and clamps it there, but lineWidths does neither, so the two
+  // must differ here.
+  const boxed = { ...base, style: "boxed" as const, text: "aaaaaaaaaaaaaaaaaaaa" };
+  const clamped = computeTextLayout({
+    layer: boxed,
+    boxWidth: 60,
+    boxHeight: 300,
+    fontSize: 40,
+    measure,
+  });
+  expect(clamped.lineWidths[0]).toBe(40);
+  expect(clamped.pillWidths[0]).toBe(60);
+});
+
+it("centres a line's start inside the box", () => {
+  const layer = { ...base, text: "abc" };
+  const layout = computeTextLayout({
+    layer,
+    boxWidth: 200,
+    boxHeight: 200,
+    fontSize: 40,
+    measure,
+  });
+  expect(layout.lineStarts[0]).toBeCloseTo((200 - 30) / 2, 6);
+});
+
+it("starts a left aligned line at the text inset", () => {
+  const layer = { ...base, text: "abc", align: "left" as const };
+  const layout = computeTextLayout({
+    layer,
+    boxWidth: 200,
+    boxHeight: 200,
+    fontSize: 40,
+    measure,
+  });
+  expect(layout.lineStarts[0]).toBeCloseTo(40 * 0.16, 6);
+});
+
+it("ends a right aligned line at the text inset", () => {
+  const layer = { ...base, text: "abc", align: "right" as const };
+  const layout = computeTextLayout({
+    layer,
+    boxWidth: 200,
+    boxHeight: 200,
+    fontSize: 40,
+    measure,
+  });
+  expect((layout.lineStarts[0] ?? 0) + (layout.lineWidths[0] ?? 0)).toBeCloseTo(
+    layout.textX,
+    6,
+  );
+});
+
+it("scales the decoration offsets with the font size", () => {
+  const layout = computeTextLayout({
+    layer: base,
+    boxWidth: 200,
+    boxHeight: 200,
+    fontSize: 40,
+    measure,
+  });
+  expect(layout.decorationThickness).toBeCloseTo(40 * DECORATION_THICKNESS, 6);
+  expect(layout.underlineOffset).toBeCloseTo(40 * UNDERLINE_OFFSET, 6);
+  expect(layout.strikethroughOffset).toBeCloseTo(40 * STRIKETHROUGH_OFFSET, 6);
+  // Pins the sign contract renderers rely on: an underline sits below a
+  // line's centre, a strikethrough above it.
+  expect(layout.underlineOffset).toBeGreaterThan(0);
+  expect(layout.strikethroughOffset).toBeLessThan(0);
+});
+
+it("measures a blank line as zero rather than as a space", () => {
+  const layer = { ...base, text: "abc\n\nabc" };
+  const layout = computeTextLayout({
+    layer,
+    boxWidth: 200,
+    boxHeight: 400,
+    fontSize: 40,
+    measure,
+  });
+  expect(layout.lineWidths[1]).toBe(0);
+  // The blank line's own width is zero, but its pill still measures a
+  // space, which is the fallback that keeps a paragraph break's pill
+  // rhythm — a fallback lineWidths must not share.
+  expect(layout.pillWidths[1]).toBe(10);
 });
 
 it("scales the authored font size onto the render surface", () => {

@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { FontEntry, FontSource } from "../../shared/schema/index.js";
 import { DEFAULT_ADVANCE_RATIO, TEXT_WEIGHT } from "../../shared/text/index.js";
-import { integer, optionalInteger, optionalNumber, text, type Row } from "../db/rows.js";
+import {
+  integer,
+  optionalInteger,
+  optionalNumber,
+  optionalText,
+  text,
+  type Row,
+} from "../db/rows.js";
 import { HttpError } from "../errors.js";
 import type { MediaStore } from "./media.js";
 
@@ -22,7 +29,9 @@ export interface FontServiceDeps {
   db: DatabaseSync;
   media: MediaStore;
   /** Injected so a test can stub the network without reaching Google. */
-  fetchCss?: (family: string) => Promise<string>;
+  fetchCss?: (family: string, metadata: FontMetadata) => Promise<string>;
+  /** Injected so a test can stub the network without reaching Google. */
+  fetchMetadata?: (family: string) => Promise<FontMetadata>;
 }
 
 /**
@@ -119,6 +128,122 @@ const GOOGLE_FONTS_USER_AGENT =
 /** Every outbound font fetch — the CSS lookup and the binary download — dies by here rather than hanging the request forever on a stalled upstream. */
 const FONT_FETCH_TIMEOUT_MS = 10_000;
 
+/**
+ * Google's per-family metadata, which is what makes a correct css2 request
+ * possible. A css2 request outside a family's real axis is a 400, not a
+ * clamp — `Oswald:ital,wght@0,100..900;1,100..900` fails because Oswald's
+ * axis stops at 700 and Oswald has no italic — so the axis has to be known
+ * before the request is built. No API key, roughly 18KB per family, 404 for
+ * a family that does not exist.
+ */
+const GOOGLE_FONTS_METADATA_URL = "https://fonts.google.com/metadata/fonts";
+
+export type FontMetadata = {
+  /** The wght axis, or null for a family with a single static instance. */
+  weightMin: number | null;
+  weightMax: number | null;
+  /** The one instance this app paints at: TEXT_WEIGHT clamped into the axis. */
+  weight: number;
+  hasItalic: boolean;
+};
+
+/**
+ * The response is a JSON object behind Google's `)]}'` XSSI guard, so the
+ * parse starts at the first brace rather than at byte zero. Only the `wght`
+ * axis is read: Roboto also carries `wdth` and Inter `opsz`, and this app
+ * paints at neither.
+ */
+export function parseFontMetadata(body: string, family: string): FontMetadata {
+  const start = body.indexOf("{");
+  let parsed: unknown;
+  try {
+    if (start < 0) throw new Error("no object");
+    parsed = JSON.parse(body.slice(start));
+  } catch {
+    throw new HttpError(502, `Google Fonts sent no usable metadata for ${family}.`);
+  }
+  const record = parsed as {
+    axes?: { tag?: unknown; min?: unknown; max?: unknown }[];
+    fonts?: Record<string, unknown>;
+  };
+  const variants = Object.keys(record.fonts ?? {});
+  const hasItalic = variants.some((variant) => variant.endsWith("i"));
+  const wght = (record.axes ?? []).find((axis) => axis.tag === "wght");
+  if (
+    wght &&
+    typeof wght.min === "number" &&
+    typeof wght.max === "number" &&
+    wght.min <= wght.max
+  ) {
+    const weightMin = Math.round(wght.min);
+    const weightMax = Math.round(wght.max);
+    return {
+      weightMin,
+      weightMax,
+      // The same clamp parseWeightDeclaration already applies to a variable
+      // face: the app needs exactly one number to paint with, and TEXT_WEIGHT
+      // is the target every other path aims at.
+      weight: Math.min(weightMax, Math.max(weightMin, TEXT_WEIGHT)),
+      hasItalic,
+    };
+  }
+  // A static family's own weight, read off its variant list. A variant key
+  // is "400", or "400i" for the italic of the same weight. A family that
+  // ships several static weights (Titillium Web: 200, 300 ... 900) has no
+  // "the" weight, so pick whichever sits closest to what the app paints at,
+  // not the lightest one. Ties break toward the heavier weight.
+  const weights = variants
+    .map((variant) => Number.parseInt(variant, 10))
+    .filter((weight) => Number.isFinite(weight));
+  const weight = weights.length
+    ? weights.reduce((closest, candidate) => {
+        const distance = Math.abs(candidate - TEXT_WEIGHT);
+        const closestDistance = Math.abs(closest - TEXT_WEIGHT);
+        return distance < closestDistance ||
+          (distance === closestDistance && candidate > closest)
+          ? candidate
+          : closest;
+      })
+    : TEXT_WEIGHT;
+  return { weightMin: null, weightMax: null, weight, hasItalic };
+}
+
+/**
+ * The one css2 request this family needs, built from what it actually has.
+ * Four shapes, because css2 answers 400 rather than clamping: the full axis
+ * in both styles, the axis alone, one weight in both styles, or the bare
+ * family.
+ */
+export function googleCssUrl(family: string, metadata: FontMetadata): string {
+  const { weightMin, weightMax, weight, hasItalic } = metadata;
+  const range =
+    weightMin !== null && weightMax !== null
+      ? `${String(weightMin)}..${String(weightMax)}`
+      : String(weight);
+  const axis = hasItalic
+    ? `ital,wght@0,${range};1,${range}`
+    : weightMin !== null
+      ? `wght@${range}`
+      : null;
+  const spec = axis === null ? family : `${family}:${axis}`;
+  return `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(spec)}`;
+}
+
+async function defaultFetchMetadata(family: string): Promise<FontMetadata> {
+  const response = await fetch(
+    `${GOOGLE_FONTS_METADATA_URL}/${encodeURIComponent(family)}`,
+    {
+      headers: { "User-Agent": GOOGLE_FONTS_USER_AGENT },
+      signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
+    },
+  );
+  if (!response.ok) {
+    await drain(response);
+    throw new HttpError(502, `Google Fonts had no family named ${family}.`);
+  }
+  return parseFontMetadata(await response.text(), family);
+}
+
 /** A generous ceiling for one self-hosted face. Real WOFF2 files run well under 1MB; this only exists to bound memory against a hostile or misbehaving response, the same role LibraryService's MAX_UPLOAD_BYTES plays for an image. */
 const MAX_FONT_BYTES = 5 * 1024 * 1024;
 
@@ -149,6 +274,7 @@ const FONT_FACE_URL = /url\((https:\/\/[^)]+\.woff2)\)/;
  * matches, same as before.
  */
 const FONT_FACE_WEIGHT = /font-weight:\s*(\d+)(?:\s+(\d+))?/;
+const FONT_FACE_STYLE = /font-style:\s*([a-z]+)/;
 const FONT_FACE_UNICODE_RANGE = /unicode-range:\s*([^;]+);/;
 const UNICODE_RANGE_ENTRY = /^U\+([0-9A-F]+)(?:-([0-9A-F]+))?$/i;
 
@@ -205,6 +331,7 @@ interface FontFace {
 
 interface ParsedFace extends FontFace {
   unicodeRange: string | null;
+  italic: boolean;
 }
 
 /**
@@ -219,7 +346,8 @@ interface ParsedFace extends FontFace {
  * still needs exactly one number to paint with — filling that role is what
  * BUILTIN_FONTS' hardcoded `weight: 500` does for TikTok Sans's own 300-900
  * axis — so `weight` becomes TEXT_WEIGHT clamped into the declared range,
- * the same target `defaultFetchCss` above already requests first. Reading
+ * the same target parseFontMetadata's own `weight` field already clamps
+ * to before the css2 request is even built. Reading
  * only the range's first number for `weight` here (this function's previous
  * behaviour) pinned a variable family at its LOWEST weight instead: for
  * `font-weight: 100 900`, weightFor() (web/app/fontFaces.ts) answered 100 to
@@ -252,17 +380,24 @@ function parseFontFaces(css: string): ParsedFace[] {
     const { weight, weightMin, weightMax } = parseWeightDeclaration(body);
     const unicodeRange =
       FONT_FACE_UNICODE_RANGE.exec(body)?.[1]?.replace(/\s/g, "") ?? null;
-    faces.push({ url, weight, weightMin, weightMax, unicodeRange });
+    // A response with no font-style at all is roman: that is CSS's own
+    // default.
+    const italic = FONT_FACE_STYLE.exec(body)?.[1] === "italic";
+    faces.push({ url, weight, weightMin, weightMax, unicodeRange, italic });
   }
   return faces;
 }
 
 /**
- * Picks the face this app should self-host: the one covering basic Latin. If
- * no block in the response declares a unicode-range at all, some single-subset
- * families omit it entirely, so the only block there is is used.
+ * The Latin face per style: the roman one this app paints with, and the
+ * italic one when the response carries it. The unicode-range rules are
+ * unchanged and applied within each style — a block with no `unicode-range`
+ * covers everything, so it counts as Latin.
  */
-function chooseLatinFace(css: string, family: string): FontFace {
+export function chooseLatinFaces(
+  css: string,
+  family: string,
+): { roman: FontFace; italic: FontFace | null } {
   const faces = parseFontFaces(css);
   if (!faces.length)
     throw new HttpError(502, `Could not find a WOFF2 file for ${family}.`);
@@ -274,28 +409,20 @@ function chooseLatinFace(css: string, family: string): FontFace {
   // unranged default block matched nothing and 502'd for a family Google
   // serves fine. A response where every block is unranged (the doc comment's
   // single-subset case) also falls through to here, matching the first one.
-  const latin = faces.find(
-    (face) => !face.unicodeRange || coversLatin(face.unicodeRange),
-  );
-  if (!latin) throw new HttpError(502, `${family} has no Latin character set available.`);
-  return latin;
-}
-
-async function fetchCssAtWeight(family: string, weight: number): Promise<Response> {
-  const url = `${GOOGLE_FONTS_CSS_URL}?family=${encodeURIComponent(family)}:wght@${String(weight)}`;
-  return fetch(url, {
-    headers: { "User-Agent": GOOGLE_FONTS_USER_AGENT },
-    signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
-  });
+  const latin = (candidates: ParsedFace[]): FontFace | null =>
+    candidates.find((face) => !face.unicodeRange || coversLatin(face.unicodeRange)) ??
+    null;
+  const roman = latin(faces.filter((face) => !face.italic));
+  if (!roman) throw new HttpError(502, `${family} has no Latin character set available.`);
+  return { roman, italic: latin(faces.filter((face) => face.italic)) };
 }
 
 /**
- * Cancels a response's body without reading it, for a response this module
- * decided not to use after all (the rejected `preferred` weight below, an
- * error status about to be thrown past). Leaving it unread holds the
- * underlying connection open until Node eventually reclaims it; cancelling
- * releases it immediately. Best-effort: a response with no body, or one
- * already settled, has nothing to cancel.
+ * Cancels a response's body without reading it, for a metadata or css2
+ * response this module is about to reject with an HttpError instead of
+ * reading. Leaving it unread holds the underlying connection open until Node
+ * eventually reclaims it; cancelling releases it immediately. Best-effort: a
+ * response with no body, or one already settled, has nothing to cancel.
  */
 async function drain(response: Response): Promise<void> {
   try {
@@ -305,21 +432,18 @@ async function drain(response: Response): Promise<void> {
   }
 }
 
-async function defaultFetchCss(family: string): Promise<string> {
-  // TEXT_WEIGHT (500) first, so a self-hosted face matches what the DOM and
-  // the canvas export both render at instead of getting synthetically
-  // emboldened. Not every family ships a 500, so a rejection falls back to
-  // the family's regular (400) face, which every family Google recognises at
-  // all is guaranteed to have.
-  const preferred = await fetchCssAtWeight(family, TEXT_WEIGHT);
-  if (preferred.ok) return preferred.text();
-  await drain(preferred);
-  const regular = await fetchCssAtWeight(family, 400);
-  if (!regular.ok) {
-    await drain(regular);
+async function defaultFetchCss(family: string, metadata: FontMetadata): Promise<string> {
+  // One request, not a ladder. The old "try 500, fall back to 400" pair
+  // existed only because the family's axis was unknown; it is known now.
+  const response = await fetch(googleCssUrl(family, metadata), {
+    headers: { "User-Agent": GOOGLE_FONTS_USER_AGENT },
+    signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    await drain(response);
     throw new HttpError(502, `Google Fonts had no family named ${family}.`);
   }
-  return regular.text();
+  return response.text();
 }
 
 /**
@@ -403,12 +527,19 @@ async function readBounded(
 export class FontService {
   private readonly db: DatabaseSync;
   private readonly media: MediaStore;
-  private readonly fetchCss: (family: string) => Promise<string>;
+  private readonly fetchCss: (family: string, metadata: FontMetadata) => Promise<string>;
+  private readonly fetchMetadata: (family: string) => Promise<FontMetadata>;
 
-  constructor({ db, media, fetchCss = defaultFetchCss }: FontServiceDeps) {
+  constructor({
+    db,
+    media,
+    fetchCss = defaultFetchCss,
+    fetchMetadata = defaultFetchMetadata,
+  }: FontServiceDeps) {
     this.db = db;
     this.media = media;
     this.fetchCss = fetchCss;
+    this.fetchMetadata = fetchMetadata;
     this.seedBuiltins();
   }
 
@@ -439,23 +570,28 @@ export class FontService {
    * without freeing it, and remove() refuses to run on a builtin row at all
    * (see remove()'s own doc comment), so nothing else in this service can
    * ever reach that file again once source flips to 'builtin'. The old
-   * media_id and ext are read before the upsert overwrites them, and — best
-   * effort, the same way remove() itself cleans up a file, logged rather
-   * than thrown so one family's stale file cannot stop the rest of boot —
-   * the blob is unlinked once the row no longer points at it.
+   * media_id, italic_media_id and ext are read before the upsert overwrites
+   * them, and — best effort, the same way remove() itself cleans up a file,
+   * logged rather than thrown so one family's stale file cannot stop the
+   * rest of boot — each blob is unlinked once the row no longer points at
+   * it. Neither bundled family ships an italic file, so italic_media_id is
+   * always written NULL here too, same as media_id.
    */
   private seedBuiltins(): void {
     for (const font of BUILTIN_FONTS) {
       const existing = this.db
-        .prepare("SELECT media_id, ext FROM font WHERE family = ?")
+        .prepare("SELECT media_id, italic_media_id, ext FROM font WHERE family = ?")
         .get(font.family) as Row | undefined;
       const orphanedMediaId = existing ? text(existing, "media_id") : "";
+      const orphanedItalicMediaId = existing
+        ? optionalText(existing, "italic_media_id")
+        : null;
       const orphanedExt = existing ? text(existing, "ext") : "";
 
       this.db
         .prepare(
-          `INSERT INTO font (id, family, source, weight, weight_min, weight_max, advance, media_id, ext, created_at)
-           VALUES (?, ?, 'builtin', ?, ?, ?, ?, NULL, ?, ?)
+          `INSERT INTO font (id, family, source, weight, weight_min, weight_max, advance, media_id, italic_media_id, ext, created_at)
+           VALUES (?, ?, 'builtin', ?, ?, ?, ?, NULL, NULL, ?, ?)
            ON CONFLICT (family) DO UPDATE SET
              source = excluded.source,
              weight = excluded.weight,
@@ -463,6 +599,7 @@ export class FontService {
              weight_max = excluded.weight_max,
              advance = excluded.advance,
              media_id = excluded.media_id,
+             italic_media_id = excluded.italic_media_id,
              ext = excluded.ext`,
         )
         .run(
@@ -479,6 +616,13 @@ export class FontService {
       if (orphanedMediaId && !this.mediaStillReferenced(orphanedMediaId)) {
         void this.media
           .remove(orphanedMediaId, orphanedExt || "woff2")
+          .catch((error: unknown) => {
+            console.error(error);
+          });
+      }
+      if (orphanedItalicMediaId && !this.mediaStillReferenced(orphanedItalicMediaId)) {
+        void this.media
+          .remove(orphanedItalicMediaId, orphanedExt || "woff2")
           .catch((error: unknown) => {
             console.error(error);
           });
@@ -535,27 +679,61 @@ export class FontService {
     const existing = this.byFamily(name);
     if (existing) return existing;
 
-    const css = await this.fetchCss(name);
-    const face = chooseLatinFace(css, name);
-    assertAllowedFontHost(face.url, name);
-    const response = await fetch(face.url, {
-      signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      await drain(response);
-      throw new HttpError(502, `Could not download ${name}.`);
-    }
-    const bytes = await readBounded(response, MAX_FONT_BYTES, `${name}'s font file`);
-    const mediaId = await this.media.put(bytes, "woff2");
+    const metadata = await this.fetchMetadata(name);
+    const css = await this.fetchCss(name, metadata);
+    const faces = chooseLatinFaces(css, name);
+    const download = async (face: FontFace): Promise<string> => {
+      assertAllowedFontHost(face.url, name);
+      const response = await fetch(face.url, {
+        signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        await drain(response);
+        throw new HttpError(502, `Could not download ${name}.`);
+      }
+      return this.media.put(
+        await readBounded(response, MAX_FONT_BYTES, `${name}'s font file`),
+        "woff2",
+      );
+    };
+    const mediaId = await download(faces.roman);
+    // A failed roman download stays fatal (download() above throws and this
+    // whole call rejects, matching "no italic Latin face" already being fine
+    // — see chooseLatinFaces's own comment). A failed italic download used to
+    // propagate the same way, which orphaned the roman blob already put()
+    // above (no row is ever inserted to reference it) and made the whole
+    // family unaddable over what amounts to a transient hiccup fetching a
+    // face this app already treats as optional. Falling back to null here
+    // instead catalogues the family roman-only; a later re-add picks up the
+    // italic once the underlying fetch problem clears.
+    // The host allowlist is asserted here rather than left to download()'s
+    // own call, so the catch below cannot turn a rejected host into a quiet
+    // "this family has no italic". A fetch failure is still caught untyped:
+    // a network error surfaces as a TypeError, which is indistinguishable
+    // from a programming one at this point, and treating it as fatal is
+    // exactly the transient hiccup this fallback exists for.
+    if (faces.italic) assertAllowedFontHost(faces.italic.url, name);
+    const italicMediaId = faces.italic
+      ? await download(faces.italic).catch(() => null)
+      : null;
 
     const id = randomUUID();
     try {
       this.db
         .prepare(
-          `INSERT INTO font (id, family, source, weight, weight_min, weight_max, media_id, ext, created_at)
-           VALUES (?, ?, 'google', ?, ?, ?, ?, 'woff2', ?)`,
+          `INSERT INTO font (id, family, source, weight, weight_min, weight_max, media_id, italic_media_id, ext, created_at)
+           VALUES (?, ?, 'google', ?, ?, ?, ?, ?, 'woff2', ?)`,
         )
-        .run(id, name, face.weight, face.weightMin, face.weightMax, mediaId, Date.now());
+        .run(
+          id,
+          name,
+          faces.roman.weight,
+          faces.roman.weightMin,
+          faces.roman.weightMax,
+          mediaId,
+          italicMediaId,
+          Date.now(),
+        );
     } catch (error) {
       if (!isUniqueFamilyViolation(error)) throw error;
       // Lost the race: the check above and this INSERT are two awaits apart,
@@ -570,14 +748,21 @@ export class FontService {
       // reused the winner's own file rather than writing a second one, and
       // there is nothing to clean up. Only a mediaId that differs from what
       // the winning row actually references is this attempt's own upload,
-      // and only that one is removed.
-      if (
-        mediaId !== mediaIdFor(this.db, winner.id) &&
-        !this.mediaStillReferenced(mediaId)
-      ) {
-        void this.media.remove(mediaId, "woff2").catch((removalError: unknown) => {
-          console.error(removalError);
-        });
+      // and only that one is removed. Both of this attempt's own uploads are
+      // checked against both of the winner's, so the lost race does not leak
+      // whichever face this attempt uploaded that the winner did not.
+      const winnerMediaIds = mediaIdsFor(this.db, winner.id);
+      // A Set because a family whose two faces are byte identical stores one
+      // content-addressed file under one id, and removing it twice would run
+      // a second unlink against a path the first already took.
+      for (const uploaded of new Set(
+        italicMediaId ? [mediaId, italicMediaId] : [mediaId],
+      )) {
+        if (!winnerMediaIds.includes(uploaded) && !this.mediaStillReferenced(uploaded)) {
+          void this.media.remove(uploaded, "woff2").catch((removalError: unknown) => {
+            console.error(removalError);
+          });
+        }
       }
       return winner;
     }
@@ -659,10 +844,13 @@ export class FontService {
     const usedBy = [...accountRows, ...projectRows].map((row) => text(row, "name"));
     if (usedBy.length) throw new FontInUseError(entry.family, usedBy);
 
-    const row = this.db.prepare("SELECT media_id, ext FROM font WHERE id = ?").get(id) as
-      Row | undefined;
+    const row = this.db
+      .prepare("SELECT media_id, italic_media_id, ext FROM font WHERE id = ?")
+      .get(id) as Row | undefined;
     this.db.prepare("DELETE FROM font WHERE id = ?").run(id);
     const mediaId = row ? text(row, "media_id") : "";
+    const italicMediaId = row ? optionalText(row, "italic_media_id") : null;
+    const ext = row ? text(row, "ext") : "woff2";
     // Best-effort file cleanup. remove() is synchronous by contract, so the
     // unlink is fire-and-forget rather than awaited; the database row, which
     // every reader trusts, is already gone. The .catch is what makes it
@@ -671,11 +859,14 @@ export class FontService {
     // the file, say) would crash the whole process, turning a 200 into the
     // server going down a moment later.
     if (mediaId && !this.mediaStillReferenced(mediaId)) {
-      void this.media
-        .remove(mediaId, row ? text(row, "ext") : "woff2")
-        .catch((error: unknown) => {
-          console.error(error);
-        });
+      void this.media.remove(mediaId, ext).catch((error: unknown) => {
+        console.error(error);
+      });
+    }
+    if (italicMediaId && !this.mediaStillReferenced(italicMediaId)) {
+      void this.media.remove(italicMediaId, ext).catch((error: unknown) => {
+        console.error(error);
+      });
     }
   }
 
@@ -696,8 +887,10 @@ export class FontService {
    */
   private mediaStillReferenced(mediaId: string): boolean {
     const fontRow = this.db
-      .prepare("SELECT COUNT(*) AS total FROM font WHERE media_id = ?")
-      .get(mediaId) as Row;
+      .prepare(
+        "SELECT COUNT(*) AS total FROM font WHERE media_id = ? OR italic_media_id = ?",
+      )
+      .get(mediaId, mediaId) as Row;
     const libraryRow = this.db
       .prepare("SELECT COUNT(*) AS total FROM library_item WHERE media_id = ?")
       .get(mediaId) as Row;
@@ -717,16 +910,20 @@ function isUniqueFamilyViolation(error: unknown): boolean {
   return errcode === 2067 && error.message.includes("font.family");
 }
 
-function mediaIdFor(db: DatabaseSync, id: string): string {
-  const row = db.prepare("SELECT media_id FROM font WHERE id = ?").get(id) as
-    Row | undefined;
-  return row ? text(row, "media_id") : "";
+function mediaIdsFor(db: DatabaseSync, id: string): string[] {
+  const row = db
+    .prepare("SELECT media_id, italic_media_id FROM font WHERE id = ?")
+    .get(id) as Row | undefined;
+  if (!row) return [];
+  const italic = optionalText(row, "italic_media_id");
+  return [text(row, "media_id"), ...(italic === null ? [] : [italic])];
 }
 
 function toEntry(row: Row): FontEntry {
   const mediaId = text(row, "media_id");
   const ext = text(row, "ext");
   const source: FontSource = text(row, "source") === "google" ? "google" : "builtin";
+  const italicMediaId = optionalText(row, "italic_media_id");
   return {
     id: text(row, "id"),
     family: text(row, "family"),
@@ -738,6 +935,10 @@ function toEntry(row: Row): FontEntry {
       source === "google"
         ? `/media/${mediaId}.${ext}`
         : `/fonts/${slug(text(row, "family"))}.${ext}`,
+    italicUrl:
+      source === "google" && italicMediaId !== null
+        ? `/media/${italicMediaId}.${ext}`
+        : null,
   };
 }
 

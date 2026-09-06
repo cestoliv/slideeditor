@@ -30,7 +30,7 @@ it("creates the auth tables and lands on the current version", () => {
       "slideshow_render_variant",
     ]),
   );
-  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(8);
+  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(9);
   db.close();
 });
 
@@ -117,7 +117,7 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.close();
 
   const after = openDb(paths.database, paths.token);
-  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(8);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(9);
   expect(after.prepare("SELECT name FROM auth_token").get()?.["name"]).toBe("legacy");
   after.close();
 });

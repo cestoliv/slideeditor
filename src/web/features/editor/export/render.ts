@@ -223,10 +223,17 @@ function drawTextLayer(
   // Set before the layout is computed, because `measure` below reads this very
   // context. The string comes from the shared module, so the measuring canvas
   // on the stage and this one cannot bind different faces. The weight comes
-  // from the catalogue rather than TEXT_WEIGHT, so a face registered off that
-  // default cannot make this canvas synthesise bold where the DOM paint
-  // (renderTextDom.tsx) does not, or the reverse.
-  context.font = textFontString(fontSize, layer.fontFamily, weightFor(layer.fontFamily));
+  // from weightFor(family, layer.weight) — the layer's own stored weight, or
+  // the catalogue's default when it has none — and italic from the layer
+  // itself, the same call useTextLayout.ts makes and renderTextDom.tsx reads,
+  // so a face registered off either default cannot make this canvas
+  // synthesise bold or upright where the DOM paint does not, or the reverse.
+  context.font = textFontString(
+    fontSize,
+    layer.fontFamily,
+    weightFor(layer.fontFamily, layer.weight),
+    layer.italic,
+  );
 
   const layout = computeTextLayout({
     layer,
@@ -256,6 +263,45 @@ function drawTextLayer(
     context.beginPath();
     context.rect(x, y, boxWidth, boxHeight);
     context.clip();
+  }
+
+  /*
+   * The same rectangles renderTextDom draws, from the same layout numbers.
+   * Neither path derives an offset: a canvas has no text-decoration to read,
+   * and a DOM one the canvas cannot match is drift by construction.
+   *
+   * Drawn before the glyphs, not after: renderTextDom.tsx's rules <svg> sits
+   * before its text block in the markup, so a glyph paints over a
+   * strikethrough there. A canvas paints later calls over earlier ones the
+   * same way document order does, so matching that stacking means drawing
+   * these rules first.
+   */
+  if (layer.underline || layer.strikethrough) {
+    layout.lines.forEach((_line, index) => {
+      // A blank line has no glyphs to rule through. computeTextLayout
+      // already decided which lines those are, and the pills read the same
+      // field, so neither renderer re-derives it.
+      if (layout.pillVisible[index] !== true) return;
+      const left = x + (layout.lineStarts[index] ?? 0);
+      const width = layout.lineWidths[index] ?? 0;
+      const center = y + (layout.lineCenters[index] ?? 0);
+      const rule = (offset: number) => {
+        const top = center + offset - layout.decorationThickness / 2;
+        // Stroke before fill, matching the paint order the outline glyphs
+        // themselves already use below (and renderTextDom's paintOrder
+        // "stroke fill"), so a ruled outline line reads the same as an
+        // outlined glyph.
+        if (layer.style === "outline") {
+          context.strokeStyle = outlineColorFor(color);
+          context.lineWidth = layout.outlineWidth;
+          context.strokeRect(left, top, width, layout.decorationThickness);
+        }
+        context.fillStyle = color;
+        context.fillRect(left, top, width, layout.decorationThickness);
+      };
+      if (layer.underline) rule(layout.underlineOffset);
+      if (layer.strikethrough) rule(layout.strikethroughOffset);
+    });
   }
 
   layout.lines.forEach((line, index) => {
@@ -338,21 +384,45 @@ async function drawSlideLayers(
   }
 }
 
-/** Every family the slide's text layers actually use, without duplicates. */
-function distinctFamilies(slide: Slide): string[] {
-  return [...new Set(slide.texts.map((text) => text.fontFamily))];
+/** One face a text layer can ask for: a family at a weight, roman or italic. */
+type TextFace = { family: string; weight: number; italic: boolean };
+
+/**
+ * Every (family, weight, italic) combination the slide's text layers actually
+ * use, without duplicates.
+ *
+ * A family alone is not enough once a layer can bind its own weight and
+ * italic: the roman face at the catalogue's default weight is a different
+ * font resource than that same family at a stored weight or slanted, and
+ * preloading only the former leaves the latter to load lazily the moment
+ * drawTextLayer first measures it — which is exactly the fallback-face wrap
+ * this preload exists to prevent, just moved from "family never loaded" to
+ * "this particular face never loaded".
+ */
+function distinctFaces(slide: Slide): TextFace[] {
+  const faces = new Map<string, TextFace>();
+  for (const text of slide.texts) {
+    const face: TextFace = {
+      family: text.fontFamily,
+      weight: weightFor(text.fontFamily, text.weight),
+      italic: text.italic,
+    };
+    const key = `${face.italic ? "italic" : "normal"}:${String(face.weight)}:${face.family}`;
+    faces.set(key, face);
+  }
+  return [...faces.values()];
 }
 
 /**
  * Draws one slide to a canvas at the requested size.
  *
- * Every distinct family on the slide is awaited first, one load each rather
+ * Every distinct face on the slide is awaited first, one load each rather
  * than one per layer. app.js:4449 set context.font to TikTok Sans and
  * measured immediately, so the first export of a cold page measured against a
  * fallback face and wrapped its lines somewhere else than the stage did.
  *
  * Each load is caught individually rather than left to a bare Promise.all, so
- * one family's genuine load failure (a dead Google font fetch, say) degrades
+ * one face's genuine load failure (a dead Google font fetch, say) degrades
  * to whatever face the browser substitutes for it instead of aborting the
  * whole export. The stage already behaves this way (useTextLayout.ts's
  * ensureFontLoaded settles a failed family rather than waiting forever); the
@@ -376,9 +446,9 @@ export async function renderSlideCanvas(
   const { height, assets } = options;
   await whenCatalogueReady();
   await Promise.all(
-    distinctFamilies(slide).map((family) =>
+    distinctFaces(slide).map((face) =>
       document.fonts
-        .load(textFontString(FONT_LOAD_SIZE, family, weightFor(family)))
+        .load(textFontString(FONT_LOAD_SIZE, face.family, face.weight, face.italic))
         .catch(() => undefined),
     ),
   );

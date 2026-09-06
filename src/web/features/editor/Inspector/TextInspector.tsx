@@ -7,6 +7,7 @@ import {
 import type { Ratio, SlideDocument, TextLayer } from "@shared/schema/index.js";
 import { Icon, Select, Textarea } from "../../../design/index.js";
 import { useAccounts } from "../../../app/accounts.js";
+import { AUTO_WEIGHT, clampWeight, weightItems } from "../../../app/fontFaces.js";
 import { useTextLayout } from "../text/useTextLayout.js";
 import type { EditorStore } from "../store.js";
 import { ColorPicker } from "./ColorPicker.js";
@@ -23,6 +24,20 @@ const TEXT_STYLES = [
   { id: "plain", label: "Clean", modifier: "" },
   { id: "outline", label: "Outline", modifier: styles.stylePreviewOutline ?? "" },
   { id: "boxed", label: "Box", modifier: styles.stylePreviewBoxed ?? "" },
+] as const;
+
+const TEXT_TOGGLES = [
+  { field: "italic", label: "Italic", modifier: styles.togglePreviewItalic ?? "" },
+  {
+    field: "underline",
+    label: "Underline",
+    modifier: styles.togglePreviewUnderline ?? "",
+  },
+  {
+    field: "strikethrough",
+    label: "Strike",
+    modifier: styles.togglePreviewStrike ?? "",
+  },
 ] as const;
 
 const ALIGNMENTS = ["left", "center", "right"] as const;
@@ -155,9 +170,56 @@ export function TextInspector({ store, text, ratio }: TextInspectorProps) {
           onValueChange={(family) => {
             writeOnce((live) => {
               live.fontFamily = family;
+              live.weight = clampWeight(family, live.weight);
             });
           }}
         />
+      </div>
+
+      <div className={styles.group}>
+        <div className={styles.label}>Weight</div>
+        <Select
+          items={weightItems(text)}
+          value={text.weight === null ? AUTO_WEIGHT : String(text.weight)}
+          aria-label="Weight"
+          onValueChange={(value) => {
+            writeOnce((live) => {
+              live.weight = value === AUTO_WEIGHT ? null : Number(value);
+            });
+          }}
+        />
+      </div>
+
+      <div className={styles.group}>
+        <div className={styles.label}>Emphasis</div>
+        <div
+          className={`${styles.options ?? ""} ${styles.options3 ?? ""}`}
+          role="group"
+          aria-label="Text emphasis"
+        >
+          {TEXT_TOGGLES.map((option) => (
+            <button
+              key={option.field}
+              className={`${styles.option ?? ""} ${styles.styleOption ?? ""}`}
+              type="button"
+              aria-label={option.label}
+              aria-pressed={text[option.field]}
+              onClick={() => {
+                writeOnce((live) => {
+                  live[option.field] = !live[option.field];
+                });
+              }}
+            >
+              <span
+                className={`${styles.stylePreview ?? ""} ${option.modifier}`}
+                aria-hidden="true"
+              >
+                Aa
+              </span>
+              <small>{option.label}</small>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className={styles.group}>

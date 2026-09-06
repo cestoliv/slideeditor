@@ -19,3 +19,13 @@ it("names the default family and builds a fallback stack for any family", () => 
   expect(DEFAULT_FONT_FAMILY).toBe("TikTok Sans");
   expect(fontStack("Space Mono")).toBe('"Space Mono", sans-serif');
 });
+
+it("prefixes the font shorthand with italic when asked", () => {
+  expect(textFontString(64, "TikTok Sans", 700, true)).toBe(
+    'italic 700 64px "TikTok Sans"',
+  );
+});
+
+it("leaves the shorthand upright by default", () => {
+  expect(textFontString(64, "TikTok Sans", 700)).toBe('700 64px "TikTok Sans"');
+});

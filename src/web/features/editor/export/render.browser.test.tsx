@@ -412,6 +412,34 @@ describe("renderSlideCanvas", () => {
     expect(column.some((pixel) => sameColor(pixel, BLACK, 20))).toBe(true);
   });
 
+  it("binds the canvas to the layer's own weight and slant", async () => {
+    const seen: string[] = [];
+    const descriptor = Object.getOwnPropertyDescriptor(
+      CanvasRenderingContext2D.prototype,
+      "font",
+    );
+    Object.defineProperty(CanvasRenderingContext2D.prototype, "font", {
+      ...descriptor,
+      set(value: string) {
+        seen.push(value);
+        descriptor?.set?.call(this, value);
+      },
+    });
+    try {
+      await renderSlideCanvas(
+        slideFixture({
+          texts: [textSeed({ id: "a", text: "One", weight: 700, italic: true })],
+        }),
+        { height: 1920, assets: backgroundOnly() },
+      );
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(CanvasRenderingContext2D.prototype, "font", descriptor);
+      }
+    }
+    expect(seen.some((font) => font.startsWith("italic 700"))).toBe(true);
+  });
+
   it("fills the concave notch between two pills of different widths", async () => {
     /*
      * The junctions, which were the last part of the ribbon with no probe on
@@ -687,6 +715,39 @@ describe("the font wait", () => {
     expect(order).toEqual([textFontString(64, "Space Mono", 400)]);
   });
 
+  /*
+   * The gap Task 8's review found: this preload used to await only the roman
+   * face at the catalogue's own weight (distinctFamilies), regardless of what
+   * a layer actually asked for. Once drawTextLayer binds italic and the
+   * layer's stored weight, a cold export awaited the wrong face and measured
+   * against whatever fallback the browser substituted for the one it never
+   * loaded, wrapping every line somewhere other than the stage did.
+   */
+  it("preloads the exact face a styled layer uses, not just the roman default", async () => {
+    const order: string[] = [];
+    document.fonts.load = async (font: string, text?: string) => {
+      order.push(font);
+      return realLoad(font, text);
+    };
+
+    await renderSlideCanvas(
+      slideFixture({
+        texts: [
+          textSeed({
+            id: "a",
+            text: "One",
+            fontFamily: "TikTok Sans",
+            weight: 700,
+            italic: true,
+          }),
+        ],
+      }),
+      { height: 1920, assets: backgroundOnly() },
+    );
+
+    expect(order).toEqual([textFontString(64, "TikTok Sans", 700, true)]);
+  });
+
   it("waits for every distinct family on the slide before measuring text", async () => {
     /*
      * drawTextLayer in app.js:4449 set context.font to TikTok Sans and measured
@@ -798,5 +859,90 @@ describe("renderSlideBlob", () => {
     expect(blob.type).toBe("image/png");
     const header = new Uint8Array((await blob.arrayBuffer()).slice(0, 8));
     expect(Array.from(header)).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  });
+});
+
+/*
+ * The rules, read back as ink.
+ *
+ * The parity fixture cannot see these: two rules a few pixels tall are lost
+ * in a whole-frame diff, and the styled fixture passes with the export's
+ * whole decoration block deleted. These render the same slide with and
+ * without a rule and locate every pixel that changed, so a missing block, a
+ * wrong offset, a wrong thickness and a wrong width each fail.
+ */
+describe("renderSlideCanvas decorations", () => {
+  function ruledSlide(overrides: Record<string, unknown>) {
+    return slideFixture({
+      texts: [
+        textSeed({
+          text: "Hi",
+          style: "plain",
+          color: "#FFFFFF",
+          x: 0.05,
+          y: 0.3,
+          width: 0.9,
+          height: 0.3,
+          size: 110,
+          ...overrides,
+        }),
+      ],
+    });
+  }
+
+  async function pixels(slide: ReturnType<typeof ruledSlide>): Promise<ImageData> {
+    const canvas = await renderSlideCanvas(slide, {
+      height: 1920,
+      assets: backgroundOnly(),
+    });
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (context === null) throw new Error("This browser gave no 2d canvas context.");
+    return context.getImageData(0, 0, canvas.width, canvas.height);
+  }
+
+  /** Every row and column the rule painted, as the difference between the
+   * ruled render and the same slide with no rule at all. */
+  async function ruledArea(overrides: Record<string, unknown>) {
+    const [ruled, bare] = await Promise.all([
+      pixels(ruledSlide(overrides)),
+      pixels(ruledSlide({})),
+    ]);
+    const rows: number[] = [];
+    const columns: number[] = [];
+    for (let index = 0; index < ruled.data.length; index += 4) {
+      if (ruled.data[index] === bare.data[index]) continue;
+      const pixel = index / 4;
+      rows.push(Math.floor(pixel / ruled.width));
+      columns.push(pixel % ruled.width);
+    }
+    const layer = ruledSlide(overrides).texts[0];
+    if (layer === undefined) throw new Error("The fixture holds no text layer.");
+    return { rows, columns, layout: layoutAt(layer, 1080, 1920), layer };
+  }
+
+  it("paints an underline on the row the layout names", async () => {
+    const { rows, columns, layout, layer } = await ruledArea({ underline: true });
+    expect(rows.length, "the export drew no underline at all").toBeGreaterThan(0);
+    const center = layer.y * 1920 + (layout.lineCenters[0] ?? 0) + layout.underlineOffset;
+    const half = layout.decorationThickness / 2 + 1;
+    expect(Math.min(...rows)).toBeGreaterThanOrEqual(Math.floor(center - half));
+    expect(Math.max(...rows)).toBeLessThanOrEqual(Math.ceil(center + half));
+    // Spanning the measured line, not the box: a rule drawn from pillWidths
+    // or from boxWidth would reach past this.
+    const left = layer.x * 1080 + (layout.lineStarts[0] ?? 0);
+    expect(Math.min(...columns)).toBeGreaterThanOrEqual(Math.floor(left) - 1);
+    expect(Math.max(...columns)).toBeLessThanOrEqual(
+      Math.ceil(left + (layout.lineWidths[0] ?? 0)) + 1,
+    );
+  });
+
+  it("paints a strikethrough on the row the layout names", async () => {
+    const { rows, layout, layer } = await ruledArea({ strikethrough: true });
+    expect(rows.length, "the export drew no strikethrough at all").toBeGreaterThan(0);
+    const center =
+      layer.y * 1920 + (layout.lineCenters[0] ?? 0) + layout.strikethroughOffset;
+    const half = layout.decorationThickness / 2 + 1;
+    expect(Math.min(...rows)).toBeGreaterThanOrEqual(Math.floor(center - half));
+    expect(Math.max(...rows)).toBeLessThanOrEqual(Math.ceil(center + half));
   });
 });

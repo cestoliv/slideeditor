@@ -425,6 +425,10 @@ describe("parseDocument", () => {
               backgroundShape: "lines",
               align: "left",
               fontFamily: "TikTok Sans",
+              weight: 700,
+              italic: true,
+              underline: true,
+              strikethrough: false,
               rotation: 0,
               z: 2,
             },
@@ -442,6 +446,10 @@ describe("parseDocument", () => {
               backgroundShape: "full",
               align: "right",
               fontFamily: "TikTok Sans",
+              weight: null,
+              italic: false,
+              underline: false,
+              strikethrough: true,
               rotation: 12,
               z: 3,
             },
@@ -472,6 +480,10 @@ describe("parseDocument", () => {
               backgroundShape: "full",
               align: "center",
               fontFamily: "TikTok Sans",
+              weight: null,
+              italic: false,
+              underline: false,
+              strikethrough: false,
               rotation: 0,
               z: 1,
             },
@@ -480,5 +492,74 @@ describe("parseDocument", () => {
       ],
     };
     expect(parseDocument(structuredClone(real))).toStrictEqual(real);
+  });
+
+  it("defaults the new style fields on a document saved without them", () => {
+    const document = parseDocument({
+      ratio: { w: 9, h: 16 },
+      slides: [
+        {
+          id: "s1",
+          backgroundItemId: "b1",
+          texts: [{ id: "t1", text: "hi" }],
+        },
+      ],
+    });
+    const text = document.slides[0]?.texts[0];
+    expect(text?.weight).toBe(null);
+    expect(text?.italic).toBe(false);
+    expect(text?.underline).toBe(false);
+    expect(text?.strikethrough).toBe(false);
+  });
+
+  it("keeps the style fields a document does carry", () => {
+    const document = parseDocument({
+      ratio: { w: 9, h: 16 },
+      slides: [
+        {
+          id: "s1",
+          backgroundItemId: "b1",
+          texts: [
+            {
+              id: "t1",
+              text: "hi",
+              weight: 700,
+              italic: true,
+              underline: true,
+              strikethrough: true,
+            },
+          ],
+        },
+      ],
+    });
+    const text = document.slides[0]?.texts[0];
+    expect(text?.weight).toBe(700);
+    expect(text?.italic).toBe(true);
+    expect(text?.underline).toBe(true);
+    expect(text?.strikethrough).toBe(true);
+  });
+
+  /*
+   * A weight outside the CSS 1-1000 range makes the canvas font string
+   * invalid, and an invalid assignment leaves the context on whatever face it
+   * already had while the DOM drops the declaration. Repairing to null keeps
+   * the two paths on the family's own weight instead.
+   */
+  it.each([0, -100, 1001, 450.5])("repairs an unpaintable weight of %s", (weight) => {
+    const document = parseDocument({
+      ratio: { w: 9, h: 16 },
+      slides: [{ id: "s1", backgroundItemId: "b1", texts: [{ id: "t1", weight }] }],
+    });
+    expect(document.slides[0]?.texts[0]?.weight).toBe(null);
+  });
+
+  it("falls back to no weight when the stored weight is not a number", () => {
+    const document = parseDocument({
+      ratio: { w: 9, h: 16 },
+      slides: [
+        { id: "s1", backgroundItemId: "b1", texts: [{ id: "t1", weight: "bold" }] },
+      ],
+    });
+    expect(document.slides[0]?.texts[0]?.weight).toBe(null);
   });
 });

@@ -13,7 +13,7 @@ import { HttpError } from "./errors.js";
 import { AccountService } from "./services/accounts.js";
 import { EventBus } from "./services/events.js";
 import { ExportService } from "./services/exports.js";
-import { FontService } from "./services/fonts.js";
+import { FontService, type FontMetadata } from "./services/fonts.js";
 import { LibraryService } from "./services/library.js";
 import { MediaStore } from "./services/media.js";
 import { ProjectService } from "./services/projects.js";
@@ -94,9 +94,25 @@ export interface TestApp {
   close(): void;
 }
 
+/**
+ * A benign stand-in for a family's real axis, used below whenever a test
+ * supplies its own `fetchCss` but does not care what metadata drove the
+ * (stubbed) request. Every family this file adds is treated as a plain
+ * static face — matches CSS_FIXTURE's own `font-weight: 400` in fonts.test.ts.
+ */
+const STATIC_TEST_METADATA: FontMetadata = {
+  weightMin: null,
+  weightMax: null,
+  weight: 400,
+  hasItalic: false,
+};
+
 /** The services on a throwaway data directory, cleaned up by the returned close(). */
 export function createTestApp(
-  options: { fetchCss?: (family: string) => Promise<string> } = {},
+  options: {
+    fetchCss?: (family: string, metadata: FontMetadata) => Promise<string>;
+    fetchMetadata?: (family: string) => Promise<FontMetadata>;
+  } = {},
 ): TestApp {
   const directory = mkdtempSync(join(tmpdir(), "slide-studio-test-"));
   const paths = dataPaths(directory);
@@ -110,6 +126,17 @@ export function createTestApp(
     db,
     media,
     ...(options.fetchCss ? { fetchCss: options.fetchCss } : {}),
+    // A test that stubs fetchCss is controlling the CSS itself, so it never
+    // wants the real network metadata lookup either — same reasoning as the
+    // fetchCss stub above, given a harmless default rather than making every
+    // one of those call sites repeat it (see fonts.test.ts's own tests for
+    // the metadata behaviour: parseFontMetadata/googleCssUrl unit tests, plus
+    // the discovery-flow integration tests that pass fetchMetadata directly).
+    ...(options.fetchMetadata
+      ? { fetchMetadata: options.fetchMetadata }
+      : options.fetchCss
+        ? { fetchMetadata: async () => STATIC_TEST_METADATA }
+        : {}),
   });
   const exports = new ExportService(db);
   return {

@@ -67,3 +67,14 @@ export function optionalNumber(row: Row, column: string): number | null {
   const value = row[column];
   return typeof value === "number" ? value : null;
 }
+
+/**
+ * For a nullable TEXT column (font.italic_media_id) — `text()` above coerces
+ * a NULL to the empty string, which is indistinguishable from a column
+ * genuinely holding one, and a caller here has to tell "no italic face" from
+ * "an italic face whose media id is blank".
+ */
+export function optionalText(row: Row, column: string): string | null {
+  const value = row[column];
+  return typeof value === "string" ? value : null;
+}

@@ -21,6 +21,10 @@ function account(id: string, name: string): Account {
         backgroundShape: "lines",
         align: "center",
         maxWidth: 0.6,
+        weight: null,
+        italic: false,
+        underline: false,
+        strikethrough: false,
       },
     },
     createdAt: 1,
@@ -37,6 +41,7 @@ function font(id: string, family: string): FontEntry {
     weightMax: null,
     source: "builtin",
     url: `/fonts/${id}.woff2`,
+    italicUrl: null,
   };
 }
 

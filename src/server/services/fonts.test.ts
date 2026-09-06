@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { afterEach, expect, it } from "vitest";
 import {
   createTestApp,
@@ -9,7 +10,13 @@ import {
 } from "../testing.js";
 import type { FontEntry } from "../../shared/schema/index.js";
 import { DEFAULT_ADVANCE_RATIO } from "../../shared/text/index.js";
-import { FontInUseError, FontService } from "./fonts.js";
+import {
+  FontInUseError,
+  FontService,
+  parseFontMetadata,
+  googleCssUrl,
+  chooseLatinFaces,
+} from "./fonts.js";
 
 let app: TestApp | undefined;
 afterEach(() => {
@@ -646,28 +653,102 @@ it("stores the weight the chosen @font-face block actually declares, not a hardc
   }
 });
 
-it("asks Google for the app's rendering weight first, falling back to the family's regular face", async () => {
+/*
+ * Task 5 replaced the old "try wght@500, fall back to wght@400" ladder with
+ * discovery-first requests: the family's real axis is read from Google's
+ * metadata endpoint before a single css2 request is built from it. This
+ * exercises the real, un-stubbed defaultFetchMetadata + defaultFetchCss pair
+ * end to end, with only the global fetch mocked — a css2 request outside the
+ * family's real axis is a 400 (see googleCssUrl's own comment), so building
+ * exactly one request from the discovered axis is the behaviour this proves,
+ * not a guess that happens to land on a working weight.
+ */
+it("reads the family's metadata first and builds the one css2 request its axis allows", async () => {
   const realFetch = globalThis.fetch;
-  const requestedUrls: string[] = [];
+  const requestedCssUrls: string[] = [];
+  const metadataBody = `)]}'\n${JSON.stringify({
+    family: "Metadata Driven Family",
+    axes: [{ tag: "wght", min: 100, max: 900 }],
+    fonts: { "100": {}, "900": {} },
+  })}`;
   globalThis.fetch = (async (input: unknown) => {
     const requested = String(input);
-    if (requested.includes("fonts.googleapis.com")) {
-      requestedUrls.push(requested);
-      // This family has no 500 weight, so the preferred request is rejected
-      // and only the fallback to :wght@400 should succeed.
-      if (requested.includes("wght@500")) return new Response("", { status: 400 });
-      return new Response(CSS_FIXTURE("No Five Hundred"), { status: 200 });
+    if (requested.startsWith("https://fonts.google.com/metadata/fonts/")) {
+      return new Response(metadataBody, { status: 200 });
+    }
+    if (requested.startsWith("https://fonts.googleapis.com/css2")) {
+      requestedCssUrls.push(requested);
+      return new Response(
+        `@font-face{font-family:'Metadata Driven Family';font-style:normal;font-weight:100 900;src:url(https://fonts.gstatic.com/s/stub/v1/stub.woff2) format('woff2');}`,
+        { status: 200 },
+      );
     }
     return new Response(new Uint8Array([3, 3, 3]), { status: 200 });
   }) as typeof fetch;
   try {
-    // No fetchCss override: exercises the real default, which builds the
-    // Google URL and does the weight fallback this finding is about.
+    // No fetchCss/fetchMetadata override: exercises the real defaults.
     app = createTestApp();
-    const entry = await app.services.fonts.addGoogleFont("No Five Hundred");
-    expect(requestedUrls.some((url) => url.includes("wght@500"))).toBe(true);
-    expect(requestedUrls.some((url) => url.includes("wght@400"))).toBe(true);
-    expect(entry.weight).toBe(400);
+    const entry = await app.services.fonts.addGoogleFont("Metadata Driven Family");
+    // Proves defaultFetchCss passes the discovered metadata through to
+    // googleCssUrl unchanged, and makes only that one request. It does not
+    // prove googleCssUrl builds the right URL: it is called on both sides
+    // here, so a wrong builder would move both sides together. The four
+    // literal-URL shape tests below cover that.
+    expect(requestedCssUrls).toEqual([
+      googleCssUrl("Metadata Driven Family", {
+        weightMin: 100,
+        weightMax: 900,
+        weight: 500,
+        hasItalic: false,
+      }),
+    ]);
+    expect(entry).toMatchObject({ weight: 500, weightMin: 100, weightMax: 900 });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// A metadata 404 is Google Fonts not recognising the family — same as a
+// css2 404 — so it has to raise the exact same message addGoogleFont already
+// raised for that case, not a new one that only appears for families whose
+// axis happens to need discovering.
+it("raises the unknown-family message when metadata itself 404s", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("", { status: 404 })) as typeof fetch;
+  try {
+    app = createTestApp();
+    const error = asHttpError(
+      await catchError(() => app?.services.fonts.addGoogleFont("Not A Real Font")),
+    );
+    expect(error.status).toBe(502);
+    expect(error.message).toBe("Google Fonts had no family named Not A Real Font.");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// Metadata can answer fine while the css2 request it drives still 404s
+// (a family metadata reports that css2 does not actually serve, say) — the
+// real defaultFetchCss's own failure branch, not just defaultFetchMetadata's.
+it("raises the same unknown-family message when the css2 request itself 404s", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const requested = String(input);
+    if (requested.startsWith("https://fonts.google.com/metadata/fonts/")) {
+      return new Response(
+        `)]}'\n${JSON.stringify({ family: "Ghost Family", axes: [], fonts: { "400": {} } })}`,
+        { status: 200 },
+      );
+    }
+    return new Response("", { status: 404 });
+  }) as typeof fetch;
+  try {
+    app = createTestApp();
+    const error = asHttpError(
+      await catchError(() => app?.services.fonts.addGoogleFont("Ghost Family")),
+    );
+    expect(error.status).toBe(502);
+    expect(error.message).toBe("Google Fonts had no family named Ghost Family.");
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -960,4 +1041,445 @@ it("does not let a family name's own % or _ wrongly over-match a search", async 
 
   expect(() => app?.services.fonts.remove(font.id)).not.toThrow();
   expect(app.services.fonts.list().some((f) => f.id === font.id)).toBe(false);
+});
+
+// The live endpoint prefixes its JSON with an XSSI guard, and the four
+// families below are the four shapes the catalogue has to handle. Recorded
+// from fonts.google.com/metadata/fonts/<family> on 2026-09-06.
+const METADATA = (
+  family: string,
+  axes: { tag: string; min: number; max: number }[],
+  variants: string[],
+) =>
+  `)]}'\n${JSON.stringify({
+    family,
+    axes,
+    fonts: Object.fromEntries(variants.map((variant) => [variant, {}])),
+  })}`;
+
+it("reads a variable family's axis and its italic", () => {
+  const metadata = parseFontMetadata(
+    METADATA("Roboto", [{ tag: "wght", min: 100, max: 900 }], ["400", "400i", "700"]),
+    "Roboto",
+  );
+  expect(metadata).toEqual({
+    weightMin: 100,
+    weightMax: 900,
+    weight: 500,
+    hasItalic: true,
+  });
+});
+
+it("reads a variable family with no italic", () => {
+  const metadata = parseFontMetadata(
+    METADATA("Oswald", [{ tag: "wght", min: 200, max: 700 }], ["200", "400", "700"]),
+    "Oswald",
+  );
+  expect(metadata).toEqual({
+    weightMin: 200,
+    weightMax: 700,
+    weight: 500,
+    hasItalic: false,
+  });
+});
+
+it("clamps the paint weight into a narrow axis", () => {
+  const metadata = parseFontMetadata(
+    METADATA("Playfair", [{ tag: "wght", min: 600, max: 900 }], ["600"]),
+    "Playfair",
+  );
+  expect(metadata.weight).toBe(600);
+});
+
+it("reads a static family as a single weight with no axis", () => {
+  const metadata = parseFontMetadata(METADATA("Lobster", [], ["400"]), "Lobster");
+  expect(metadata).toEqual({
+    weightMin: null,
+    weightMax: null,
+    weight: 400,
+    hasItalic: false,
+  });
+});
+
+// Static-branch twin of "clamps the paint weight into a narrow axis": a
+// family with several static weights and no axis has no single "the"
+// weight either, so it must pick the one closest to what the app paints at
+// (400) rather than the lightest one (200), which would render as a
+// hairline. Titillium Web is the real family that surfaced this.
+it("picks the static weight closest to the paint weight, not the lightest", () => {
+  const metadata = parseFontMetadata(
+    METADATA(
+      "Titillium Web",
+      [],
+      ["200", "200i", "300", "300i", "400", "400i", "700", "700i", "900", "900i"],
+    ),
+    "Titillium Web",
+  );
+  expect(metadata.weight).toBe(400);
+  expect(googleCssUrl("Titillium Web", metadata)).toBe(
+    "https://fonts.googleapis.com/css2?family=" +
+      "Titillium%20Web%3Aital%2Cwght%400%2C400%3B1%2C400",
+  );
+});
+
+// Twin of the above with a single variant, to pin that ordinary static
+// families (Lobster: just "400") are unaffected by the closest-weight fix.
+it("still resolves a single-variant static family to its one weight", () => {
+  const metadata = parseFontMetadata(METADATA("Lobster", [], ["400"]), "Lobster");
+  expect(metadata.weight).toBe(400);
+});
+
+it("ignores an axis that is not weight", () => {
+  const metadata = parseFontMetadata(
+    METADATA("Inter", [{ tag: "opsz", min: 14, max: 32 }], ["400"]),
+    "Inter",
+  );
+  expect(metadata.weightMin).toBe(null);
+});
+
+it("rejects metadata that is not JSON at all", async () => {
+  const error = asHttpError(await catchError(() => parseFontMetadata("<html>", "Nope")));
+  expect(error.status).toBe(502);
+});
+
+it("asks for the whole axis and both styles when the family has them", () => {
+  expect(
+    googleCssUrl("Roboto", {
+      weightMin: 100,
+      weightMax: 900,
+      weight: 500,
+      hasItalic: true,
+    }),
+  ).toBe(
+    "https://fonts.googleapis.com/css2?family=Roboto%3Aital%2Cwght%400%2C100..900%3B1%2C100..900",
+  );
+});
+
+it("asks for the axis alone when the family has no italic", () => {
+  expect(
+    googleCssUrl("Oswald", {
+      weightMin: 200,
+      weightMax: 700,
+      weight: 500,
+      hasItalic: false,
+    }),
+  ).toBe("https://fonts.googleapis.com/css2?family=Oswald%3Awght%40200..700");
+});
+
+it("asks for one weight in both styles for a static family with an italic", () => {
+  expect(
+    googleCssUrl("Merriweather", {
+      weightMin: null,
+      weightMax: null,
+      weight: 400,
+      hasItalic: true,
+    }),
+  ).toBe(
+    "https://fonts.googleapis.com/css2?family=Merriweather%3Aital%2Cwght%400%2C400%3B1%2C400",
+  );
+});
+
+it("asks for the bare family when it is static and upright", () => {
+  expect(
+    googleCssUrl("Lobster", {
+      weightMin: null,
+      weightMax: null,
+      weight: 400,
+      hasItalic: false,
+    }),
+  ).toBe("https://fonts.googleapis.com/css2?family=Lobster");
+});
+
+// One roman Latin block and one italic Latin block, the shape css2 returns
+// for an `ital,wght@0,...;1,...` request. The italic block is first, so a
+// naive "take the first block" parse would self-host the italic as the roman.
+const ITALIC_CSS = (family: string) => `
+  @font-face {
+    font-family: '${family}';
+    font-style: italic;
+    font-weight: 100 900;
+    src: url(https://fonts.gstatic.com/s/stub/v1/italic.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153;
+  }
+  @font-face {
+    font-family: '${family}';
+    font-style: normal;
+    font-weight: 100 900;
+    src: url(https://fonts.gstatic.com/s/stub/v1/roman.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153;
+  }
+`;
+
+it("picks the roman Latin face and the italic Latin face apart", () => {
+  const faces = chooseLatinFaces(ITALIC_CSS("Roboto"), "Roboto");
+  expect(faces.roman.url).toContain("roman.woff2");
+  expect(faces.italic?.url).toContain("italic.woff2");
+});
+
+it("reports no italic face when the response has none", () => {
+  const faces = chooseLatinFaces(CSS_FIXTURE("Lobster"), "Lobster");
+  expect(faces.italic).toBe(null);
+});
+
+it("self-hosts both faces and reports both urls", async () => {
+  app = createTestApp({
+    fetchCss: async (family: string) => ITALIC_CSS(family),
+    fetchMetadata: async () => ({
+      weightMin: 100,
+      weightMax: 900,
+      weight: 500,
+      hasItalic: true,
+    }),
+  });
+  const realFetch = globalThis.fetch;
+  // Two distinct bodies, so the content-addressed store writes two files and
+  // the two urls cannot accidentally be the same one.
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    new Response(new Uint8Array(String(input).includes("italic") ? [9, 9] : [1, 1]), {
+      status: 200,
+    })) as typeof fetch;
+  try {
+    const entry = await app.services.fonts.addGoogleFont("Roboto");
+    expect(entry.url).toMatch(/^\/media\/.+\.woff2$/);
+    expect(entry.italicUrl).toMatch(/^\/media\/.+\.woff2$/);
+    expect(entry.italicUrl).not.toBe(entry.url);
+    expect(entry.weightMin).toBe(100);
+    expect(entry.weightMax).toBe(900);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+it("reports no italic url for a family with no italic face", async () => {
+  app = createTestApp({
+    fetchCss: async (family: string) => CSS_FIXTURE(family),
+    fetchMetadata: async () => ({
+      weightMin: null,
+      weightMax: null,
+      weight: 400,
+      hasItalic: false,
+    }),
+  });
+  const entry = await addFont(app, "Lobster");
+  expect(entry.italicUrl).toBe(null);
+});
+
+it("reports no italic url for a builtin", () => {
+  app = createTestApp();
+  const builtin = app.services.fonts.list().find((font) => font.source === "builtin");
+  expect(builtin?.italicUrl).toBe(null);
+});
+
+/*
+ * Review finding: the roman blob is put() before the italic download runs.
+ * A failed italic download used to propagate out of addGoogleFont, so no row
+ * was ever inserted to reference the roman file already written to disk —
+ * orphaning it forever — and it made the whole family unaddable over a
+ * transient hiccup fetching a face this app already treats as optional (a
+ * family with no italic Latin face is not an error either). A failed italic
+ * download now resolves to no italic instead.
+ */
+it("still adds the family roman-only when the italic download fails, without orphaning the roman blob", async () => {
+  app = createTestApp({
+    fetchCss: async (family: string) => ITALIC_CSS(family),
+    fetchMetadata: async () => ({
+      weightMin: 100,
+      weightMax: 900,
+      weight: 500,
+      hasItalic: true,
+    }),
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    String(input).includes("italic")
+      ? new Response(null, { status: 500 })
+      : new Response(new Uint8Array([1, 1]), { status: 200 })) as typeof fetch;
+  try {
+    const entry = await app.services.fonts.addGoogleFont("Roboto");
+    expect(entry.italicUrl).toBe(null);
+    const row = app.db
+      .prepare("SELECT italic_media_id FROM font WHERE id = ?")
+      .get(entry.id) as { italic_media_id: unknown };
+    expect(row.italic_media_id).toBe(null);
+    // The roman blob addGoogleFont already put() before the italic download
+    // failed is not left as an orphan: the row it inserted references it.
+    const { mediaId, ext } = extractMediaRef(entry.url);
+    expect(await app.services.media.read(mediaId, ext)).toBeInstanceOf(Buffer);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+/*
+ * Review finding: mediaIdsFor's two-element return (both the winning row's
+ * media_id and italic_media_id) has no consumer in the existing concurrency
+ * tests above, since both use CSS_FIXTURE, which carries no italic —
+ * faces.italic is null, italicMediaId is null, and the cleanup loop
+ * degenerates to the single-id case. This is the two-face twin: both
+ * concurrent calls download a roman and an italic face, one loses the race,
+ * and neither of the winner's two blobs may be unlinked while both of the
+ * loser's distinct blobs are.
+ */
+it("cleans up both of the loser's files without touching the winner's, when a two-face family races concurrently", async () => {
+  const realFetch = globalThis.fetch;
+  let call = 0;
+  // Four distinct byte sequences: one roman and one italic upload per
+  // concurrent addGoogleFont call, all different so each hashes to its own
+  // file — the two-face equivalent of the single-face test's bytesByCall.
+  const bytesByCall = [
+    new Uint8Array([1, 1, 1]),
+    new Uint8Array([2, 2, 2]),
+    new Uint8Array([3, 3, 3]),
+    new Uint8Array([4, 4, 4]),
+  ];
+  globalThis.fetch = (async () => {
+    const bytes = bytesByCall[call] ?? bytesByCall[0]!;
+    call += 1;
+    return new Response(bytes, { status: 200 });
+  }) as typeof fetch;
+  try {
+    app = createTestApp({
+      fetchCss: async (family: string) => ITALIC_CSS(family),
+      fetchMetadata: async () => ({
+        weightMin: 100,
+        weightMax: 900,
+        weight: 500,
+        hasItalic: true,
+      }),
+    });
+    // The loser's cleanup is fire-and-forget (`void this.media.remove(...)`),
+    // so its unlinks are collected here and awaited below rather than read
+    // against — the same race the deletion test further down avoids.
+    const originalRemove = app.services.media.remove.bind(app.services.media);
+    const removals: Promise<void>[] = [];
+    app.services.media.remove = (mediaId: string, ext: string) => {
+      const removal = originalRemove(mediaId, ext);
+      removals.push(removal);
+      return removal;
+    };
+
+    const [first, second] = await Promise.all([
+      app.services.fonts.addGoogleFont("Roboto"),
+      app.services.fonts.addGoogleFont("Roboto"),
+    ]);
+    await Promise.all(removals);
+    expect(first.id).toBe(second.id);
+    const winner = app.services.fonts.list().find((f) => f.family === "Roboto");
+    if (!winner) throw new Error("Roboto was not added");
+    const { mediaId: winnerRomanId, ext } = extractMediaRef(winner.url);
+    const { mediaId: winnerItalicId } = extractMediaRef(winner.italicUrl ?? "");
+
+    // Both of the winning row's own blobs survive.
+    expect(await app.services.media.read(winnerRomanId, ext)).toBeInstanceOf(Buffer);
+    expect(await app.services.media.read(winnerItalicId, ext)).toBeInstanceOf(Buffer);
+
+    // Every byte sequence that was uploaded but that the winner does not
+    // reference belonged to the loser, and none of them survived.
+    const orphanHashes = bytesByCall
+      .map((bytes) => createHash("sha256").update(Buffer.from(bytes)).digest("hex"))
+      .filter((hash) => hash !== winnerRomanId && hash !== winnerItalicId);
+    expect(orphanHashes).toHaveLength(2);
+    const files = readdirSync(app.services.media.directory);
+    for (const hash of orphanHashes) {
+      expect(files).not.toContain(`${hash}.${ext}`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+/*
+ * Review finding: remove()'s file unlinks are fire-and-forget by design
+ * (`void this.media.remove(...).catch(...)`), and MediaStore.remove
+ * dispatches unlink() without awaiting it. The verbatim brief test observed
+ * the deletion by racing media.read() against those two independent,
+ * unordered filesystem operations, which occasionally saw the read's open()
+ * win — a flake, not a logic bug (asymmetric: the italic read sits behind an
+ * extra await, so its unlink has more time to land). This wraps
+ * media.remove so the test can await the exact promises remove() actually
+ * dispatched before it inspects the real media directory, so the assertion
+ * is deterministic without weakening it to "eventually": it still fails if
+ * either unlink is dropped.
+ */
+it("removes both files when a two-face family is deleted", async () => {
+  app = createTestApp({
+    fetchCss: async (family: string) => ITALIC_CSS(family),
+    fetchMetadata: async () => ({
+      weightMin: 100,
+      weightMax: 900,
+      weight: 500,
+      hasItalic: true,
+    }),
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    new Response(new Uint8Array(String(input).includes("italic") ? [9, 9] : [1, 1]), {
+      status: 200,
+    })) as typeof fetch;
+  let entry: FontEntry;
+  try {
+    entry = await app.services.fonts.addGoogleFont("Roboto");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const italicUrl = entry.italicUrl;
+  expect(italicUrl).not.toBe(null);
+  const roman = extractMediaRef(entry.url);
+  const italic = extractMediaRef(italicUrl ?? "");
+
+  const originalRemove = app.services.media.remove.bind(app.services.media);
+  const removals: Promise<void>[] = [];
+  app.services.media.remove = (mediaId: string, ext: string) => {
+    const removal = originalRemove(mediaId, ext);
+    removals.push(removal);
+    return removal;
+  };
+
+  app.services.fonts.remove(entry.id);
+  await Promise.all(removals);
+
+  const files = readdirSync(app.services.media.directory);
+  expect(files).not.toContain(`${roman.mediaId}.${roman.ext}`);
+  expect(files).not.toContain(`${italic.mediaId}.${italic.ext}`);
+});
+
+/*
+ * The Task 4 review found that seedBuiltins's upsert only ever reset the
+ * columns BUILTIN_FONTS itself describes, so a family that changes
+ * provenance from Google to builtin used to leave its old italic_media_id
+ * pointing at a .woff2 the orphan-cleanup path never considered — a leak the
+ * roman media_id's own reconciliation (see "resets source and media_id too"
+ * above) does not cover.
+ */
+it("resets italic_media_id too, when a family that was added from Google collides with a builtin", () => {
+  app = createTestApp();
+  app.db
+    .prepare(
+      `UPDATE font
+       SET source = 'google', media_id = 'stale-media-id', italic_media_id = 'stale-italic-id', ext = 'woff2'
+       WHERE family = ?`,
+    )
+    .run("TikTok Sans");
+
+  const removed: { mediaId: string; ext: string }[] = [];
+  app.services.media.remove = async (mediaId: string, ext: string) => {
+    removed.push({ mediaId, ext });
+  };
+
+  new FontService({ db: app.db, media: app.services.media });
+
+  // toEntry() returns italicUrl: null for every builtin row regardless of
+  // the column (see toEntry's own source === "google" check), so asserting
+  // on the entry alone would pass even if italic_media_id were never reset.
+  // The column itself is what seedBuiltins's upsert has to actually null.
+  const row = app.db
+    .prepare("SELECT italic_media_id FROM font WHERE family = ?")
+    .get("TikTok Sans") as { italic_media_id: unknown };
+  expect(row.italic_media_id).toBe(null);
+  expect(removed).toEqual(
+    expect.arrayContaining([
+      { mediaId: "stale-media-id", ext: "woff2" },
+      { mediaId: "stale-italic-id", ext: "woff2" },
+    ]),
+  );
 });

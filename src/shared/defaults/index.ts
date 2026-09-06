@@ -39,6 +39,10 @@ export function newTextLayer(
     backgroundShape: defaults.text.backgroundShape,
     align: defaults.text.align,
     fontFamily: defaults.text.fontFamily,
+    weight: defaults.text.weight,
+    italic: defaults.text.italic,
+    underline: defaults.text.underline,
+    strikethrough: defaults.text.strikethrough,
     rotation: 0,
     z: at.z,
   };

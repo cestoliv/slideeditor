@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { MemoryRouter, Route, Routes } from "react-router";
 import type { Account, FontEntry } from "@shared/schema/index.js";
 import { MAX_TEXT_WIDTH_MIN, TEXT_WEIGHT } from "@shared/text/index.js";
@@ -25,6 +25,10 @@ function defaults(overrides: Partial<Account["defaults"]> = {}): Account["defaul
       backgroundShape: "lines",
       align: "center",
       maxWidth: 0.6,
+      weight: null,
+      italic: false,
+      underline: false,
+      strikethrough: false,
     },
     ...overrides,
   };
@@ -47,6 +51,7 @@ function font(id: string, family: string): FontEntry {
     weightMax: null,
     source: "builtin",
     url: `/fonts/${id}.woff2`,
+    italicUrl: null,
   };
 }
 
@@ -349,6 +354,109 @@ it("shows less of the preview's line when text width narrows", async () => {
   await expect.poll(() => previewLine().length).toBeLessThan(fullLine.length);
 });
 
+it("saves the emphasis toggles into an account's defaults", async () => {
+  const client = fakeClient([], [font("f1", "TikTok Sans")]);
+  const screen = await mount(client);
+  await userEvent.fill(screen.getByLabelText("Name"), "New brand");
+  await userEvent.click(screen.getByRole("button", { name: "Italic" }));
+  await userEvent.click(screen.getByRole("button", { name: "Underline" }));
+  await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await expect
+    .element(screen.getByRole("button", { name: "Italic" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => client.created[0]?.defaults.text.italic).toBe(true);
+  expect(client.created[0]?.defaults.text.underline).toBe(true);
+  expect(client.created[0]?.defaults.text.strikethrough).toBe(false);
+});
+
+/*
+ * A variable family carrying a range, so its weight list differs from a static
+ * one's: TikTok Sans above is pinned at 500, while this axis offers every
+ * named weight between its bounds.
+ */
+function variableFont(id: string, family: string, min: number, max: number): FontEntry {
+  return { ...font(id, family), weightMin: min, weightMax: max, source: "google" };
+}
+
+it("saves a chosen weight into an account's defaults", async () => {
+  const client = fakeClient(
+    [],
+    [font("f1", "TikTok Sans"), variableFont("f2", "Oswald", 100, 700)],
+  );
+  // availableWeights reads the module catalogue, which only sign-in seeds in
+  // production, so the test seeds it the same way that call would.
+  await injectFontFaces(client.fontsList);
+  const screen = await mount(client);
+  await userEvent.fill(screen.getByLabelText("Name"), "New brand");
+  // The weight list is the chosen family's own, so the family comes first:
+  // TikTok Sans is a static 500 and offers no Bold at all.
+  await userEvent.click(screen.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Oswald" }));
+  await userEvent.click(screen.getByRole("combobox", { name: "Weight" }));
+  await userEvent.click(page.getByRole("option", { name: "Bold", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await expect.poll(() => client.created.length).toBe(1);
+  expect(client.created[0]?.defaults.text.weight).toBe(700);
+});
+
+/*
+ * The same clamp the inspector runs (clampWeight, app/fontFaces.ts). A weight
+ * the new family has no instance for would be synthesised, which is the one
+ * thing the catalogue exists to avoid, so the switch moves it to the nearest
+ * weight that family really carries.
+ */
+it("clamps the draft weight into the family it switches to", async () => {
+  const client = fakeClient(
+    [],
+    [
+      font("f1", "TikTok Sans"),
+      variableFont("f2", "Oswald", 100, 900),
+      variableFont("f3", "Anton", 100, 400),
+    ],
+  );
+  await injectFontFaces(client.fontsList);
+  const screen = await mount(client);
+  await userEvent.fill(screen.getByLabelText("Name"), "New brand");
+  await userEvent.click(screen.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Oswald" }));
+  await userEvent.click(screen.getByRole("combobox", { name: "Weight" }));
+  await userEvent.click(page.getByRole("option", { name: "Black" }));
+  await userEvent.click(screen.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Anton" }));
+  await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await expect.poll(() => client.created.length).toBe(1);
+  expect(client.created[0]?.defaults.text.fontFamily).toBe("Anton");
+  expect(client.created[0]?.defaults.text.weight).toBe(400);
+});
+
+/*
+ * An axis narrower than the gap between two named weights carries none of
+ * them, so there is nothing to clamp to and null ("the family's own weight")
+ * is the only weight it can honour.
+ */
+it("drops the draft weight when the new family carries no named one", async () => {
+  const client = fakeClient(
+    [],
+    [
+      font("f1", "TikTok Sans"),
+      variableFont("f2", "Oswald", 100, 900),
+      variableFont("f3", "Narrow Axis", 100, 200),
+    ],
+  );
+  await injectFontFaces(client.fontsList);
+  const screen = await mount(client);
+  await userEvent.fill(screen.getByLabelText("Name"), "New brand");
+  await userEvent.click(screen.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Oswald" }));
+  await userEvent.click(screen.getByRole("combobox", { name: "Weight" }));
+  await userEvent.click(page.getByRole("option", { name: "Black" }));
+  await userEvent.click(screen.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Narrow Axis" }));
+  await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+  await expect.poll(() => client.created.length).toBe(1);
+  expect(client.created[0]?.defaults.text.weight).toBeNull();
+});
+
 it("loads an existing account's defaults and saves changes to it", async () => {
   const client = fakeClient(
     [account("a1", "Main brand", { text: { ...defaults().text, style: "plain" } })],
@@ -484,6 +592,7 @@ it("makes an added Google font usable immediately, with no reload", async () => 
     weightMax: null,
     source: "google",
     url: `/media/f2.woff2`,
+    italicUrl: null,
   };
   client.addGoogleFont = () => Promise.resolve({ font: addedFont });
   // Finding 11: injectFontFaces() no longer re-fetches /api/fonts itself once
@@ -547,6 +656,7 @@ function googleFont(id: string, family: string): FontEntry {
     weightMax: null,
     source: "google",
     url: `/media/${id}.woff2`,
+    italicUrl: null,
   };
 }
 

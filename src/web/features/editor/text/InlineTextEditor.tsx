@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import type { TextLayout } from "@shared/text/index.js";
+import type { TextLayer } from "@shared/schema/index.js";
 import { editorText, placeTextCaret, selectAllOf } from "./inlineEditing.js";
 import { textBlockStyle } from "./renderTextDom.js";
 import styles from "./InlineTextEditor.module.css";
@@ -29,7 +30,7 @@ export type InlineTextEditorProps = {
   /** The layer's text at the moment editing started. */
   value: string;
   layout: TextLayout;
-  family: string;
+  layer: TextLayer;
   caret: CaretRequest;
   /** Runs on every keystroke with the editor's text, already stripped. */
   onInput: (value: string) => void;
@@ -40,7 +41,7 @@ export type InlineTextEditorProps = {
 export function InlineTextEditor({
   value,
   layout,
-  family,
+  layer,
   caret,
   onInput,
   onBlur,
@@ -66,7 +67,7 @@ export function InlineTextEditor({
     else placeTextCaret(element, request.clientX, request.clientY);
   }, []);
 
-  const style: CSSProperties = { ...textBlockStyle(family, layout) };
+  const style: CSSProperties = { ...textBlockStyle(layout, layer) };
 
   return (
     <span

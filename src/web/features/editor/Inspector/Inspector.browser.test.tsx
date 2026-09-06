@@ -1,4 +1,4 @@
-import { afterAll, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { page, userEvent } from "vitest/browser";
@@ -6,17 +6,32 @@ import { page, userEvent } from "vitest/browser";
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
 import { DEFAULT_ACCOUNT_ID } from "@shared/schema/index.js";
-import type { LibraryItem, Project, TextLayer } from "@shared/schema/index.js";
+import type { FontEntry, LibraryItem, Project, TextLayer } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { LibraryCache } from "../../../app/useLibrary.js";
 import { ToastProvider } from "../../../design/index.js";
 import { AccountsProvider, AccountsStore } from "../../../app/accounts.js";
+import { injectFontFaces, resetFontFacesForTesting } from "../../../app/fontFaces.js";
 import { Editor } from "../Editor.js";
 import { EditorStore } from "../store.js";
 import { fixtureProject } from "../testing.js";
 import { LayerHarness, layerElement, measuredStage } from "../layers/testing.js";
 import { Inspector } from "./Inspector.js";
 import { fontSizeFromSliderPosition, sliderPositionFromFontSize } from "./fontSize.js";
+
+// availableWeights() (fontFaces.ts) reads the module-level catalogue that
+// injectFontFaces installs, which is a separate cache from AccountsStore's own
+// `fonts` list (see accounts.tsx's own comment on why). A test below that
+// drives the weight Select or the clamp-on-family-switch behaviour has to
+// populate both, and must reset the module singleton after so it does not
+// leak a family into an unrelated test.
+beforeEach(() => {
+  resetFontFacesForTesting();
+});
+
+afterEach(() => {
+  resetFontFacesForTesting();
+});
 
 function storeFor(project: Project): EditorStore {
   return new EditorStore(project, { save: (saved) => Promise.resolve(saved) });
@@ -1097,6 +1112,7 @@ it("overrides one text layer's font without touching its siblings", async () => 
             weightMax: null,
             source: "builtin",
             url: "/fonts/f1.woff2",
+            italicUrl: null,
           },
           {
             id: "f2",
@@ -1106,6 +1122,7 @@ it("overrides one text layer's font without touching its siblings", async () => 
             weightMax: null,
             source: "google",
             url: "/media/f2.woff2",
+            italicUrl: null,
           },
         ],
         dropped: [],
@@ -1125,4 +1142,158 @@ it("overrides one text layer's font without touching its siblings", async () => 
 
   expect(store.getSnapshot().project.slides[0]?.texts[0]?.fontFamily).toBe("Bebas Neue");
   expect(store.getSnapshot().project.slides[0]?.texts[1]?.fontFamily).toBe("TikTok Sans");
+});
+
+it("toggles italic on the selected text", async () => {
+  const store = storeFor(fixtureProject({ texts: 1 }));
+  store.selectOnly("text", "text-1-1");
+  const screen = await mount(store);
+
+  await userEvent.click(screen.getByRole("button", { name: "Italic" }));
+
+  await vi.waitFor(() => {
+    expect(liveText(store).italic).toBe(true);
+  });
+  screen.unmount();
+});
+
+it("toggles underline and strikethrough independently", async () => {
+  const store = storeFor(fixtureProject({ texts: 1 }));
+  store.selectOnly("text", "text-1-1");
+  const screen = await mount(store);
+
+  await userEvent.click(screen.getByRole("button", { name: "Underline" }));
+
+  await vi.waitFor(() => {
+    expect(liveText(store).underline).toBe(true);
+  });
+  expect(liveText(store).strikethrough).toBe(false);
+  screen.unmount();
+});
+
+/*
+ * The weight Select is bound to availableWeights(family), a family-scoped
+ * cut of the fixed named-weight list (fontFaces.ts). Oswald here is given a
+ * 100-700 axis, so 900 is not one of its options and the nearest survivor is
+ * 700 -- the same "nearest option" rule the font onValueChange handler runs.
+ */
+function weightTestFonts(): FontEntry[] {
+  return [
+    {
+      id: "f1",
+      family: "TikTok Sans",
+      weight: 500,
+      weightMin: null,
+      weightMax: null,
+      source: "builtin",
+      url: "/fonts/f1.woff2",
+      italicUrl: null,
+    },
+    {
+      id: "f2",
+      family: "Oswald",
+      weight: 400,
+      weightMin: 100,
+      weightMax: 700,
+      source: "google",
+      url: "/media/f2.woff2",
+      italicUrl: null,
+    },
+    {
+      id: "f3",
+      family: "Narrow Axis",
+      weight: 150,
+      weightMin: 100,
+      weightMax: 200,
+      source: "google",
+      url: "/media/f3.woff2",
+      italicUrl: null,
+    },
+  ];
+}
+
+/** The same account fixture every weight test below mounts against. */
+function weightAccountsStore(fonts: FontEntry[]): AccountsStore {
+  return new AccountsStore({
+    listAccounts: () => Promise.resolve({ accounts: [] }),
+    listFonts: () => Promise.resolve({ fonts, dropped: [] }),
+    createAccount: () => Promise.reject(new Error("not used")),
+    updateAccount: () => Promise.reject(new Error("not used")),
+    deleteAccount: () => Promise.reject(new Error("not used")),
+    addGoogleFont: () => Promise.reject(new Error("not used")),
+    deleteFont: () => Promise.reject(new Error("not used")),
+  });
+}
+
+/*
+ * A weight the family's own option list does not carry, which weightItems
+ * appends as its own numbered option. Oswald's 100-700 axis offers the named
+ * weights inside it, so 450 names none of them. Without that appended option
+ * a Select whose value matches no item renders blank, hiding the layer's real
+ * stored weight behind an empty control.
+ */
+it("shows a stored weight the family's option list does not carry", async () => {
+  const fonts = weightTestFonts();
+  await injectFontFaces(fonts);
+  const store = storeWithText({ fontFamily: "Oswald", weight: 450 });
+  await mount(store, { accountsStore: weightAccountsStore(fonts) });
+
+  await expect
+    .element(page.getByRole("combobox", { name: "Weight" }))
+    .toHaveTextContent("450");
+});
+
+/*
+ * Null means "this family's own weight" and is right for every family, so the
+ * clamp has nothing to correct. A clamp that ran on null would read it as 0
+ * and pick the lightest weight the new family carries, changing a layer
+ * nobody edited.
+ */
+it("leaves a default weight alone across a family switch", async () => {
+  const fonts = weightTestFonts();
+  await injectFontFaces(fonts);
+  const store = storeWithText({ fontFamily: "TikTok Sans", weight: null });
+  await mount(store, { accountsStore: weightAccountsStore(fonts) });
+
+  await userEvent.click(page.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Oswald" }));
+
+  await vi.waitFor(() => {
+    expect(liveText(store).fontFamily).toBe("Oswald");
+  });
+  expect(liveText(store).weight).toBeNull();
+});
+
+/*
+ * An axis narrower than the gap between two named weights carries none of
+ * them, so there is nothing to clamp to. Null is the only weight the family
+ * can honour; a seeded default would be a weight outside its own axis.
+ */
+it("drops a stored weight when the new family carries no named one", async () => {
+  const fonts = weightTestFonts();
+  await injectFontFaces(fonts);
+  const store = storeWithText({ fontFamily: "TikTok Sans", weight: 700 });
+  await mount(store, { accountsStore: weightAccountsStore(fonts) });
+
+  await userEvent.click(page.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Narrow Axis" }));
+
+  await vi.waitFor(() => {
+    expect(liveText(store).fontFamily).toBe("Narrow Axis");
+  });
+  expect(liveText(store).weight).toBeNull();
+});
+
+it("clamps a stored weight into the new family's range", async () => {
+  const fonts = weightTestFonts();
+  await injectFontFaces(fonts);
+  const store = storeWithText({ fontFamily: "TikTok Sans", weight: 900 });
+  await mount(store, { accountsStore: weightAccountsStore(fonts) });
+
+  await userEvent.click(page.getByRole("combobox", { name: "Font" }));
+  await userEvent.click(page.getByRole("option", { name: "Oswald" }));
+
+  await vi.waitFor(() => {
+    expect(liveText(store).weight).toBe(700);
+  });
 });

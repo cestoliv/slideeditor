@@ -12,3 +12,23 @@
   font-weight: 400;
   font-display: swap;
 }
+
+/*
+ * The italic face of that same family, deliberately pointed at a different
+ * typeface's file.
+ *
+ * The repository ships no italic binary, and the parity fixture does not need
+ * slanted glyphs: it needs an italic face both render paths must find and
+ * that looks nothing like the roman one. Pointing it at the roman file would
+ * make binding the wrong face invisible, which is the one thing this fixture
+ * exists to catch. TikTok Sans's metrics differ from Space Mono's, so a path
+ * that binds the roman face for an italic layer wraps and paints differently
+ * at once.
+ */
+@font-face {
+  font-family: "Space Mono";
+  src: url("@assets/TikTokSans.ttf") format("truetype");
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+}
