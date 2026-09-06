@@ -190,11 +190,18 @@ it("hands the person the caption an agent drafted, ready to copy", async () => {
 
   // The person adjusts it the way they adjust the layout, and it saves.
   await userEvent.fill(page.getByLabelText("Description"), "Six things, actually.");
-  await vi.waitFor(async () => {
-    const project = await readProject(baseUrl, created.id);
-    expect(project.description).toBe("Six things, actually.");
-    expect(project.hashtags, "the tags ride along untouched").toBe("#travel #Summer");
-  });
+  // vi.waitFor's 1000ms default leaves only 600ms past the 400ms save debounce
+  // for the round trip to a real server, which the full suite's other Chromium
+  // workers can eat into. A wider budget still fails fast on an actually broken
+  // save; it just stops flaking under load.
+  await vi.waitFor(
+    async () => {
+      const project = await readProject(baseUrl, created.id);
+      expect(project.description).toBe("Six things, actually.");
+      expect(project.hashtags, "the tags ride along untouched").toBe("#travel #Summer");
+    },
+    { timeout: 5000 },
+  );
 });
 
 /*

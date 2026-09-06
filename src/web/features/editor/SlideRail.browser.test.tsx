@@ -26,6 +26,33 @@ function storeFor(project: Project): EditorStore {
 const drawEverything: ThumbnailRenderer = () =>
   Promise.resolve(new Blob(["png"], { type: "image/png" }));
 
+/**
+ * A renderer whose draws only land when the test says so, for pinning the
+ * rail's indicator mid-render and for choosing which slide fails.
+ */
+function controllableRenderer(): {
+  render: ThumbnailRenderer;
+  calls: string[];
+  settle: Map<string, { resolve: () => void; reject: () => void }>;
+} {
+  const settle = new Map<string, { resolve: () => void; reject: () => void }>();
+  const calls: string[] = [];
+  const render: ThumbnailRenderer = (slide) => {
+    calls.push(slide.id);
+    return new Promise<Blob>((resolve, reject) => {
+      settle.set(slide.id, {
+        resolve: () => {
+          resolve(new Blob(["png"], { type: "image/png" }));
+        },
+        reject: () => {
+          reject(new Error("render failed"));
+        },
+      });
+    });
+  };
+  return { render, calls, settle };
+}
+
 function replacement(id: string): LibraryItem {
   return {
     id,
@@ -561,6 +588,99 @@ it("keeps the row itself clickable when the menu trigger is beside it", async ()
 
     await userEvent.click(screen.getByRole("button", { name: "Open slide 2" }));
     expect(store.getSnapshot().activeSlideId).toBe("slide-2");
+    screen.unmount();
+  });
+});
+
+// Below 780px the indicator disappears with the rest of the heading's labels
+// (styles.css:3259-3299), so these read it at the width where it is a control
+// rather than testing what the narrow rail already covers.
+it("counts rendered slides in its heading while renders are outstanding", async () => {
+  await atWidth(1280, async () => {
+    const store = storeFor(fixtureProject({ slides: 3 }));
+    const renderer = controllableRenderer();
+    const screen = await render(railFor(store, { render: renderer.render }));
+    const indicator = screen.getByTestId("render-indicator");
+
+    await expect.element(indicator).toHaveTextContent("0/3 rendered");
+    await expect.element(indicator).toHaveAttribute("aria-disabled", "false");
+    expect(indicator.element().getAttribute("aria-label")).toMatch(/0\/3 rendered/i);
+
+    renderer.settle.get("slide-1")?.resolve();
+    await expect.element(indicator).toHaveTextContent("1/3 rendered");
+
+    renderer.settle.get("slide-2")?.resolve();
+    await expect.element(indicator).toHaveTextContent("2/3 rendered");
+    screen.unmount();
+  });
+});
+
+it("reads as success once every slide is drawn", async () => {
+  await atWidth(1280, async () => {
+    const store = storeFor(fixtureProject({ slides: 2 }));
+    const screen = await render(railFor(store));
+    const indicator = screen.getByTestId("render-indicator");
+
+    await expect.element(indicator).toHaveTextContent("2 slides");
+    // aria-disabled, not the disabled attribute: a real disabled button would
+    // both leave the tab order (the confirmation would be unreachable by
+    // keyboard) and get reset.css's disabled-opacity treatment, halving the
+    // success Badge's tuned contrast in the one state a user idles in.
+    await expect.element(indicator).toHaveAttribute("aria-disabled", "true");
+    expect(indicator.element().getAttribute("aria-label")).toMatch(/2 slides/i);
+    screen.unmount();
+  });
+});
+
+it("says slide, not slides, on a rail of one", async () => {
+  await atWidth(1280, async () => {
+    const store = storeFor(fixtureProject({ slides: 1 }));
+    const screen = await render(railFor(store));
+    const indicator = screen.getByTestId("render-indicator");
+
+    await expect.element(indicator).toHaveTextContent("1 slide");
+    expect(indicator.element().textContent).not.toContain("slides");
+    screen.unmount();
+  });
+});
+
+it("turns danger on a failed render, and a press retries the failed slide", async () => {
+  await atWidth(1280, async () => {
+    const store = storeFor(fixtureProject({ slides: 3 }));
+    const renderer = controllableRenderer();
+    const screen = await render(railFor(store, { render: renderer.render }));
+    const indicator = screen.getByTestId("render-indicator");
+
+    // The hook's own catch always logs (app.js:1637). Silence it here so the
+    // expected failure doesn't read as test noise.
+    const loggedError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      renderer.settle.get("slide-1")?.resolve();
+      renderer.settle.get("slide-2")?.reject();
+      renderer.settle.get("slide-3")?.resolve();
+
+      await expect.element(indicator).toHaveTextContent("1 failed");
+      await expect.element(indicator).toHaveAttribute("aria-disabled", "false");
+      expect(indicator.element().getAttribute("aria-label")).toMatch(/1 failed/i);
+      // The failure is not colour-only: the thumbnail itself carries a named mark.
+      await expect
+        .element(page.getByRole("img", { name: "This slide failed to render" }))
+        .toBeVisible();
+
+      await userEvent.click(indicator);
+      // The first (and here only) slide that isn't ready, by document order.
+      expect(store.getSnapshot().activeSlideId).toBe("slide-2");
+
+      // The press bumps slide-2's attempt, which redraws it once the hook's
+      // own debounce elapses - the same signature, tried again.
+      await vi.waitFor(() => {
+        expect(renderer.calls.filter((id) => id === "slide-2")).toHaveLength(2);
+      });
+      renderer.settle.get("slide-2")?.resolve();
+      await expect.element(indicator).toHaveTextContent("3 slides");
+    } finally {
+      loggedError.mockRestore();
+    }
     screen.unmount();
   });
 });
