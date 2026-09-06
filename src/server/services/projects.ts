@@ -292,12 +292,19 @@ export class ProjectService {
       const live = this.db.prepare(
         "INSERT OR IGNORE INTO project_item_use (project_id, item_id) VALUES (?, ?)",
       );
+      // A force-deleted library item stays referenced by the documents it was
+      // placed in (remove() reports those as brokeSlideshows). Both index
+      // tables carry a foreign key to library_item, so indexing a dead id
+      // fails the next save of every slideshow that still holds it. Skip it:
+      // the slide keeps its broken reference, the save goes through.
+      const exists = this.db.prepare("SELECT 1 FROM library_item WHERE id = ?");
       const history = this.db.prepare(`
         INSERT INTO item_use_history (item_id, project_id, placements, first_used_at, last_used_at)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT (item_id, project_id) DO UPDATE SET placements = excluded.placements, last_used_at = excluded.last_used_at
       `);
       for (const [itemId, total] of placements) {
+        if (!exists.get(itemId)) continue;
         live.run(projectId, itemId);
         history.run(itemId, projectId, total, now, now);
       }

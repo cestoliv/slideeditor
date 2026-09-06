@@ -620,3 +620,22 @@ it("allows save() with a document whose items all belong to the slideshow's own 
     }),
   ).not.toThrow();
 });
+
+it("still saves a slideshow whose library item was force-deleted", async () => {
+  app = createTestApp();
+  const { projects, library } = app.services;
+  const background = await addItem(library, "background", "Gone");
+  const project = projects.create({ accountId: "default", name: "Orphan" });
+  projects.save(project.id, {
+    name: "Orphan",
+    document: slideDocument(background.id, null),
+    version: 1,
+  });
+  await library.remove(background.id, { force: true });
+  const saved = projects.save(project.id, {
+    name: "Orphan",
+    document: slideDocument(background.id, null),
+    version: 2,
+  });
+  expect(saved.version).toBe(3);
+});
