@@ -39,7 +39,7 @@ function boxedProject(options: {
   text.text = options.text;
   text.style = "boxed";
   text.backgroundShape = "lines";
-  text.background = "white";
+  text.background = "#FFFFFF";
   text.align = options.align ?? "center";
   text.x = 0.05;
   text.y = 0.25;

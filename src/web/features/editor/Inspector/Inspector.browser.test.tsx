@@ -14,6 +14,7 @@ import { AccountsProvider, AccountsStore } from "../../../app/accounts.js";
 import { Editor } from "../Editor.js";
 import { EditorStore } from "../store.js";
 import { fixtureProject } from "../testing.js";
+import { LayerHarness, layerElement, measuredStage } from "../layers/testing.js";
 import { Inspector } from "./Inspector.js";
 import { fontSizeFromSliderPosition, sliderPositionFromFontSize } from "./fontSize.js";
 
@@ -314,7 +315,11 @@ function storeWithText(fields: Partial<TextLayer>): EditorStore {
 }
 
 it("flips white text off a white pill when a layer becomes boxed", async () => {
-  const store = storeWithText({ style: "plain", background: "white", color: "#FFFFFF" });
+  const store = storeWithText({
+    style: "plain",
+    background: "#FFFFFF",
+    color: "#FFFFFF",
+  });
   const screen = await mount(store);
 
   await userEvent.click(screen.getByRole("button", { name: "Box" }));
@@ -327,7 +332,11 @@ it("flips white text off a white pill when a layer becomes boxed", async () => {
 });
 
 it("leaves white text on a black pill alone when a layer becomes boxed", async () => {
-  const store = storeWithText({ style: "plain", background: "black", color: "#FFFFFF" });
+  const store = storeWithText({
+    style: "plain",
+    background: "#111111",
+    color: "#FFFFFF",
+  });
   const screen = await mount(store);
 
   await userEvent.click(screen.getByRole("button", { name: "Box" }));
@@ -340,7 +349,11 @@ it("leaves white text on a black pill alone when a layer becomes boxed", async (
 });
 
 it("leaves dark text on a white pill alone when a layer becomes boxed", async () => {
-  const store = storeWithText({ style: "plain", background: "white", color: "#111111" });
+  const store = storeWithText({
+    style: "plain",
+    background: "#FFFFFF",
+    color: "#111111",
+  });
   const screen = await mount(store);
 
   await userEvent.click(screen.getByRole("button", { name: "Box" }));
@@ -353,26 +366,34 @@ it("leaves dark text on a white pill alone when a layer becomes boxed", async ()
 });
 
 it("flips dark text off a pill that has just turned black", async () => {
-  const store = storeWithText({ style: "boxed", background: "white", color: "#111111" });
+  const store = storeWithText({
+    style: "boxed",
+    background: "#FFFFFF",
+    color: "#111111",
+  });
   const screen = await mount(store);
 
-  await userEvent.click(screen.getByRole("button", { name: "Black background" }));
+  await userEvent.click(screen.getByRole("button", { name: "Use Black background" }));
 
   await vi.waitFor(() => {
-    expect(liveText(store).background).toBe("black");
+    expect(liveText(store).background).toBe("#111111");
   });
   expect(liveText(store).color).toBe("#FFFFFF");
   screen.unmount();
 });
 
 it("flips white text off a pill that has just turned white", async () => {
-  const store = storeWithText({ style: "boxed", background: "black", color: "#FFFFFF" });
+  const store = storeWithText({
+    style: "boxed",
+    background: "#111111",
+    color: "#FFFFFF",
+  });
   const screen = await mount(store);
 
-  await userEvent.click(screen.getByRole("button", { name: "White background" }));
+  await userEvent.click(screen.getByRole("button", { name: "Use White background" }));
 
   await vi.waitFor(() => {
-    expect(liveText(store).background).toBe("white");
+    expect(liveText(store).background).toBe("#FFFFFF");
   });
   expect(liveText(store).color).toBe("#111111");
   screen.unmount();
@@ -384,7 +405,11 @@ it("flips white text off a pill that has just turned white", async () => {
  * would be free to repaint plain and outline layers too.
  */
 it("leaves a layer's colour alone when it stops being boxed", async () => {
-  const store = storeWithText({ style: "boxed", background: "white", color: "#111111" });
+  const store = storeWithText({
+    style: "boxed",
+    background: "#FFFFFF",
+    color: "#111111",
+  });
   const screen = await mount(store);
 
   await userEvent.click(screen.getByRole("button", { name: "Clean" }));
@@ -409,7 +434,11 @@ it("leaves a layer's colour alone when it stops being boxed", async () => {
  * finished asking for.
  */
 it("keeps a half-typed colour on screen and commits only on the sixth digit", async () => {
-  const store = storeWithText({ style: "plain", background: "white", color: "#FFFFFF" });
+  const store = storeWithText({
+    style: "plain",
+    background: "#FFFFFF",
+    color: "#FFFFFF",
+  });
   const screen = await mount(store);
   await expect.element(screen.getByLabelText("Text color hex value")).toBeVisible();
 
@@ -438,7 +467,11 @@ it("keeps a half-typed colour on screen and commits only on the sixth digit", as
 
 /* The RGB box holds a draft for the same reason, and commits on three channels. */
 it("keeps a half-typed rgb value on screen", async () => {
-  const store = storeWithText({ style: "plain", background: "white", color: "#FFFFFF" });
+  const store = storeWithText({
+    style: "plain",
+    background: "#FFFFFF",
+    color: "#FFFFFF",
+  });
   const screen = await mount(store);
   await expect.element(screen.getByLabelText("Text color RGB value")).toBeVisible();
 
@@ -468,7 +501,11 @@ it("keeps a half-typed rgb value on screen", async () => {
  * sixth digit and would rewrite itself mid-word.
  */
 it("does not overrule a colour the author picked", async () => {
-  const store = storeWithText({ style: "boxed", background: "white", color: "#111111" });
+  const store = storeWithText({
+    style: "boxed",
+    background: "#FFFFFF",
+    color: "#111111",
+  });
   const screen = await mount(store);
   await expect.element(screen.getByLabelText("Text color hex value")).toBeVisible();
 
@@ -477,7 +514,7 @@ it("does not overrule a colour the author picked", async () => {
   await vi.waitFor(() => {
     expect(liveText(store).color).toBe("#FFFFFF");
   });
-  expect(liveText(store).background).toBe("white");
+  expect(liveText(store).background).toBe("#FFFFFF");
   screen.unmount();
 });
 
@@ -515,10 +552,46 @@ it("switches a boxed layer between a white and a black background", async () => 
   store.selectOnly("text", "text-1-1");
   const screen = await mount(store);
 
-  await userEvent.click(screen.getByRole("button", { name: "Black background" }));
+  await userEvent.click(screen.getByRole("button", { name: "Use Black background" }));
 
   await vi.waitFor(() => {
-    expect(liveText(store).background).toBe("black");
+    expect(liveText(store).background).toBe("#111111");
+  });
+  screen.unmount();
+});
+
+/*
+ * The picker only writes the layer; nothing here proves the pill a reader
+ * actually sees follows it. Both the panel and the pill it paints are mounted
+ * on the same store, the way the real editor holds them, so the assertion is
+ * on the rendered SVG rather than on the store the picker also happens to write.
+ */
+it("choosing a background preset in the text inspector paints the pill that colour", async () => {
+  const store = storeWithText({
+    style: "boxed",
+    backgroundShape: "lines",
+    background: "#FFFFFF",
+    color: "#111111",
+  });
+  await page.viewport(1280, 900);
+  const screen = await render(
+    <AccountsProvider store={defaultAccountsStore()}>
+      <div style={{ display: "grid", gridTemplateColumns: "640px 320px" }}>
+        <LayerHarness store={store} library={LIBRARY} />
+        <Inspector store={store} library={LIBRARY} photoAdjust={false} />
+      </div>
+    </AccountsProvider>,
+  );
+  await measuredStage();
+
+  await userEvent.click(screen.getByRole("button", { name: "Use Green background" }));
+
+  await vi.waitFor(() => {
+    expect(liveText(store).background).toBe("#35D07F");
+  });
+  await vi.waitFor(() => {
+    const pill = layerElement("text", "text-1-1").querySelector("[data-pill]");
+    expect(pill?.getAttribute("fill")).toBe("#35D07F");
   });
   screen.unmount();
 });

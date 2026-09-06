@@ -196,7 +196,7 @@ it("renders a boxed text with no colour of its own dark on its white pill", asyn
     text.text = "Legible";
     text.style = "boxed";
     text.backgroundShape = "lines";
-    text.background = "white";
+    text.background = "#FFFFFF";
     // The document schema repairs a missing colour, so this is what a legacy
     // boxed layer arrives as.
     text.color = "";

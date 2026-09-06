@@ -26,6 +26,14 @@ export type ColorPickerProps = {
    */
   onEditStart: () => void;
   onEditEnd: () => void;
+  /**
+   * What this picker is choosing a colour for, e.g. "text" or "background".
+   * The input ids and the aria strings are all derived from it, so two
+   * pickers on one screen (Task 1: a text colour and a background colour,
+   * side by side) don't collide on either. Defaults to "text" so the existing
+   * call site needs no change.
+   */
+  noun?: string;
 };
 
 /** app.js:272-285, without the execCommand fallback for a browser that has one. */
@@ -38,7 +46,12 @@ export function ColorPicker({
   onChange,
   onEditStart,
   onEditEnd,
+  noun = "text",
 }: ColorPickerProps) {
+  const hexId = `${noun}-color-hex`;
+  const rgbId = `${noun}-color-rgb`;
+  const nounCapitalized = noun.charAt(0).toUpperCase() + noun.slice(1);
+
   /*
    * The two text boxes hold what was typed, not what is stored. "#ff00" is
    * halfway to a colour and must stay on screen; app.js:2413-2415 writes only
@@ -70,7 +83,11 @@ export function ColorPicker({
 
   return (
     <>
-      <div className={styles.presets} role="group" aria-label="Text color presets">
+      <div
+        className={styles.presets}
+        role="group"
+        aria-label={`${nounCapitalized} color presets`}
+      >
         {TEXT_COLOR_PRESETS.map((preset) => (
           <button
             key={preset.value}
@@ -78,7 +95,7 @@ export function ColorPicker({
             type="button"
             style={{ background: preset.value }}
             title={`${preset.name} ${preset.value}`}
-            aria-label={`Use ${preset.name} text`}
+            aria-label={`Use ${preset.name} ${noun}`}
             aria-pressed={value === preset.value}
             onClick={() => {
               onEditStart();
@@ -93,7 +110,7 @@ export function ColorPicker({
           <input
             type="color"
             value={value}
-            aria-label="Choose a custom text color"
+            aria-label={`Choose a custom ${noun} color`}
             onPointerDown={onEditStart}
             onBlur={onEditEnd}
             onChange={(event) => {
@@ -105,14 +122,14 @@ export function ColorPicker({
         </label>
         <div className={styles.values}>
           <div className={styles.valueRow}>
-            <label htmlFor="text-color-hex">Hex</label>
+            <label htmlFor={hexId}>Hex</label>
             <input
-              id="text-color-hex"
+              id={hexId}
               type="text"
               value={hexDraft}
               maxLength={7}
               spellCheck={false}
-              aria-label="Text color hex value"
+              aria-label={`${nounCapitalized} color hex value`}
               onFocus={onEditStart}
               onChange={(event) => {
                 setHexDraft(event.target.value);
@@ -133,7 +150,7 @@ export function ColorPicker({
             <button
               className={styles.copy}
               type="button"
-              aria-label="Copy hex color"
+              aria-label={`Copy ${noun} hex color`}
               onClick={() => {
                 copyText(value);
               }}
@@ -142,13 +159,13 @@ export function ColorPicker({
             </button>
           </div>
           <div className={styles.valueRow}>
-            <label htmlFor="text-color-rgb">RGB</label>
+            <label htmlFor={rgbId}>RGB</label>
             <input
-              id="text-color-rgb"
+              id={rgbId}
               type="text"
               value={rgbDraft}
               spellCheck={false}
-              aria-label="Text color RGB value"
+              aria-label={`${nounCapitalized} color RGB value`}
               onFocus={onEditStart}
               onChange={(event) => {
                 setRgbDraft(event.target.value);
@@ -163,7 +180,7 @@ export function ColorPicker({
             <button
               className={styles.copy}
               type="button"
-              aria-label="Copy RGB color"
+              aria-label={`Copy ${noun} RGB color`}
               onClick={() => {
                 copyText(formatRgb(value));
               }}

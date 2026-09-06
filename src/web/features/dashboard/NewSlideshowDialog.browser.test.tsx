@@ -32,7 +32,7 @@ function account(id: string, name: string): Account {
         size: 64,
         style: "plain",
         color: "#FFFFFF",
-        background: "white",
+        background: "#FFFFFF",
         backgroundShape: "lines",
         align: "center",
       },

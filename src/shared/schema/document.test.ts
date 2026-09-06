@@ -54,10 +54,28 @@ describe("parseDocument", () => {
     const text = document.slides[0]!.texts[0]!;
     expect(text.style).toBe("plain");
     expect(text.color).toBe("#FFFFFF");
-    expect(text.background).toBe("white");
+    expect(text.background).toBe("#FFFFFF");
     expect(text.backgroundShape).toBe("full");
     expect(text.align).toBe("center");
     expect(text.rotation).toBe(0);
+  });
+
+  // Task 1: background widened from a "white"|"black" enum to a hex colour.
+  // The ordering this depends on (textBackgroundSchema's own transform runs
+  // before rawTextLayerSchema's transform reads the field) is proved below by
+  // "defaults a boxed text's missing color to white on a black box", which
+  // fails if textColorOf ever saw the raw tone name instead of hex.
+  it("normalizes a legacy background name to hex", () => {
+    const document = parseDocument({
+      slides: [
+        {
+          id: "s1",
+          backgroundItemId: "b1",
+          texts: [{ id: "t1", text: "hi", size: 48, background: "white" }],
+        },
+      ],
+    });
+    expect(document.slides[0]!.texts[0]!.background).toBe("#FFFFFF");
   });
 
   it("falls back to the default font family when none is stored", () => {
@@ -403,7 +421,7 @@ describe("parseDocument", () => {
               size: 48,
               style: "boxed",
               color: "#111111",
-              background: "white",
+              background: "#FFFFFF",
               backgroundShape: "lines",
               align: "left",
               fontFamily: "TikTok Sans",
@@ -420,7 +438,7 @@ describe("parseDocument", () => {
               size: 36,
               style: "outline",
               color: "#FFFFFF",
-              background: "black",
+              background: "#111111",
               backgroundShape: "full",
               align: "right",
               fontFamily: "TikTok Sans",
@@ -450,7 +468,7 @@ describe("parseDocument", () => {
               size: 48,
               style: "plain",
               color: "#FFFFFF",
-              background: "white",
+              background: "#FFFFFF",
               backgroundShape: "full",
               align: "center",
               fontFamily: "TikTok Sans",

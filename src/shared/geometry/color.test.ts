@@ -4,6 +4,7 @@ import {
   formatRgb,
   hexToRgb,
   normalizeHexColor,
+  normalizeTextBackground,
   outlineColorFor,
   rgbToHex,
   TEXT_COLOR_PRESETS,
@@ -59,11 +60,27 @@ it("reads a CSS rgb string back as hex", () => {
   expect(rgbToHex(null)).toBeNull();
 });
 
+it("widens the legacy tone names to hex, case-insensitively, and passes anything else through normalizeHexColor", () => {
+  expect(normalizeTextBackground("white")).toBe("#FFFFFF");
+  expect(normalizeTextBackground("Black")).toBe("#111111");
+  expect(normalizeTextBackground("  BLACK  ")).toBe("#111111");
+  expect(normalizeTextBackground("#FE2C55")).toBe("#FE2C55");
+  expect(normalizeTextBackground("fe2c55")).toBe("#FE2C55");
+  expect(normalizeTextBackground("f0a")).toBe("#FF00AA");
+  expect(normalizeTextBackground("nonsense")).toBe("#FFFFFF");
+  expect(normalizeTextBackground(null)).toBe("#FFFFFF");
+  expect(normalizeTextBackground(undefined)).toBe("#FFFFFF");
+});
+
 it("defaults a boxed text on a light pill to dark ink", () => {
-  expect(textColorOf({ style: "boxed", background: "white", color: "" })).toBe("#111111");
-  expect(textColorOf({ style: "boxed", background: "black", color: "" })).toBe("#FFFFFF");
+  expect(textColorOf({ style: "boxed", background: "#FFFFFF", color: "" })).toBe(
+    "#111111",
+  );
+  expect(textColorOf({ style: "boxed", background: "#111111", color: "" })).toBe(
+    "#FFFFFF",
+  );
   expect(textColorOf({ style: "plain", color: "" })).toBe("#FFFFFF");
-  expect(textColorOf({ style: "boxed", background: "white", color: "#FFE45E" })).toBe(
+  expect(textColorOf({ style: "boxed", background: "#FFFFFF", color: "#FFE45E" })).toBe(
     "#FFE45E",
   );
 });
@@ -71,7 +88,7 @@ it("defaults a boxed text on a light pill to dark ink", () => {
 it("flips white text on a white pill to black", () => {
   const text = ensureBoxedTextContrast({
     style: "boxed" as const,
-    background: "white" as const,
+    background: "#FFFFFF",
     color: "#FFFFFF",
   });
   expect(text.color).toBe("#111111");
@@ -80,7 +97,7 @@ it("flips white text on a white pill to black", () => {
 it("flips black text on a black pill to white", () => {
   const text = ensureBoxedTextContrast({
     style: "boxed" as const,
-    background: "black" as const,
+    background: "#111111",
     color: "#111111",
   });
   expect(text.color).toBe("#FFFFFF");
@@ -89,12 +106,23 @@ it("flips black text on a black pill to white", () => {
 it("returns the same layer when the contrast already holds", () => {
   const readable = {
     style: "boxed" as const,
-    background: "white" as const,
+    background: "#FFFFFF",
     color: "#FE2C55",
   };
   expect(ensureBoxedTextContrast(readable)).toBe(readable);
   const plain = { style: "plain" as const, color: "#FFFFFF" };
   expect(ensureBoxedTextContrast(plain)).toBe(plain);
+});
+
+// A merely similar colour is left alone: the exact-match rule is deliberate,
+// not a stand-in for a luminance threshold (see color.ts's own comment).
+it("leaves a merely similar colour alone rather than flipping it", () => {
+  const similar = {
+    style: "boxed" as const,
+    background: "#FFFFFF",
+    color: "#FFFFFE",
+  };
+  expect(ensureBoxedTextContrast(similar)).toBe(similar);
 });
 
 it("offers only valid hex presets", () => {

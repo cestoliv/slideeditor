@@ -29,7 +29,7 @@ it("BUILTIN_DEFAULTS reproduces today's rendering values exactly, matching migra
       size: 64,
       style: "plain",
       color: "#FFFFFF",
-      background: "white",
+      background: "#FFFFFF",
       backgroundShape: "lines",
       align: "center",
     },
@@ -129,6 +129,10 @@ describe("accountDefaultsSchema", () => {
 it("parses migration 6's exact seeded defaults blob and matches BUILTIN_DEFAULTS", () => {
   // Verbatim JSON from migration 6's `account` seed row (src/server/db/migrations,
   // Task 1, commit c6c5c6f), so this test fails if either side ever drifts.
+  // The row's own background still reads "white" (there is no data migration,
+  // src/shared/geometry/color.ts's normalizeTextBackground widens it on read),
+  // so the parsed result is compared field by field rather than by a single
+  // toEqual against the seed.
   const seeded = {
     ratio: { w: 9, h: 16 },
     text: {
@@ -142,7 +146,10 @@ it("parses migration 6's exact seeded defaults blob and matches BUILTIN_DEFAULTS
     },
   };
   const parsed = accountDefaultsSchema.parse(seeded);
-  expect(parsed).toEqual(seeded);
+  expect(parsed).toEqual({
+    ...seeded,
+    text: { ...seeded.text, background: "#FFFFFF" },
+  });
   expect(parsed).toEqual(BUILTIN_DEFAULTS);
 });
 

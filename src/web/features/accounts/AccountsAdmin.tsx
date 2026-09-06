@@ -52,11 +52,6 @@ const STYLE_OPTIONS: SelectOption[] = [
   { value: "boxed", label: "Box" },
 ];
 
-const BACKGROUND_OPTIONS: SelectOption[] = [
-  { value: "white", label: "White" },
-  { value: "black", label: "Black" },
-];
-
 const SHAPE_OPTIONS: SelectOption[] = [
   { value: "lines", label: "Per line" },
   { value: "full", label: "Full box" },
@@ -536,16 +531,15 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
           </Field>
 
           <Field label="Background">
-            <Select
-              items={BACKGROUND_OPTIONS}
+            <ColorPicker
+              noun="background"
               value={draft.text.background}
-              onValueChange={(value) => {
+              onEditStart={noEdit}
+              onEditEnd={noEdit}
+              onChange={(color) => {
                 setDraft((current) => ({
                   ...current,
-                  text: {
-                    ...current.text,
-                    background: value as AccountDefaults["text"]["background"],
-                  },
+                  text: { ...current.text, background: color },
                 }));
               }}
             />

@@ -70,7 +70,7 @@ function projectOf(slideCount: number, options: ProjectOptions = {}): Project {
               style: "plain",
               outlineWidth: 12,
               color: "#FFFFFF",
-              background: "white",
+              background: "#FFFFFF",
               backgroundShape: "full",
               align: "center",
               rotation: 0,

@@ -21,7 +21,7 @@ function defaults(overrides: Partial<Account["defaults"]> = {}): Account["defaul
       size: 64,
       style: "plain",
       color: "#FFFFFF",
-      background: "white",
+      background: "#FFFFFF",
       backgroundShape: "lines",
       align: "center",
     },

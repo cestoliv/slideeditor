@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { textColorOf } from "../geometry/color.js";
+import { normalizeTextBackground, textColorOf } from "../geometry/color.js";
 import { DEFAULT_FONT_FAMILY } from "../text/constants.js";
 
 // New projects are created with an explicit ratio (app.js:2121), so this
@@ -46,7 +46,13 @@ export const overlaySchema = z.object({
 });
 
 const textStyleSchema = z.enum(["plain", "outline", "boxed"]).catch("plain");
-const textBackgroundSchema = z.enum(["white", "black"]).catch("white");
+// Widened from a "white"|"black" enum to any hex colour. normalizeTextBackground
+// still accepts the two legacy tone names case-insensitively, so a document
+// saved before this change parses to the same colour it always rendered.
+const textBackgroundSchema = z
+  .string()
+  .catch("")
+  .transform((value) => normalizeTextBackground(value));
 
 // backgroundShape defaults to "full" here, matching normalizeProject in
 // app.js:131. composeSlide (server/compose.mjs:127) writes "lines" for a text
@@ -85,9 +91,10 @@ const rawTextLayerSchema = z.object({
   z: z.number().optional(),
 });
 
-// textColorOf ports app.js:232-235: a boxed text on anything but a black box
-// defaults to dark text, everything else defaults to white. Without this, a
-// legacy boxed text with no stored color renders white text on a white box.
+// textColorOf ports app.js:232-235: a boxed text defaults to whichever of
+// black/white outlines its own background (outlineColorFor), everything else
+// defaults to white. Without this, a legacy boxed text with no stored color
+// renders white text on a white box.
 export const textLayerSchema = rawTextLayerSchema.transform((text) => ({
   ...text,
   color: textColorOf(text),

@@ -97,7 +97,7 @@ export function fixtureProject(options: FixtureOptions = {}): Project {
           size: 48,
           style: "plain",
           color: "#ffffff",
-          background: "white",
+          background: "#FFFFFF",
           backgroundShape: "full",
           align: "center",
           rotation: 0,

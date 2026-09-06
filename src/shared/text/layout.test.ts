@@ -13,7 +13,7 @@ const base = {
   size: 40,
   style: "plain" as const,
   color: "#FFFFFF",
-  background: "white" as const,
+  background: "#FFFFFF",
   backgroundShape: "lines" as const,
   align: "center" as const,
   fontFamily: "TikTok Sans",
