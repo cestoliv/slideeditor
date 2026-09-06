@@ -639,3 +639,19 @@ it("still saves a slideshow whose library item was force-deleted", async () => {
   });
   expect(saved.version).toBe(3);
 });
+
+it("leaves the version alone when the write fails halfway", () => {
+  app = createTestApp();
+  const { projects } = app.services;
+  const project = projects.create({ accountId: "default", name: "Atomic" });
+  vi.spyOn(projects, "reindex").mockImplementation(() => {
+    throw new Error("index broke");
+  });
+  expect(() =>
+    projects.save(project.id, { name: "Renamed", document: project, version: 1 }),
+  ).toThrow("index broke");
+  vi.restoreAllMocks();
+  const after = projects.get(project.id);
+  expect(after?.version).toBe(1);
+  expect(after?.name).toBe("Atomic");
+});

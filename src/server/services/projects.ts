@@ -157,24 +157,26 @@ export class ProjectService {
     // absent field entirely. A document that already names a ratio keeps it.
     const body = normalizeDocument(document, this.accounts?.get(account)?.defaults.ratio);
     this.assertOwnScope(body, account);
-    this.db
-      .prepare(
-        `
+    this.transact(() => {
+      this.db
+        .prepare(
+          `
       INSERT INTO project (id, name, document, version, status, description, hashtags, account_id, created_at, updated_at)
       VALUES (?, ?, ?, 1, 'draft', ?, ?, ?, ?, ?)
     `,
-      )
-      .run(
-        id,
-        String(name || "New Project").slice(0, 200),
-        JSON.stringify(body),
-        normalizeDescription(description),
-        normalizeHashtags(hashtags),
-        account,
-        now,
-        now,
-      );
-    this.reindex(id, body);
+        )
+        .run(
+          id,
+          String(name || "New Project").slice(0, 200),
+          JSON.stringify(body),
+          normalizeDescription(description),
+          normalizeHashtags(hashtags),
+          account,
+          now,
+          now,
+        );
+      this.reindex(id, body);
+    });
     this.events?.broadcast({ type: "project.changed", projectId: id, version: 1 });
     return this.require(id);
   }
@@ -205,24 +207,26 @@ export class ProjectService {
     const body = normalizeDocument(document, current.ratio);
     this.assertOwnScope(body, current.accountId);
     const nextVersion = current.version + 1;
-    this.db
-      .prepare(
-        `
+    this.transact(() => {
+      this.db
+        .prepare(
+          `
       UPDATE project SET name = ?, document = ?, version = ?, description = ?, hashtags = ?, updated_at = ? WHERE id = ?
     `,
-      )
-      .run(
-        String(name ?? current.name).slice(0, 200),
-        JSON.stringify(body),
-        nextVersion,
-        description === undefined
-          ? current.description
-          : normalizeDescription(description),
-        hashtags === undefined ? current.hashtags : normalizeHashtags(hashtags),
-        Date.now(),
-        id,
-      );
-    this.reindex(id, body);
+        )
+        .run(
+          String(name ?? current.name).slice(0, 200),
+          JSON.stringify(body),
+          nextVersion,
+          description === undefined
+            ? current.description
+            : normalizeDescription(description),
+          hashtags === undefined ? current.hashtags : normalizeHashtags(hashtags),
+          Date.now(),
+          id,
+        );
+      this.reindex(id, body);
+    });
     this.events?.broadcast({
       type: "project.changed",
       projectId: id,
@@ -286,8 +290,7 @@ export class ProjectService {
     }
     const now = Date.now();
 
-    this.db.exec("BEGIN");
-    try {
+    this.transact(() => {
       this.db.prepare("DELETE FROM project_item_use WHERE project_id = ?").run(projectId);
       const live = this.db.prepare(
         "INSERT OR IGNORE INTO project_item_use (project_id, item_id) VALUES (?, ?)",
@@ -308,9 +311,26 @@ export class ProjectService {
         live.run(projectId, itemId);
         history.run(itemId, projectId, total, now, now);
       }
-      this.db.exec("COMMIT");
+    });
+  }
+
+  /**
+   * A savepoint rather than BEGIN, so a caller can wrap a block that already
+   * runs one of its own — save() and create() both write the row and reindex
+   * it under a single savepoint. Without that, a reindex failure left the row
+   * written and the version bumped while the caller got a 500, so the client's
+   * next save collided with a version it never saw and got a 409 it could not
+   * clear without a reload.
+   */
+  private transact<T>(run: () => T): T {
+    this.db.exec("SAVEPOINT project_tx");
+    try {
+      const result = run();
+      this.db.exec("RELEASE project_tx");
+      return result;
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      this.db.exec("ROLLBACK TO project_tx");
+      this.db.exec("RELEASE project_tx");
       throw error;
     }
   }
