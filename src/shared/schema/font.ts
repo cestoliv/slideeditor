@@ -24,6 +24,13 @@ export type FontEntry = {
   source: FontSource;
   /** /media/... for a google family, /fonts/... for a builtin one. */
   url: string;
+  /**
+   * The family's self-hosted italic face, or null for a family that has
+   * none — both builtins, and every Google family whose metadata declared no
+   * italic variant. A null here means the DOM and the canvas both synthesise
+   * an oblique from the roman face instead.
+   */
+  italicUrl: string | null;
 };
 
 export const fontEntrySchema: z.ZodType<FontEntry> = z
@@ -45,6 +52,10 @@ export const fontEntrySchema: z.ZodType<FontEntry> = z
       .transform((value) => value ?? null),
     source: z.enum(["builtin", "google"]),
     url: z.string(),
+    italicUrl: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? null),
   })
   // The documented invariant ("set together or not at all") enforced here,
   // rather than defended against wherever a FontEntry is read: a caller can

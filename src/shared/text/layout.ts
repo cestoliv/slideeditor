@@ -7,11 +7,14 @@ import {
   BOX_JUNCTION_RADIUS,
   BOX_LINE_HEIGHT,
   BOX_TEXT_LINE_HEIGHT,
+  DECORATION_THICKNESS,
   OUTLINE_RATIO,
+  STRIKETHROUGH_OFFSET,
   TEXT_HORIZONTAL_INSET,
   TEXT_LINE_HEIGHT,
   TEXT_VERTICAL_PADDING,
   TEXT_WRAP_INSET,
+  UNDERLINE_OFFSET,
 } from "./constants.js";
 import { lineCornerRadii, lineJunctionCorners } from "./pill.js";
 import type { CornerRadii, JunctionCorner } from "./pill.js";
@@ -89,6 +92,15 @@ export type TextLayout = {
   startY: number;
   /** Centre of each line, from the box's top edge. */
   lineCenters: number[];
+  /**
+   * Each line's own measured width, with no pill padding and no clamp to the
+   * box. `pillWidths` cannot serve an underline: it adds
+   * horizontalPadding on a per-line box and clamps to boxWidth, so a rule
+   * drawn from it would overhang the glyphs on both sides.
+   */
+  lineWidths: number[];
+  /** Left edge of each line's glyphs for the chosen alignment, from the box's left edge. */
+  lineStarts: number[];
   /** Per-line pill width, capped at boxWidth. */
   pillWidths: number[];
   /** Left edge of each pill for the chosen alignment, from the box's left edge. */
@@ -109,6 +121,12 @@ export type TextLayout = {
   horizontalPadding: number;
   /** Stroke width for the outline text style. */
   outlineWidth: number;
+  /** Height of an underline or strikethrough rule. */
+  decorationThickness: number;
+  /** An underline's distance below a line's centre. */
+  underlineOffset: number;
+  /** A strikethrough's distance from a line's centre, negative for above it. */
+  strikethroughOffset: number;
 };
 
 /**
@@ -148,10 +166,16 @@ export function computeTextLayout(input: TextLayoutInput): TextLayout {
   const startY = (boxHeight - blockHeight) / 2 + lineHeight / 2;
   const lineCenters = lines.map((_, index) => startY + index * lineHeight);
 
-  // An empty line still measures as a space, so a paragraph break keeps the
-  // pill stack's rhythm even though nothing is drawn on it.
-  const pillWidths = lines.map((line) =>
-    Math.min(measure(line || " ") + (perLineBox ? horizontalPadding * 2 : 0), boxWidth),
+  // Measured once per line and used twice: an empty line still contributes a
+  // space's width to its pill, so a paragraph break keeps the pill stack's
+  // rhythm, but it gets no underline, so its own width is zero.
+  const lineWidths = lines.map((line) => (line === "" ? 0 : measure(line)));
+  const pillWidths = lines.map((line, index) =>
+    Math.min(
+      (line === "" ? measure(" ") : (lineWidths[index] ?? 0)) +
+        (perLineBox ? horizontalPadding * 2 : 0),
+      boxWidth,
+    ),
   );
   const pillStarts = pillWidths.map((pillWidth) =>
     align === "left"
@@ -193,6 +217,14 @@ export function computeTextLayout(input: TextLayoutInput): TextLayout {
         ? boxWidth - fontSize * TEXT_HORIZONTAL_INSET
         : boxWidth / 2;
 
+  const lineStarts = lineWidths.map((lineWidth) =>
+    align === "left"
+      ? textX
+      : align === "right"
+        ? textX - lineWidth
+        : (boxWidth - lineWidth) / 2,
+  );
+
   return {
     lines,
     totalLineCount: wrapped.length,
@@ -209,6 +241,8 @@ export function computeTextLayout(input: TextLayoutInput): TextLayout {
     blockHeight,
     startY,
     lineCenters,
+    lineWidths,
+    lineStarts,
     pillWidths,
     pillStarts,
     pillVisible,
@@ -219,5 +253,8 @@ export function computeTextLayout(input: TextLayoutInput): TextLayout {
     align,
     horizontalPadding,
     outlineWidth: fontSize * OUTLINE_RATIO,
+    decorationThickness: fontSize * DECORATION_THICKNESS,
+    underlineOffset: fontSize * UNDERLINE_OFFSET,
+    strikethroughOffset: fontSize * STRIKETHROUGH_OFFSET,
   };
 }

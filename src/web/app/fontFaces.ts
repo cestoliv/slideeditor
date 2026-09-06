@@ -67,10 +67,16 @@ function escapeCssString(value: string): string {
 
 function faceRule(font: FontEntry): string {
   const family = escapeCssString(font.family);
-  const url = escapeCssString(font.url);
-  return `@font-face { font-family: "${family}"; src: url("${url}") format("${formatFor(
-    font.url,
-  )}"); font-weight: ${fontWeightDeclaration(font)}; font-display: swap; }`;
+  const weight = fontWeightDeclaration(font);
+  const rule = (url: string, style: "normal" | "italic") =>
+    `@font-face { font-family: "${family}"; src: url("${escapeCssString(
+      url,
+    )}") format("${formatFor(url)}"); font-weight: ${weight}; font-style: ${style}; font-display: swap; }`;
+  // font-style: normal is stated rather than left to default, so a browser
+  // matching a request for italic cannot pick the roman face and slant it
+  // when a real italic face is right there.
+  const roman = rule(font.url, "normal");
+  return font.italicUrl === null ? roman : `${roman}\n${rule(font.italicUrl, "italic")}`;
 }
 
 /**
@@ -244,8 +250,105 @@ export function whenCatalogueReady(): Promise<void> {
  * builds a font string or a paint prop resolves the weight through here
  * instead of assuming TEXT_WEIGHT.
  */
-export function weightFor(family: string): number {
+export function weightFor(family: string, stored?: number | null): number {
+  // A stored weight is the author's own choice and wins outright. Null (the
+  // default every layer starts at, and every layer saved before the field
+  // existed) falls through to the family's catalogued weight, which is what
+  // this function answered before the argument existed.
+  if (typeof stored === "number") return stored;
   return catalogue.find((font) => font.family === family)?.weight ?? TEXT_WEIGHT;
+}
+
+export type WeightOption = { value: number; label: string };
+
+/** The named weights, in order. A family offers whichever of these it carries. */
+const NAMED_WEIGHTS: readonly WeightOption[] = [
+  { value: 300, label: "Light" },
+  { value: 400, label: "Regular" },
+  { value: 500, label: "Medium" },
+  { value: 600, label: "SemiBold" },
+  { value: 700, label: "Bold" },
+  { value: 900, label: "Black" },
+];
+
+/**
+ * The weights a family can actually be painted at.
+ *
+ * A variable face declares a range, so every named weight inside it is a real
+ * instance the browser can serve. A static face has exactly one, and offering
+ * a second would only make the browser synthesise it — the same synthesised
+ * bold this whole catalogue exists to avoid. A family the catalogue does not
+ * know about is treated as static at TEXT_WEIGHT.
+ */
+export function availableWeights(family: string): WeightOption[] {
+  const font = catalogue.find((entry) => entry.family === family);
+  if (font?.weightMin != null && font.weightMax != null) {
+    const { weightMin, weightMax } = font;
+    return NAMED_WEIGHTS.filter(
+      (option) => option.value >= weightMin && option.value <= weightMax,
+    );
+  }
+  const weight = font?.weight ?? TEXT_WEIGHT;
+  const named = NAMED_WEIGHTS.find((option) => option.value === weight);
+  return [named ?? { value: weight, label: String(weight) }];
+}
+
+/** The value a weight Select uses for "whatever this family is catalogued at". */
+export const AUTO_WEIGHT = "auto";
+
+/**
+ * The options a weight Select offers for one family and one stored weight.
+ *
+ * availableWeights(family) need not carry the stored weight: a family
+ * catalogued at 450 over a 100-900 axis offers the named weights inside that
+ * range but never 450 itself, since 450 names nothing. A Select whose `value`
+ * matches none of its `items` renders blank rather than falling back to a
+ * placeholder, so a stored weight outside the catalogue is appended as its own
+ * option, labelled by its number. That shows the real stored value instead of
+ * hiding it behind a blank control or silently rewriting a layer nobody asked
+ * to change.
+ */
+export function weightItems(text: {
+  fontFamily: string;
+  weight: number | null;
+}): { value: string; label: string }[] {
+  const options = availableWeights(text.fontFamily);
+  const items = [
+    { value: AUTO_WEIGHT, label: "Default" },
+    ...options.map((option) => ({ value: String(option.value), label: option.label })),
+  ];
+  if (text.weight !== null && !options.some((option) => option.value === text.weight)) {
+    items.push({ value: String(text.weight), label: String(text.weight) });
+  }
+  return items;
+}
+
+/**
+ * The stored weight a family switch leaves behind.
+ *
+ * A weight the new face has no instance for would be synthesised, which is the
+ * one thing the catalogue exists to avoid. Null stays null: it means "this
+ * family's own weight" and is correct for every family. An axis narrower than
+ * the gap between two named weights (100-200, say) carries none of them, and
+ * null is the only honest answer there — a seeded default would be a weight
+ * outside the very range this function reads.
+ */
+export function clampWeight(family: string, stored: number | null): number | null {
+  if (stored === null) return null;
+  // A family the catalogue does not know about has no options to clamp to:
+  // availableWeights answers with the TEXT_WEIGHT fallback, so clamping would
+  // rewrite an explicit 700 to 500 on nothing more than a failed /api/fonts
+  // fetch. The stored weight is the author's own choice and stays.
+  if (!catalogue.some((entry) => entry.family === family)) return stored;
+  return availableWeights(family)
+    .map((option) => option.value)
+    .reduce<number | null>(
+      (best, value) =>
+        best === null || Math.abs(value - stored) < Math.abs(best - stored)
+          ? value
+          : best,
+      null,
+    );
 }
 
 /**

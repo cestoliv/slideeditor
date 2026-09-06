@@ -302,14 +302,14 @@ export function TextLayerView({
             className={styles.hitArea}
             data-text-content="true"
             data-testid="text-hit"
-            style={textBlockStyle(layer.fontFamily, layout)}
+            style={textBlockStyle(layout, layer)}
           />
         ) : null}
         {editing ? (
           <InlineTextEditor
             value={layer.text}
             layout={layout}
-            family={layer.fontFamily}
+            layer={layer}
             caret={caret}
             onInput={(value) => {
               writeText((live) => {

@@ -144,3 +144,30 @@ it("falls back to a positional label when even the family name did not parse", (
   expect(dropped).toHaveLength(1);
   expect(dropped[0]?.label).toBe("entry 0");
 });
+
+it("normalises a missing italic url to null", () => {
+  const entry = fontEntrySchema.parse({
+    id: "f1",
+    family: "Lobster",
+    weight: 400,
+    weightMin: null,
+    weightMax: null,
+    source: "google",
+    url: "/media/a.woff2",
+  });
+  expect(entry.italicUrl).toBe(null);
+});
+
+it("keeps an italic url it is given", () => {
+  const entry = fontEntrySchema.parse({
+    id: "f1",
+    family: "Roboto",
+    weight: 500,
+    weightMin: 100,
+    weightMax: 900,
+    source: "google",
+    url: "/media/a.woff2",
+    italicUrl: "/media/b.woff2",
+  });
+  expect(entry.italicUrl).toBe("/media/b.woff2");
+});

@@ -38,6 +38,10 @@ it("BUILTIN_DEFAULTS reproduces today's rendering values exactly, matching migra
       backgroundShape: "lines",
       align: "center",
       maxWidth: 0.6,
+      weight: null,
+      italic: false,
+      underline: false,
+      strikethrough: false,
     },
   });
 });
@@ -154,9 +158,20 @@ it("parses migration 6's exact seeded defaults blob, filling in maxWidth, and ma
     },
   };
   const parsed = accountDefaultsSchema.parse(seeded);
+  // The seed row itself never gains these keys (no migration is needed —
+  // see account.ts), so a fresh parse of it must fill them the same way
+  // BUILTIN_DEFAULTS already does.
   expect(parsed).toEqual({
     ...seeded,
-    text: { ...seeded.text, background: "#FFFFFF", maxWidth: 0.6 },
+    text: {
+      ...seeded.text,
+      background: "#FFFFFF",
+      maxWidth: 0.6,
+      weight: null,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+    },
   });
   expect(parsed).toEqual(BUILTIN_DEFAULTS);
 });
@@ -192,6 +207,45 @@ describe("text.maxWidth", () => {
     const defaults = accountDefaultsSchema.parse(defaultsWithMaxWidth(0.6));
     expect(defaults.text.maxWidth).toBe(0.6);
   });
+});
+
+it("defaults the new text style fields on an account saved without them", () => {
+  const parsed = accountDefaultsSchema.parse({
+    ratio: { w: 9, h: 16 },
+    text: {
+      fontFamily: "TikTok Sans",
+      size: 64,
+      style: "plain",
+      color: "#FFFFFF",
+      background: "white",
+      backgroundShape: "lines",
+      align: "center",
+    },
+  });
+  expect(parsed.text.weight).toBe(null);
+  expect(parsed.text.italic).toBe(false);
+  expect(parsed.text.underline).toBe(false);
+  expect(parsed.text.strikethrough).toBe(false);
+});
+
+// The same repair the per-layer weight gets (document.ts's weightSchema): an
+// account default is copied onto every new layer, so an unpaintable weight
+// here would follow the author into every slideshow they create.
+it("accountDefaultsSchema repairs a weight outside the CSS range", () => {
+  const parsed = accountDefaultsSchema.parse({
+    ratio: { w: 9, h: 16 },
+    text: {
+      fontFamily: "TikTok Sans",
+      size: 64,
+      style: "plain",
+      color: "#FFFFFF",
+      background: "white",
+      backgroundShape: "lines",
+      align: "center",
+      weight: 2000,
+    },
+  });
+  expect(parsed.text.weight).toBe(null);
 });
 
 it("accountSchema parses a full account", () => {

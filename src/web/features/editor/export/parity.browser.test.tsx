@@ -381,8 +381,16 @@ async function mount(
       project.slides.flatMap((slide) => slide.texts.map((layer) => layer.fontFamily)),
     ),
   ];
+  // Both the roman and the italic face of each family. They are separate
+  // files, and font-display: swap fetches the italic one only when italic
+  // text first paints — after this wait. renderSlideCanvas loads every face
+  // it needs before it draws, so a missing wait here photographs the stage
+  // against a fallback italic and diffs it against the real one.
   await Promise.all(
-    families.map((family) => document.fonts.load(textFontString(64, family))),
+    families.flatMap((family) => [
+      document.fonts.load(textFontString(64, family)),
+      document.fonts.load(textFontString(64, family, TEXT_WEIGHT, true)),
+    ]),
   );
   await document.fonts.ready;
   // See assertFaceLoaded's own doc comment: the two waits above cannot tell
@@ -526,6 +534,37 @@ const FIXTURES: { name: string; project: () => Project }[] = [
     project: () =>
       projectWith({
         texts: [text({ fontFamily: "Space Mono" })],
+      }),
+  },
+  {
+    /*
+     * Task 10's own fixture: a stored weight, italic, underline and
+     * strikethrough all on one wrapped layer. weight/italic change which face
+     * the measuring canvas and the DOM bind (weightFor, textFontString), so a
+     * mismatch there rewraps the line differently on each side before a rule
+     * is even drawn. underline/strikethrough exercise the decoration rects
+     * drawTextLayer and renderTextDom both build from the same lineStarts/
+     * lineWidths/lineCenters numbers.
+     */
+    name: "styled text: weight, slant and rules",
+    project: () =>
+      projectWith({
+        texts: [
+          text({
+            id: "parity-styled",
+            // Space Mono, because testFonts.css declares a real italic face
+            // for it: the default family has none, so both paths synthesise
+            // the same oblique and the italic seam goes unmeasured.
+            fontFamily: "Space Mono",
+            text: "Styled parity line that wraps",
+            width: 0.5,
+            size: 78,
+            weight: 700,
+            italic: true,
+            underline: true,
+            strikethrough: true,
+          }),
+        ],
       }),
   },
   {

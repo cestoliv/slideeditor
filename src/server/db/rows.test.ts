@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { HttpError } from "../errors.js";
-import { integer, optionalInteger, requiredText, text } from "./rows.js";
+import { integer, optionalInteger, optionalText, requiredText, text } from "./rows.js";
 
 it("reads a text column and falls back to an empty string", () => {
   expect(text({ name: "Backdrop" }, "name")).toBe("Backdrop");
@@ -34,4 +34,11 @@ it("tells a missing aggregate from a zero", () => {
   expect(optionalInteger({ times_used: 3n }, "times_used")).toBe(3);
   expect(optionalInteger({ times_used: null }, "times_used")).toBeNull();
   expect(optionalInteger({}, "times_used")).toBeNull();
+});
+
+it("reads a nullable text column as null when it is absent", () => {
+  expect(optionalText({ a: null }, "a")).toBe(null);
+  expect(optionalText({}, "a")).toBe(null);
+  expect(optionalText({ a: "" }, "a")).toBe("");
+  expect(optionalText({ a: "x" }, "a")).toBe("x");
 });

@@ -50,4 +50,22 @@ describe("newTextLayer", () => {
     const layer = newTextLayer(custom, { x: 0, y: 0, z: 1 });
     expect(layer.width).toBe(0.5);
   });
+
+  it("copies the style fields from the account defaults", () => {
+    const defaults = {
+      ...BUILTIN_DEFAULTS,
+      text: {
+        ...BUILTIN_DEFAULTS.text,
+        weight: 700,
+        italic: true,
+        underline: true,
+        strikethrough: false,
+      },
+    };
+    const layer = newTextLayer(defaults, { x: 0, y: 0, z: 1 }, () => "id");
+    expect(layer.weight).toBe(700);
+    expect(layer.italic).toBe(true);
+    expect(layer.underline).toBe(true);
+    expect(layer.strikethrough).toBe(false);
+  });
 });

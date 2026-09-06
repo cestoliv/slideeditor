@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { textFontString } from "@shared/text/index.js";
-import { injectFontFaces, resetFontFacesForTesting } from "../../../app/fontFaces.js";
-import { resetTextFontStateForTesting, useTextFontState } from "./useTextLayout.js";
+import type { TextLayer } from "@shared/schema/index.js";
+import {
+  injectFontFaces,
+  resetFontFacesForTesting,
+  weightFor,
+} from "../../../app/fontFaces.js";
+import { fixtureProject } from "../testing.js";
+import {
+  resetTextFontStateForTesting,
+  useTextFontState,
+  useTextLayout,
+} from "./useTextLayout.js";
 
 /*
  * The cold-boot race this file exists to catch.
@@ -27,8 +37,22 @@ function Probe({ family }: { family: string }) {
   // wrapper was exported only for this file to call and nothing in
   // production ever used it (useTextLayout, the one real caller, always
   // reads useTextFontState directly for both `ready` and `revision`).
-  const { ready } = useTextFontState([family]);
+  //
+  // italic: false, since every test using this probe cares about a plain
+  // family's cold-boot/retry behaviour, not the italic face.
+  const { ready } = useTextFontState([{ family, italic: false }]);
   return <p>{ready ? "ready" : "waiting"}</p>;
+}
+
+/**
+ * A second probe, for the one test below that needs the measuring canvas
+ * itself to run (useTextFontState alone never touches it) — the rest of
+ * this file's tests only care about the ready/waiting state above, not
+ * about what gets measured.
+ */
+function LayoutProbe({ layer }: { layer: TextLayer }) {
+  useTextLayout(layer, { width: 1080, height: 1920 });
+  return null;
 }
 
 // Finding 5 from the multi-account review: fontStates (this module's own
@@ -162,4 +186,69 @@ it("asks the browser for a family again once a later catalogue install actually 
   // Still ready throughout: the retry corrects the metrics without ever
   // making the stage wait on it again.
   await expect.element(screen.getByText("ready")).toBeVisible();
+});
+
+// This file has no fixtureText() helper, so the layer is built straight from
+// fixtureProject() (src/web/features/editor/testing.ts) instead.
+it("measures an italic layer against the italic face", async () => {
+  const seen: string[] = [];
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (context === null) throw new Error("no 2d context");
+  const descriptor = Object.getOwnPropertyDescriptor(
+    CanvasRenderingContext2D.prototype,
+    "font",
+  );
+  Object.defineProperty(CanvasRenderingContext2D.prototype, "font", {
+    ...descriptor,
+    set(value: string) {
+      seen.push(value);
+      descriptor?.set?.call(this, value);
+    },
+  });
+  try {
+    const layer: TextLayer = {
+      ...fixtureProject().slides[0]!.texts[0]!,
+      italic: true,
+      weight: 700,
+    };
+    render(<LayoutProbe layer={layer} />);
+    await expect
+      .poll(() => seen.some((font) => font.startsWith("italic 700")))
+      .toBe(true);
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(CanvasRenderingContext2D.prototype, "font", descriptor);
+    }
+  }
+});
+
+/*
+ * The face cache, not the font string. The test above renders one layer, so
+ * it passes even with faceKey reduced to the family alone: measurerFor runs
+ * on the first render, before any load settles. Two layers of one family in
+ * two faces is what tells the two apart — a family-keyed cache asks the
+ * browser once and lets the roman load answer for the italic layer.
+ */
+it("waits on each face of a family separately", async () => {
+  const loadedFonts: string[] = [];
+  const realLoad = document.fonts.load.bind(document.fonts);
+  document.fonts.load = async (font: string, text?: string) => {
+    loadedFonts.push(font);
+    return realLoad(font, text);
+  };
+
+  const base = fixtureProject().slides[0]!.texts[0]!;
+  const family = base.fontFamily;
+  await render(<LayoutProbe layer={{ ...base, italic: false }} />);
+  await render(<LayoutProbe layer={{ ...base, italic: true }} />);
+
+  await expect
+    .poll(() => [...loadedFonts].sort())
+    .toEqual(
+      [
+        textFontString(64, family, weightFor(family)),
+        textFontString(64, family, weightFor(family), true),
+      ].sort(),
+    );
 });

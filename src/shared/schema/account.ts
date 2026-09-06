@@ -5,6 +5,7 @@ import {
   RATIO_ASPECT_MAX,
   RATIO_ASPECT_MIN,
   ratioSchema,
+  weightSchema,
 } from "./document.js";
 import type { Ratio } from "./document.js";
 import {
@@ -35,6 +36,11 @@ export type AccountDefaults = {
     backgroundShape: "lines" | "full";
     align: "left" | "center" | "right";
     maxWidth: number;
+    /** Null means the family's own catalogued weight — see document.ts's own field. */
+    weight: number | null;
+    italic: boolean;
+    underline: boolean;
+    strikethrough: boolean;
   };
 };
 
@@ -150,6 +156,10 @@ export const accountDefaultsSchema: z.ZodType<AccountDefaults, unknown> = z.obje
     backgroundShape: z.enum(["lines", "full"]).catch("lines"),
     align: z.enum(["left", "center", "right"]).catch("center"),
     maxWidth: boundedMaxWidthSchema,
+    weight: weightSchema,
+    italic: z.boolean().catch(false),
+    underline: z.boolean().catch(false),
+    strikethrough: z.boolean().catch(false),
   }),
 });
 
@@ -177,5 +187,9 @@ export const BUILTIN_DEFAULTS: AccountDefaults = {
     backgroundShape: "lines",
     align: "center",
     maxWidth: DEFAULT_MAX_TEXT_WIDTH,
+    weight: null,
+    italic: false,
+    underline: false,
+    strikethrough: false,
   },
 };

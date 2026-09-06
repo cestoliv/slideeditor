@@ -27,6 +27,14 @@
   pointer-events: none;
 }
 
+/* The underline/strikethrough rules, sharing the pills' own coordinate space. */
+.rules {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .block {
   position: absolute;
   pointer-events: none;

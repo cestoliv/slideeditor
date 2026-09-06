@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { normalizeTextBackground, textColorOf } from "../geometry/color.js";
-import { DEFAULT_FONT_FAMILY } from "../text/constants.js";
+import {
+  DEFAULT_FONT_FAMILY,
+  TEXT_WEIGHT_MAX,
+  TEXT_WEIGHT_MIN,
+} from "../text/constants.js";
 
 // New projects are created with an explicit ratio (app.js:2121), so this
 // fallback exists for legacy or corrupt documents: projectRatio (app.js:444-449)
@@ -54,6 +58,25 @@ const textBackgroundSchema = z
   .catch("")
   .transform((value) => normalizeTextBackground(value));
 
+/**
+ * A text layer's font weight, or null for the family's own weight.
+ *
+ * Bounded as well as nullable. A weight outside the CSS range is not a lighter
+ * or bolder face: the DOM drops the declaration, and an invalid canvas font
+ * string makes the context ignore the whole assignment, so the export keeps
+ * whatever face it had and the two paths disagree with nothing reporting it.
+ * Out of range repairs to null rather than rejecting, the way every other
+ * field of a stored document repairs.
+ */
+export const weightSchema = z
+  .number()
+  .int()
+  .min(TEXT_WEIGHT_MIN)
+  .max(TEXT_WEIGHT_MAX)
+  .nullish()
+  .catch(null)
+  .transform((value) => value ?? null);
+
 // backgroundShape defaults to "full" here, matching normalizeProject in
 // app.js:131. composeSlide (server/compose.mjs:127) writes "lines" for a text
 // it creates. That split is deliberate, not a bug to unify.
@@ -87,6 +110,14 @@ const rawTextLayerSchema = z.object({
   // (not .default) resolves that the same way as a malformed value: to
   // DEFAULT_FONT_FAMILY, so no document migration or JSON rewrite is needed.
   fontFamily: z.string().catch(DEFAULT_FONT_FAMILY),
+  // Null means "whatever weight this family is catalogued at", which is what
+  // every layer rendered at before this field existed (web/app/fontFaces.ts's
+  // weightFor). Storing a literal instead would make a layer in a 400 face
+  // ask for 500 and be synthetically emboldened on a document nobody edited.
+  weight: weightSchema,
+  italic: z.boolean().catch(false),
+  underline: z.boolean().catch(false),
+  strikethrough: z.boolean().catch(false),
   rotation: z.number().catch(0),
   z: z.number().optional(),
 });

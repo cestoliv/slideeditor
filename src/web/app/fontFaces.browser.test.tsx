@@ -11,6 +11,8 @@ import "../design/tokens.css";
 // tests inspect.
 import "../design/fonts.css";
 import {
+  availableWeights,
+  clampWeight,
   ensureFontFacesLoaded,
   injectFontFaces,
   resetFontFacesForTesting,
@@ -671,4 +673,145 @@ it("stops retrying automatically after repeated failures, rather than looping fo
   await settleOneTurn();
   await settleOneTurn();
   expect(calls).toBe(callsAfterGivingUp);
+});
+
+it("prefers a stored weight over the catalogue's own", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Lobster",
+      weight: 400,
+      weightMin: null,
+      weightMax: null,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: null,
+    },
+  ]);
+  expect(weightFor("Lobster")).toBe(400);
+  expect(weightFor("Lobster", 700)).toBe(700);
+  expect(weightFor("Lobster", null)).toBe(400);
+});
+
+it("offers every named weight inside a variable family's axis", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Oswald",
+      weight: 500,
+      weightMin: 200,
+      weightMax: 700,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: null,
+    },
+  ]);
+  expect(availableWeights("Oswald").map((option) => option.value)).toEqual([
+    300, 400, 500, 600, 700,
+  ]);
+});
+
+it("offers a static family only its own weight", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Lobster",
+      weight: 400,
+      weightMin: null,
+      weightMax: null,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: null,
+    },
+  ]);
+  expect(availableWeights("Lobster")).toEqual([{ value: 400, label: "Regular" }]);
+});
+
+it("labels an unnamed static weight by its number", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Odd",
+      weight: 450,
+      weightMin: null,
+      weightMax: null,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: null,
+    },
+  ]);
+  expect(availableWeights("Odd")).toEqual([{ value: 450, label: "450" }]);
+});
+
+it("declares an italic face when the family has one", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Roboto",
+      weight: 500,
+      weightMin: 100,
+      weightMax: 900,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: "/media/b.woff2",
+    },
+  ]);
+  const style = document.querySelector('style[data-fonts="catalogue"]');
+  const rules = style?.textContent?.match(/@font-face[^}]*}/g) ?? [];
+  expect(rules).toHaveLength(2);
+  // The italic rule must name the italic file: a roman-only assertion passes
+  // even when both rules point at the same face.
+  expect(rules[0]).toContain("font-style: normal");
+  expect(rules[0]).toContain("/media/a.woff2");
+  expect(rules[1]).toContain("font-style: italic");
+  expect(rules[1]).toContain("/media/b.woff2");
+});
+
+it("declares one rule for a family with no italic face", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Lobster",
+      weight: 400,
+      weightMin: null,
+      weightMax: null,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: null,
+    },
+  ]);
+  const style = document.querySelector('style[data-fonts="catalogue"]');
+  expect(style?.textContent?.match(/@font-face/g)).toHaveLength(1);
+});
+
+it("offers the default weight for an unknown family", () => {
+  expect(availableWeights("Nope")).toEqual([{ value: 500, label: "Medium" }]);
+});
+
+/*
+ * The catalogue is empty until sign-in installs it, and a /api/fonts fetch
+ * that failed past its retry limit never installs one at all. Clamping
+ * against that emptiness would read the TEXT_WEIGHT fallback above as "this
+ * family's only weight" and rewrite an author's explicit 700 to 500 with no
+ * signal. An unknown family has no options, which is not the same as one.
+ */
+it("leaves a stored weight alone for an unknown family", () => {
+  expect(clampWeight("Nope", 700)).toBe(700);
+});
+
+it("clamps a stored weight to the nearest weight a known family carries", async () => {
+  await injectFontFaces([
+    {
+      id: "f1",
+      family: "Oswald",
+      weight: 400,
+      weightMin: 100,
+      weightMax: 400,
+      source: "google",
+      url: "/media/a.woff2",
+      italicUrl: null,
+    },
+  ]);
+  expect(clampWeight("Oswald", 900)).toBe(400);
+  expect(clampWeight("Oswald", null)).toBeNull();
 });

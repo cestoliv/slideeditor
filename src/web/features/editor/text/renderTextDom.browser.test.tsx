@@ -3,7 +3,8 @@ import { render } from "vitest-browser-react";
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
 import "../../../design/fonts.css";
-import type { Project } from "@shared/schema/index.js";
+import { textColorOf } from "@shared/geometry/index.js";
+import type { Project, TextLayer } from "@shared/schema/index.js";
 import { fixtureProject } from "../testing.js";
 import {
   LayerHarness,
@@ -170,4 +171,75 @@ it("cuts no notch into a stack that meets on a flat edge", async () => {
   // edge, so there is no concave corner to fill and none is drawn.
   expect(pills).toHaveLength(2);
   expect(notches).toHaveLength(0);
+});
+
+/*
+ * The weight/slant/rules paths, below.
+ *
+ * This file has no fixtureText() helper, so each layer is built straight from
+ * fixtureProject() (src/web/features/editor/testing.ts), the way
+ * useTextLayout.browser.test.tsx does.
+ */
+
+function styledProject(overrides: Partial<TextLayer>): Project {
+  const project = fixtureProject({ texts: 1, overlays: 0 });
+  const text = project.slides[0]?.texts[0];
+  if (text === undefined) throw new Error("The fixture has no text layer.");
+  Object.assign(text, overrides);
+  return project;
+}
+
+async function drawStyled(project: Project): Promise<void> {
+  const store = editorStore(project);
+  await render(<LayerHarness store={store} library={libraryFor(project)} />);
+  await measuredStage();
+}
+
+it("paints the block at the layer's own weight and slant", async () => {
+  await drawStyled(styledProject({ weight: 700, italic: true }));
+  const block = document.querySelector<HTMLElement>('[data-testid="text-block"]');
+  expect(block?.style.fontWeight).toBe("700");
+  expect(block?.style.fontStyle).toBe("italic");
+});
+
+it("draws one underline rule per non-empty line", async () => {
+  await drawStyled(styledProject({ text: "one\n\ntwo", underline: true }));
+  expect(document.querySelectorAll("[data-underline]").length).toBe(2);
+});
+
+it("draws no rule when the layer asks for none", async () => {
+  await drawStyled(styledProject({}));
+  expect(document.querySelectorAll("[data-underline]").length).toBe(0);
+  expect(document.querySelectorAll("[data-strikethrough]").length).toBe(0);
+});
+
+it("draws both rules when the layer asks for both", async () => {
+  const project = styledProject({ text: "one", underline: true, strikethrough: true });
+  await drawStyled(project);
+  const underline = document.querySelector("[data-underline]");
+  const strikethrough = document.querySelector("[data-strikethrough]");
+  expect(document.querySelectorAll("[data-underline]").length).toBe(1);
+  expect(document.querySelectorAll("[data-strikethrough]").length).toBe(1);
+
+  // Counting the rects says nothing about where they land. The underline
+  // sits below the line's centre, the strike above it, both span the same
+  // width, and both take the glyphs' own colour.
+  const y = (rect: Element | null) => Number(rect?.getAttribute("y"));
+  const width = (rect: Element | null) => Number(rect?.getAttribute("width"));
+  expect(y(underline)).toBeGreaterThan(y(strikethrough));
+  expect(width(underline)).toBeGreaterThan(0);
+  expect(width(underline)).toBe(width(strikethrough));
+  const layer = project.slides[0]!.texts[0]!;
+  expect(underline?.getAttribute("fill")).toBe(textColorOf(layer));
+});
+
+it("strokes a rule on outline text the way it strokes a glyph", async () => {
+  const project = styledProject({ text: "one", underline: true, style: "outline" });
+  await drawStyled(project);
+  const underline = document.querySelector("[data-underline]");
+  const glyph = document.querySelector('[data-testid="text-block"] text');
+  expect(underline?.getAttribute("stroke")).toBe(glyph?.getAttribute("stroke"));
+  expect(underline?.getAttribute("stroke-width")).toBe(
+    glyph?.getAttribute("stroke-width"),
+  );
 });

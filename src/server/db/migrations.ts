@@ -287,4 +287,17 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE slideshow_export ADD COLUMN format TEXT NOT NULL DEFAULT 'png';
   ALTER TABLE slideshow_export ADD COLUMN quality INTEGER NOT NULL DEFAULT 100;
   `,
+  `
+  -- A family's italic face, self-hosted the same way its roman one is.
+  -- NULL for a family Google has no italic for, and for both builtins, whose
+  -- bundled binaries ship none: those fall back to a synthesised oblique on
+  -- the DOM and the canvas alike.
+  --
+  -- A second column rather than a second row, because an italic is the same
+  -- catalogue entry seen at a different angle: one family name, one weight
+  -- axis, one advance ratio, and one row for the editor's font picker to
+  -- list. A second row would double every list, every lookup by family, and
+  -- every reference count.
+  ALTER TABLE font ADD COLUMN italic_media_id TEXT;
+  `,
 ];

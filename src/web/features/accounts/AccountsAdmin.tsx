@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { newTextLayer } from "@shared/defaults/index.js";
 import {
   OUTPUT_WIDTH,
@@ -22,7 +22,12 @@ import type { SelectOption } from "../../design/index.js";
 import { accountsStore } from "../../app/accounts.js";
 import type { AccountsStore } from "../../app/accounts.js";
 import { ApiError } from "../../app/api.js";
-import { injectFontFaces } from "../../app/fontFaces.js";
+import {
+  AUTO_WEIGHT,
+  clampWeight,
+  injectFontFaces,
+  weightItems,
+} from "../../app/fontFaces.js";
 import { ColorPicker } from "../editor/Inspector/ColorPicker.js";
 import { FontSizeSlider } from "../editor/Inspector/FontSizeSlider.js";
 import { renderTextDom } from "../editor/text/renderTextDom.js";
@@ -64,6 +69,8 @@ const ALIGN_OPTIONS: SelectOption[] = [
   { value: "center", label: "Center" },
   { value: "right", label: "Right" },
 ];
+
+const EMPHASIS_FIELDS = ["italic", "underline", "strikethrough"] as const;
 
 /** ColorPicker's edit-batching hooks exist to group undo entries in the
  * editor. This form has no undo stack, so both are no-ops. */
@@ -163,6 +170,9 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [draft, setDraft] = useState<AccountDefaults>(BUILTIN_DEFAULTS);
+  // Field labels its own control by id, and the emphasis control is a group
+  // rather than one input, so the group has to own the id Field points at.
+  const emphasisId = useId();
   const [saving, setSaving] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [fontDraft, setFontDraft] = useState("");
@@ -427,13 +437,66 @@ export function AccountsAdmin({ store = accountsStore }: AccountsAdminProps) {
             <Select
               items={fonts.map((entry) => ({ value: entry.family, label: entry.family }))}
               value={draft.text.fontFamily}
+              // Field's <label for> cannot name a button, so each Select
+              // carries its own accessible name, the way the inspector's do.
+              aria-label="Font"
               onValueChange={(family) => {
                 setDraft((current) => ({
                   ...current,
-                  text: { ...current.text, fontFamily: family },
+                  text: {
+                    ...current.text,
+                    fontFamily: family,
+                    weight: clampWeight(family, current.text.weight),
+                  },
                 }));
               }}
             />
+          </Field>
+
+          <Field label="Weight">
+            <Select
+              items={weightItems(draft.text)}
+              aria-label="Weight"
+              value={draft.text.weight === null ? AUTO_WEIGHT : String(draft.text.weight)}
+              onValueChange={(value) => {
+                setDraft((current) => ({
+                  ...current,
+                  text: {
+                    ...current.text,
+                    weight: value === AUTO_WEIGHT ? null : Number(value),
+                  },
+                }));
+              }}
+            />
+          </Field>
+
+          <Field label="Emphasis" htmlFor={emphasisId}>
+            {
+              // AccountsAdmin.module.css has no button-row class of its own
+              // (unlike TextInspector.module.css's .options/.option), so this
+              // reuses Button's own variant instead of adding CSS: solid
+              // reads as pressed, outline as not, the same distinction
+              // aria-pressed announces to a screen reader.
+            }
+            <div id={emphasisId} role="group" aria-label="Text emphasis">
+              {EMPHASIS_FIELDS.map((field) => (
+                <Button
+                  key={field}
+                  variant={draft.text[field] ? "solid" : "outline"}
+                  aria-pressed={draft.text[field]}
+                  onClick={() => {
+                    setDraft((current) => ({
+                      ...current,
+                      text: { ...current.text, [field]: !current.text[field] },
+                    }));
+                  }}
+                >
+                  {field === "strikethrough"
+                    ? "Strike"
+                    : `${field[0]?.toUpperCase() ?? ""}${field.slice(1)}`}
+                </Button>
+              ))}
+            </div>
           </Field>
 
           <div className={styles.addFont}>

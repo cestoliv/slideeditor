@@ -56,6 +56,15 @@ it("deletes an unused google font and then 404s deleting it again", async () => 
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: unknown) => {
     const url = String(input);
+    // Discovery-first: addGoogleFont reads the family's metadata before it
+    // builds the css2 request (see fonts.ts's own comment on why), so this
+    // stub has to answer both endpoints rather than only the css2 one.
+    if (url.startsWith("https://fonts.google.com/metadata/fonts/")) {
+      return new Response(
+        `)]}'\n${JSON.stringify({ family: "Space Grotesk", axes: [], fonts: { "500": {} } })}`,
+        { status: 200 },
+      );
+    }
     if (url.includes("fonts.googleapis.com")) {
       return new Response(
         "@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:500;" +

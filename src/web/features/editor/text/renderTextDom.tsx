@@ -1,4 +1,5 @@
 import type { CSSProperties, JSX } from "react";
+import { Fragment } from "react";
 import { outlineColorFor, textColorOf } from "@shared/geometry/index.js";
 import { fontStack } from "@shared/text/index.js";
 import type { CornerRadii, JunctionCorner, TextLayout } from "@shared/text/index.js";
@@ -80,7 +81,7 @@ export function concaveCornerPath({ cx, cy, radius, quadrant }: JunctionCorner):
  * a right aligned one ends at it. The inline editor is positioned from this
  * same object, so the caret sits on the glyphs rather than near them.
  */
-export function textBlockStyle(family: string, layout: TextLayout): CSSProperties {
+export function textBlockStyle(layout: TextLayout, layer: TextLayer): CSSProperties {
   const vertical: CSSProperties = {
     top: `${String(layout.startY - layout.lineHeight / 2)}px`,
     height: `${String(layout.blockHeight)}px`,
@@ -89,12 +90,13 @@ export function textBlockStyle(family: string, layout: TextLayout): CSSPropertie
     textAlign: layout.align,
     // The face and the weight are named from the layer's own family, and the
     // measuring canvas (useTextLayout.ts, render.ts) is bound to the same
-    // string and the same weightFor(family) lookup. A one-character
-    // difference between the two rewraps every line
+    // string and the same weightFor(family, layer.weight) lookup. A
+    // one-character difference between the two rewraps every line
     // (src/shared/text/constants.ts); a weight mismatch synthesises bold here
     // without doing so on the canvas.
-    fontFamily: fontStack(family),
-    fontWeight: weightFor(family),
+    fontFamily: fontStack(layer.fontFamily),
+    fontWeight: weightFor(layer.fontFamily, layer.weight),
+    fontStyle: layer.italic ? "italic" : "normal",
   };
   if (layout.align === "left")
     return { ...vertical, left: `${String(layout.textX)}px`, right: 0 };
@@ -107,7 +109,7 @@ export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element
   const color = textColorOf(layer);
   const fill = pillFillFor(layer);
   const blockStyle: CSSProperties = {
-    ...textBlockStyle(layer.fontFamily, layout),
+    ...textBlockStyle(layout, layer),
     color,
   };
 
@@ -159,6 +161,42 @@ export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element
           ))}
         </svg>
       ) : null}
+      {layer.underline || layer.strikethrough ? (
+        <svg className={styles.rules} aria-hidden="true" data-testid="text-rules">
+          {layout.lines.map((_line, index) => {
+            // A blank line has no glyphs to rule through. computeTextLayout
+            // already decided which lines those are, and the pills above read
+            // the same field.
+            if (layout.pillVisible[index] !== true) return null;
+            const left = layout.lineStarts[index] ?? 0;
+            const width = layout.lineWidths[index] ?? 0;
+            const center = layout.lineCenters[index] ?? 0;
+            const rule = (offset: number, kind: string) => (
+              <rect
+                key={`${kind}-${String(index)}`}
+                {...{ [`data-${kind}`]: index }}
+                x={left}
+                y={center + offset - layout.decorationThickness / 2}
+                width={width}
+                height={layout.decorationThickness}
+                fill={color}
+                stroke={layer.style === "outline" ? outlineColorFor(color) : undefined}
+                strokeWidth={layer.style === "outline" ? layout.outlineWidth : undefined}
+                strokeLinejoin="round"
+                paintOrder="stroke fill"
+              />
+            );
+            return (
+              <Fragment key={index}>
+                {layer.underline ? rule(layout.underlineOffset, "underline") : null}
+                {layer.strikethrough
+                  ? rule(layout.strikethroughOffset, "strikethrough")
+                  : null}
+              </Fragment>
+            );
+          })}
+        </svg>
+      ) : null}
       <div className={styles.block} style={blockStyle} data-testid="text-block">
         {layout.lines.map((line, index) =>
           layer.style === "outline" ? (
@@ -192,7 +230,8 @@ export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element
                 strokeLinecap="round"
                 paintOrder="stroke fill"
                 fontFamily={fontStack(layer.fontFamily)}
-                fontWeight={weightFor(layer.fontFamily)}
+                fontWeight={weightFor(layer.fontFamily, layer.weight)}
+                fontStyle={layer.italic ? "italic" : "normal"}
                 fontSize={`${String(layout.fontSize)}px`}
               >
                 {line === "" ? " " : line}

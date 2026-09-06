@@ -223,6 +223,18 @@
   paint-order: stroke fill;
 }
 
+.togglePreviewItalic {
+  font-style: italic;
+}
+
+.togglePreviewUnderline {
+  text-decoration: underline;
+}
+
+.togglePreviewStrike {
+  text-decoration: line-through;
+}
+
 .stylePreviewBoxed {
   border-radius: var(--radius-sm);
   color: var(--color-editor-ink);
