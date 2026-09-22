@@ -7,14 +7,14 @@ import {
   validateComposition,
 } from "./compose.js";
 import type { Composition, LibraryLookup } from "./compose.js";
+import { ASSET_TOP_MARGIN, TEXT_BOTTOM_MARGIN, TEXT_TOP_LIMIT } from "./constants.js";
+import { DESIGN_WIDTH, outputHeight } from "../geometry/index.js";
 import {
-  ASSET_TOP_MARGIN,
-  CONTENT_WIDTH,
-  TEXT_BOTTOM_MARGIN,
-  TEXT_TOP_LIMIT,
-} from "./constants.js";
-import { DESIGN_WIDTH } from "../geometry/index.js";
-import { DEFAULT_ADVANCE_RATIO } from "../text/index.js";
+  DEFAULT_ADVANCE_RATIO,
+  TEXT_WRAP_INSET,
+  computeTextLayout,
+  fontSizeAt,
+} from "../text/index.js";
 import { BUILTIN_DEFAULTS } from "../schema/index.js";
 import type { AccountDefaults } from "../schema/index.js";
 
@@ -401,12 +401,69 @@ describe("layout", () => {
       ...BUILTIN_DEFAULTS,
       text: { ...BUILTIN_DEFAULTS.text, maxWidth: 0.5 },
     };
-    const doc = compose([{ background: "bg1", assets: [], texts: ["One"] }], {
-      defaults: custom,
-    });
+    const doc = compose(
+      [
+        {
+          background: "bg1",
+          assets: [],
+          texts: ["A caption far too long to sit on a single line at this width"],
+        },
+      ],
+      { defaults: custom },
+    );
     const text = at(firstSlide(doc).texts, 0);
     expect(text.width).toBe(0.5);
     expect(text.x).toBe((1 - 0.5) / 2);
+  });
+
+  /*
+   * Every composed box is maxWidth wide, short text included. Hugging a short
+   * text instead was tried and reverted: textHeight measures against a
+   * family's AVERAGE glyph advance, and per-character variance swamps that
+   * average over two or three characters, so a hugging box came out narrower
+   * than the real glyphs. "Go" was composed a box that fit one character and
+   * rendered as "G" — the very clipping this fix is about.
+   */
+  it("keeps a short text at the full maxWidth rather than hugging its glyphs", () => {
+    const doc = compose([{ background: "bg1", assets: [], texts: ["Go"] }]);
+    const text = at(firstSlide(doc).texts, 0);
+    expect(text.width).toBe(BUILTIN_DEFAULTS.text.maxWidth);
+  });
+
+  /*
+   * The bug this file's textBox was rewritten for: layoutTexts sized a box
+   * from a character count divided by an average line length, which ignored
+   * word boundaries, TEXT_WRAP_INSET and TEXT_VERTICAL_PADDING alike, and so
+   * undercounted lines for most real captions. computeTextLayout clips to
+   * whatever the box holds, so the missing lines were dropped on export.
+   *
+   * Laying the composed layers out through computeTextLayout itself — with a
+   * measurer built from the same advance layoutTexts estimates against — is
+   * what proves the two agree. Nothing weaker does: the old estimate looked
+   * fine on its own terms and only disagreed with the renderer.
+   */
+  it("gives every composed text a box that holds all of its wrapped lines", () => {
+    const texts = [
+      "Short",
+      "Extraordinary breakthroughs in computational neuroscience",
+      "A caption\nsplit across\ntwo explicit paragraphs and then some more words",
+      "Supercalifragilisticexpialidocious",
+      "word ".repeat(40).trim(),
+    ];
+    const doc = compose([{ background: "bg1", assets: [], texts }]);
+    const canvasHeight = outputHeight(doc.ratio);
+    for (const layer of firstSlide(doc).texts) {
+      const fontSize = fontSizeAt(layer, DESIGN_WIDTH);
+      const layout = computeTextLayout({
+        layer,
+        boxWidth: layer.width * DESIGN_WIDTH,
+        boxHeight: layer.height * canvasHeight,
+        fontSize,
+        measure: (line) => line.length * fontSize * DEFAULT_ADVANCE_RATIO,
+      });
+      expect(layout.lines).toHaveLength(layout.totalLineCount);
+      expect(layout.contentHeight).toBeLessThanOrEqual(layer.height * canvasHeight);
+    }
   });
 
   it("centers an unfittable text block rather than shrinking or flooring it to one edge", () => {
@@ -454,13 +511,16 @@ describe("layout", () => {
    * untested: the golden fixture and the "centers an unfittable block" test
    * above both sit above 1.0.
    *
-   * charsPerLine mirrors textHeight()'s own formula (compose.ts) rather than
+   * charsPerLine mirrors textBox()'s own wrap width (compose.ts) rather than
    * a hardcoded line width, so a tuned constant does not silently desync
-   * this from what layoutTexts actually wraps at.
+   * this from what layoutTexts actually wraps at. A single unbroken word is
+   * wider than maxWidth at every count above one, so lineText always gets
+   * the full-width box and wrapText splits it by character.
    */
-  const charsPerLine = Math.max(
-    8,
-    Math.floor((CONTENT_WIDTH * DESIGN_WIDTH) / (BUILTIN_DEFAULTS.text.size * 0.5)),
+  const charsPerLine = Math.floor(
+    (BUILTIN_DEFAULTS.text.maxWidth * DESIGN_WIDTH -
+      BUILTIN_DEFAULTS.text.size * TEXT_WRAP_INSET) /
+      (BUILTIN_DEFAULTS.text.size * DEFAULT_ADVANCE_RATIO),
   );
 
   /** A composition text guaranteed to wrap to exactly `lines` lines at charsPerLine. */
@@ -491,9 +551,11 @@ describe("layout", () => {
   }
 
   it("floors, rather than centers, a text block whose total sits well inside (0.90, 1.0)", () => {
-    // 20 single-line texts: comfortably inside the band per this file's own
-    // constants (verified in the repro this fix shipped with).
-    const { first, total } = measuredBlock(stackOfLineCounts(Array(20).fill(1)));
+    // 11 single-line texts plus 4 two-line texts: comfortably inside the
+    // band per this file's own constants.
+    const { first, total } = measuredBlock(
+      stackOfLineCounts([...Array(11).fill(1), 2, 2, 2, 2]),
+    );
     expect(
       total,
       "picks a block inside the band this regression is about",
@@ -509,12 +571,12 @@ describe("layout", () => {
   });
 
   it("still floors, not centers, a text block right at the edge of the band, just above 0.90", () => {
-    // 14 single-line texts plus 3 two-line texts: 20 lines total across 17
+    // 12 single-line texts plus 3 two-line texts: 18 lines total across 15
     // texts, landing just over the old (wrong) 0.90 threshold — see this
     // file's own comment above for why text count, not just line count,
     // has to be tuned to land this close.
     const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(14).fill(1), 2, 2, 2]),
+      stackOfLineCounts([...Array(12).fill(1), 2, 2, 2]),
     );
     const oldThreshold = 1 - TEXT_BOTTOM_MARGIN - TEXT_TOP_LIMIT;
     expect(
@@ -526,8 +588,8 @@ describe("layout", () => {
   });
 
   it("centers a text block right at the edge of the band, just above 1.0", () => {
-    // 22 single-line texts lands just over a total of 1 at these constants.
-    const { first, total } = measuredBlock(stackOfLineCounts(Array(22).fill(1)));
+    // 19 single-line texts lands just over a total of 1 at these constants.
+    const { first, total } = measuredBlock(stackOfLineCounts(Array(19).fill(1)));
     expect(total, "picks a block just past the frame's own height").toBeGreaterThan(1);
     expect(total).toBeLessThan(1.1);
     // Centered, not floored: the top overflows past y = 0 by the same
@@ -550,10 +612,10 @@ describe("layout", () => {
    * three tests above cover (0.9367, 0.9067 and 1.0313 respectively).
    */
   it("still floors, not centers, a text block just above 0.96, below the corrected threshold", () => {
-    // 17 single-line texts plus 2 two-line texts: lands just past 0.96 but
+    // 13 single-line texts plus 3 two-line texts: lands just past 0.96 but
     // still under 1 - TEXT_TOP_LIMIT, so flooring places it without clipping.
     const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(17).fill(1), 2, 2]),
+      stackOfLineCounts([...Array(13).fill(1), 2, 2, 2]),
     );
     expect(total, "lands in the band this fix covers").toBeGreaterThan(0.96);
     expect(total).toBeLessThan(1 - TEXT_TOP_LIMIT);
@@ -563,11 +625,11 @@ describe("layout", () => {
   });
 
   it("centers, not floors, a text block just past the corrected 1 - TEXT_TOP_LIMIT threshold", () => {
-    // 12 single-line texts plus 5 two-line texts: lands just past the fixed
+    // 15 single-line texts plus 2 two-line texts: lands just past the fixed
     // threshold. The old `total > 1` guard floored this instead, and
     // flooring at TEXT_TOP_LIMIT then ran the block's bottom past y = 1.
     const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(12).fill(1), 2, 2, 2, 2, 2]),
+      stackOfLineCounts([...Array(15).fill(1), 2, 2]),
     );
     expect(total).toBeGreaterThan(1 - TEXT_TOP_LIMIT);
     expect(total).toBeLessThan(1);
@@ -577,22 +639,22 @@ describe("layout", () => {
     expect(first.y + total).toBeLessThanOrEqual(1);
   });
 
-  it("does not clip 21 single-line texts on a 9:16 slide (this fix's own reproduction)", () => {
-    // The exact case this fix was written against: total lands at 0.984,
-    // inside the regression band. The old guard floored it at TEXT_TOP_LIMIT
-    // (0.02), running the bottom to 1.004 — 0.004 of the last line clipped
-    // off the slide while 0.02 of headroom sat unused at the top.
-    const { first, total } = measuredBlock(stackOfLineCounts(Array(21).fill(1)));
-    expect(total).toBeCloseTo(0.984, 3);
+  it("does not clip a block that lands just under 1 on a 9:16 slide", () => {
+    // The shape that fix was written against: a total a hair under 1, inside
+    // the regression band. The old guard floored it at TEXT_TOP_LIMIT (0.02),
+    // running the bottom past y = 1 and clipping the last line off the slide
+    // while that 0.02 of headroom sat unused at the top.
+    const { first, total } = measuredBlock(stackOfLineCounts([...Array(17).fill(1), 2]));
+    expect(total).toBeCloseTo(0.999, 3);
     expect(first.y).toBeCloseTo((1 - total) / 2, 10);
     expect(first.y + total).toBeLessThanOrEqual(1);
   });
 
   it("centers a text block just above 1.0, at the closed edge of the band", () => {
-    // 16 single-line texts plus 3 two-line texts: lands just over a total of
+    // 12 single-line texts plus 4 two-line texts: lands just over a total of
     // 1, closer to that boundary than the "just above 1.0" test above.
     const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(16).fill(1), 2, 2, 2]),
+      stackOfLineCounts([...Array(12).fill(1), 2, 2, 2, 2]),
     );
     expect(total).toBeGreaterThan(1);
     expect(total).toBeLessThan(1.01);

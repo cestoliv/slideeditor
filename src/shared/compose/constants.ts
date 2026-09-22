@@ -36,9 +36,6 @@ export const TEXT_BLOCK_MAX = 0.46;
  */
 export const TEXT_TOP_LIMIT = 0.02;
 
-/** Line height the wrap estimate assumes (server/compose.mjs:15). */
-export const TEXT_LINE_HEIGHT = 1.12;
-
 /** Clearance kept above the first asset row (server/compose.mjs:16). */
 export const ASSET_TOP_MARGIN = 0.07;
 
