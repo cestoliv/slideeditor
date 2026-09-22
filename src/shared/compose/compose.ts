@@ -1,7 +1,14 @@
 import { DESIGN_WIDTH, outputHeight } from "../geometry/index.js";
 import { DEFAULT_RATIO, RATIO_ASPECT_MAX, RATIO_ASPECT_MIN } from "../schema/index.js";
 import { newTextLayer } from "../defaults/index.js";
-import { advanceRatioFor as defaultAdvanceRatioFor } from "../text/index.js";
+import {
+  BOX_TEXT_LINE_HEIGHT,
+  TEXT_LINE_HEIGHT,
+  TEXT_VERTICAL_PADDING,
+  TEXT_WRAP_INSET,
+  advanceRatioFor as defaultAdvanceRatioFor,
+  wrapText,
+} from "../text/index.js";
 import type {
   AccountDefaults,
   LibraryItem,
@@ -21,7 +28,6 @@ import {
   TEXT_BOTTOM_MARGIN,
   TEXT_GAP,
   TEXT_GAP_TIGHT,
-  TEXT_LINE_HEIGHT,
   TEXT_TOP_LIMIT,
 } from "./constants.js";
 
@@ -272,11 +278,18 @@ function layoutTexts(
   if (!texts.length) return [];
   const size = defaults.text.size;
   const advance = advanceRatioFor(defaults.text.fontFamily);
+  // computeTextLayout picks the line advance off the same two fields, and the
+  // two constants are tuned independently, so reading them here keeps this
+  // estimate from drifting away from what the renderer lays out.
+  const lineHeight =
+    defaults.text.style === "boxed" && defaults.text.backgroundShape !== "full"
+      ? BOX_TEXT_LINE_HEIGHT
+      : TEXT_LINE_HEIGHT;
   const boxesAt = (gap: number) => {
     const boxes = texts.map((text) => ({
       text,
       size,
-      height: textHeight(text, size, height, advance, defaults.text.maxWidth),
+      height: textHeight(text, size, height, advance, defaults.text.maxWidth, lineHeight),
     }));
     const total =
       boxes.reduce((sum, box) => sum + box.height, 0) + gap * (boxes.length - 1);
@@ -325,14 +338,22 @@ function layoutTexts(
 }
 
 /**
- * Estimates wrapped height without a font. The editor remeasures on render, so
- * this only has to be close enough to place the block sensibly. `advance` is
- * the family's average glyph width as a fraction of size (advanceRatioFor):
- * fontFamily is now per-account, and a fixed 0.5 tuned for TikTok Sans
- * undercounts lines for a wider face like Space Mono. `maxWidth` must be the
- * same width the box actually gets (composeSlide passes defaults.text.maxWidth
- * both here and to the box itself), or the line count this estimates and the
- * width the box is placed at disagree.
+ * How tall one text box has to be, in canvas fractions, to show every line it
+ * wraps to at the account's `maxWidth`. Nothing caps the result: a box grows
+ * downwards for as long as the text needs, because the alternative is losing
+ * the lines that do not fit.
+ *
+ * This wraps through the same wrapText computeTextLayout uses, and adds the
+ * same TEXT_WRAP_INSET and TEXT_VERTICAL_PADDING, because the renderer clips
+ * to `visibleLineCount` and drops whatever a shorter box cannot hold. The old
+ * estimate here divided the character count by an average line length, which
+ * ignored word boundaries and both insets, and so undercounted the lines of
+ * most real captions: an 80-character caption wrapped to five lines, was
+ * composed a three-line box, and lost its last two lines.
+ *
+ * Only measurement is still an estimate: `advance` is the family's average
+ * glyph width as a fraction of size (advanceRatioFor), standing in for the
+ * real face this module has no way to read.
  */
 function textHeight(
   text: string,
@@ -340,13 +361,13 @@ function textHeight(
   height: number,
   advance: number,
   maxWidth: number,
+  lineHeight: number,
 ): number {
-  const charactersPerLine = Math.max(
-    8,
-    Math.floor((maxWidth * DESIGN_WIDTH) / (size * advance)),
-  );
-  const lines = Math.max(1, Math.ceil(text.length / charactersPerLine));
-  return (lines * size * TEXT_LINE_HEIGHT) / height;
+  const measure = (line: string) => line.length * size * advance;
+  const wrapWidth = Math.max(1, maxWidth * DESIGN_WIDTH - size * TEXT_WRAP_INSET);
+  const lines = wrapText(text, wrapWidth, measure);
+  const content = lines.length * size * lineHeight + size * TEXT_VERTICAL_PADDING * 2;
+  return content / height;
 }
 
 /** Spreads assets above the text block, at most three to a row, never overlapping it. */
