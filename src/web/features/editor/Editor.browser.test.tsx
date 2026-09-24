@@ -157,6 +157,7 @@ type MountOptions = {
   accounts?: Account[];
   /** A caller that needs its own listAccounts (slow, failing) passes this instead. */
   accountsStore?: AccountsStore;
+  nextDraftId?: string;
 };
 
 function defaultAccount(): Account {
@@ -225,7 +226,14 @@ function stageImageSource(): string | null {
  * Mounted on a real route, so leaving the editor is observable as a navigation
  * rather than as an internal flag. The dashboard stands in as a marker.
  */
-function mount({ client, subscribe, library, accounts, accountsStore }: MountOptions) {
+function mount({
+  client,
+  subscribe,
+  library,
+  accounts,
+  accountsStore,
+  nextDraftId,
+}: MountOptions) {
   return render(
     <MemoryRouter initialEntries={["/projects/project-1"]}>
       <ToastProvider>
@@ -242,6 +250,7 @@ function mount({ client, subscribe, library, accounts, accountsStore }: MountOpt
                   client={client}
                   library={library ?? emptyLibrary()}
                   subscribe={subscribe ?? (() => () => undefined)}
+                  nextDraftId={nextDraftId}
                 />
               }
             />
@@ -527,6 +536,39 @@ it("ignores the broadcast its own save caused", async () => {
   // show here, and a wait would only make the same answer take longer.
   expect(library.reads()).toBe(before);
   expect(client.reads).toBe(1);
+  screen.unmount();
+});
+
+it("offers the next draft once the slideshow is marked ready", async () => {
+  const client = fakeClient(fixtureProject({ slides: 1 }));
+  const screen = await mount({ client, nextDraftId: "project-2" });
+
+  await expect.element(screen.getByRole("button", { name: "Ready" })).toBeVisible();
+  expect(document.querySelector('a[href="/projects/project-2"]')).toBeNull();
+
+  await userEvent.click(screen.getByRole("button", { name: "Ready" }));
+  await expect
+    .element(screen.getByRole("link", { name: "Next" }))
+    .toHaveAttribute("href", "/projects/project-2");
+
+  await userEvent.click(screen.getByRole("button", { name: "Draft" }));
+  await expect
+    .element(screen.getByRole("link", { name: "Next" }))
+    .not.toBeInTheDocument();
+  screen.unmount();
+});
+
+it("offers no next draft when none is left", async () => {
+  const client = fakeClient(fixtureProject({ slides: 1 }));
+  const screen = await mount({ client });
+
+  await userEvent.click(screen.getByRole("button", { name: "Ready" }));
+  await vi.waitFor(() => {
+    expect(client.statuses).toEqual(["ready"]);
+  });
+  await expect
+    .element(screen.getByRole("link", { name: "Next" }))
+    .not.toBeInTheDocument();
   screen.unmount();
 });
 

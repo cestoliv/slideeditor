@@ -7,6 +7,7 @@ import type { LibraryItem, Project } from "@shared/schema/index.js";
 import { DEFAULT_ACCOUNT_ID, parseProject } from "@shared/schema/index.js";
 import { ToastProvider, Tooltip } from "../../../design/index.js";
 import { AccountsProvider } from "../../../app/accounts.js";
+import { ProjectsProvider, ProjectsStore } from "../../../app/projects.js";
 import { AppRoutes } from "../../../app/router.js";
 import { libraryItem, solidImage } from "./testing.js";
 
@@ -86,6 +87,8 @@ function answer(body: unknown): Response {
 /** Every request the real client makes on this route, and nothing else. */
 function serve(path: string): Response {
   if (path.startsWith("/api/projects/project-1")) return answer({ project: project() });
+  // EditorRoute reads the slideshow list for its Next button, as App.tsx provides it.
+  if (path.startsWith("/api/projects")) return answer({ projects: [] });
   if (path.startsWith("/api/library")) {
     return answer({ items: ITEMS, total: ITEMS.length });
   }
@@ -136,9 +139,11 @@ async function mount() {
       <MemoryRouter initialEntries={["/projects/project-1"]}>
         <Tooltip.Provider>
           <ToastProvider>
-            <AccountsProvider>
-              <AppRoutes />
-            </AccountsProvider>
+            <ProjectsProvider store={new ProjectsStore()}>
+              <AccountsProvider>
+                <AppRoutes />
+              </AccountsProvider>
+            </ProjectsProvider>
           </ToastProvider>
         </Tooltip.Provider>
       </MemoryRouter>

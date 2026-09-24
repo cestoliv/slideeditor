@@ -78,3 +78,12 @@
   align-items: center;
   min-width: 0;
 }
+
+/* The way on to the next draft, over the page rather than inside a column. */
+.next {
+  position: fixed;
+  z-index: var(--z-raised);
+  right: var(--space-5);
+  bottom: var(--space-5);
+  box-shadow: var(--shadow-raised);
+}

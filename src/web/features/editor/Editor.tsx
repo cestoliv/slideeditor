@@ -88,6 +88,8 @@ export type EditorProps = {
   subscribe?: ((onEvent: (event: ServerEvent) => void) => () => void) | undefined;
   /** Draws a slide thumbnail. Task 17 supplies it. */
   render?: ThumbnailRenderer | undefined;
+  /** The draft the Next button opens once this slideshow is ready. */
+  nextDraftId?: string | undefined;
 };
 
 /*
@@ -105,6 +107,7 @@ export function Editor({
   library = libraryCache,
   subscribe = subscribeToServerEvents,
   render,
+  nextDraftId,
 }: EditorProps) {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -360,6 +363,7 @@ export function Editor({
       items={items}
       library={library}
       render={render}
+      nextDraftId={nextDraftId}
     />
   );
 }
@@ -371,13 +375,14 @@ type OpenEditorProps = {
   /** The cache itself, which the rail writes a replaced background back into. */
   library: LibraryCache;
   render?: ThumbnailRenderer | undefined;
+  nextDraftId?: string | undefined;
 };
 
 /*
  * Split out so every hook below reads a store that exists. A conditional
  * useEditor above would have to run before the project has arrived.
  */
-function OpenEditor({ store, items, library, render }: OpenEditorProps) {
+function OpenEditor({ store, items, library, render, nextDraftId }: OpenEditorProps) {
   const { toast } = useToast();
   // The pixels an agent exports can only be drawn here, so this tab renders
   // them to the server as soon as the slideshow is marked ready.
@@ -390,6 +395,7 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
   });
   const { accounts, error: accountsError } = useAccounts();
   const name = useEditor(store, (state) => state.project.name);
+  const ready = useEditor(store, (state) => state.project.status === "ready");
   /*
    * The slideshow's own accountId, read straight off the document rather than
    * through ProjectsStore — the editor already has this record loaded, and a
@@ -705,6 +711,11 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
           mobileOpen={mobileInspector}
         />
       </main>
+      {ready && nextDraftId !== undefined ? (
+        <Button asChild className={styles.next ?? ""}>
+          <Link to={`/projects/${encodeURIComponent(nextDraftId)}`}>Next</Link>
+        </Button>
+      ) : null}
     </div>
   );
 }
