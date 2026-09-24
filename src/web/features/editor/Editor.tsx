@@ -29,6 +29,7 @@ import { StatusSwitch } from "./StatusSwitch.js";
 // because it belongs to the slideshow rather than to the slide on screen.
 import { CaptionPanel } from "./CaptionPanel.js";
 import { PreviewChrome } from "./chrome/PreviewChrome.js";
+import { rememberChrome, rememberedChrome } from "./chrome/chrome.js";
 import type { ChromeId } from "./chrome/chrome.js";
 // Task 15. The layer stack and the crop session it owns.
 import { useLayerStack } from "./layers/LayerStack.js";
@@ -434,9 +435,10 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
    * app.js:87-88 held previewVisible and previewChromeChoice. One id carries
    * both, and it lives here rather than in the store because the chrome is a
    * property of this view, not of the document: it is never saved, and two
-   * people with the same slideshow open pick their own.
+   * people with the same slideshow open pick their own. The last pick carries
+   * over to the next slideshow opened in this browser.
    */
-  const [chrome, setChrome] = useState<ChromeId>("none");
+  const [chrome, setChrome] = useState<ChromeId>(rememberedChrome);
   const ratio = useEditor(store, (state) => state.project.ratio);
   const slideIds = useEditor(store, (state) => state.project.slides.map((s) => s.id));
   /*
@@ -542,7 +544,14 @@ function OpenEditor({ store, items, library, render }: OpenEditorProps) {
           <Icon name="adjust" />
           <span>Adjust photo</span>
         </Button>
-        <PreviewMenu chrome={chrome} ratio={ratio} onChange={setChrome} />
+        <PreviewMenu
+          chrome={chrome}
+          ratio={ratio}
+          onChange={(next) => {
+            setChrome(next);
+            rememberChrome(next);
+          }}
+        />
       </>
     ),
     [activeSlideId, chrome, photoAdjust, ratio, store],
