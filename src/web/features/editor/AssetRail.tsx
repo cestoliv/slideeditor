@@ -323,12 +323,12 @@ export function AssetRail({
           }}
         >
           <Icon name="plus" />
-          <span>{uploading ? "Uploading…" : "Upload assets"}</span>
+          <span>{uploading ? "Uploading…" : "Upload"}</span>
         </Button>
         <Button asChild variant="ghost">
           <Link to="/library/assets">
             <Icon name="edit" />
-            <span>Manage library</span>
+            <span>Manage</span>
           </Link>
         </Button>
       </div>

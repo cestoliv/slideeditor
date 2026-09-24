@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { cleanup, render } from "vitest-browser-react";
 import { MemoryRouter } from "react-router";
+import { page } from "vitest/browser";
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
 import type { LibraryItem, Project } from "@shared/schema/index.js";
@@ -149,15 +150,16 @@ async function mount() {
 it("puts the export actions in the editor's own header", async () => {
   const screen = await mount();
   // The name field proves the route matched and the editor opened, so a missing
-  // button below is a missing button rather than a screen that never arrived.
+  // row below is a missing row rather than a screen that never arrived.
   await expect
     .element(screen.getByRole("textbox", { name: "Slideshow name" }))
     .toBeVisible();
+  await screen.getByRole("button", { name: "Export" }).click();
   await expect
-    .element(screen.getByRole("button", { name: "Download current slide as PNG" }))
+    .element(page.getByRole("menuitem", { name: "Download current slide as PNG" }))
     .toBeVisible();
   await expect
-    .element(screen.getByRole("button", { name: "Download all slides as a ZIP" }))
+    .element(page.getByRole("menuitem", { name: "Download all slides as a ZIP" }))
     .toBeVisible();
 });
 

@@ -252,3 +252,18 @@ it("reaches an overlay the same way", async () => {
   expect(selectionOf(box)).toBe("true");
   await expect.poll(() => inspectorText()).toContain("Overlay");
 });
+
+it("types a space and a new line into a text layer being edited", async () => {
+  await openEditor(projectWith({ texts: 1 }));
+  await tabToLayer();
+  await userEvent.keyboard("{Enter}");
+  await userEvent.keyboard("{Enter}");
+  const editor = page.getByRole("textbox", { name: "Edit text layer" });
+  await expect.element(editor).toBeVisible();
+
+  // The layer box around the editor answers Enter and Space itself, and used
+  // to swallow both before they reached the caret.
+  await userEvent.keyboard("a b{Enter}c");
+
+  expect((editor.element() as HTMLElement).innerText).toBe("a b\nc");
+});
