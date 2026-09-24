@@ -127,6 +127,9 @@ export function LayerBox({
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event);
     if (event.defaultPrevented) return;
+    // A key typed into the inline text editor bubbles up here too, and must
+    // reach it as a space or a new line.
+    if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     // Space would scroll the workspace, and Enter would do nothing at all.
     event.preventDefault();

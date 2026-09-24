@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { outputHeight } from "@shared/geometry/index.js";
 import type { Project, Slide } from "@shared/schema/index.js";
-import { Button, Icon, useToast } from "../../../design/index.js";
+import { Button, DropdownMenu, Icon, useToast } from "../../../design/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { activeSlideOf, useEditor } from "../store.js";
 import type { EditorStore } from "../store.js";
@@ -15,11 +15,13 @@ import {
   shareFiles,
 } from "./share.js";
 import { zipBlob } from "./zip.js";
+import styles from "./ExportMenu.module.css";
 
 /*
  * The four export actions, ported from the header buttons at app.js:1215-1226
  * and from exportActiveSlide, exportAllSlides, shareActiveSlide and
- * shareAllSlides (app.js:4252-4402).
+ * shareAllSlides (app.js:4252-4402). They share one menu, because four buttons
+ * crowded the header out of room for the slideshow's name.
  *
  * app.js disabled the buttons by hand, swapped their innerHTML for a progress
  * string and put the old markup back in a finally block. One piece of state
@@ -27,17 +29,12 @@ import { zipBlob } from "./zip.js";
  * saying "Zipping…" forever.
  */
 
-/** Which action is running. Only one runs at a time, as in app.js. */
-type Action = "png" | "zip" | "share" | "share-all";
-
-type Progress = { action: Action; label: string };
-
 /**
  * Whether this browser puts files on the share sheet at all.
  *
  * navigator.canShare wants a file to answer about, so it is asked about a
  * stand-in rather than about a render nobody has asked for yet. The answer is
- * the same for every PNG, and it decides whether the two AirDrop buttons exist.
+ * the same for every PNG, and it decides whether the two AirDrop items exist.
  */
 const PROBE_FILE = new File([new Uint8Array([137, 80, 78, 71])], "slide.png", {
   type: "image/png",
@@ -68,7 +65,7 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
   const { toast } = useToast();
   const project = useEditor(store, (state) => state.project);
   const slide = useEditor(store, activeSlideOf);
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const shareAllCache = useRef<ShareCache | null>(null);
   /*
    * Read once, at mount. navigator.canShare cannot change under a live page,
@@ -89,27 +86,21 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
   /**
    * Renders every slide, reporting which one is in flight.
    *
-   * app.js wrote the count into the button it had just disabled. The label is
-   * state here, so the caller decides which button wears it.
+   * app.js wrote the count into the button it had just disabled. The menu's
+   * trigger wears it here, and only one action runs at a time.
    */
-  const renderAll = useCallback(
-    async (action: Action, verb: string): Promise<{ slide: Slide; blob: Blob }[]> => {
-      const done: { slide: Slide; blob: Blob }[] = [];
-      for (const [index, target] of project.slides.entries()) {
-        setProgress({
-          action,
-          label: `${verb}${String(index + 1)}/${String(slideCount)}…`,
-        });
-        done.push({ slide: target, blob: await renderOne(target) });
-      }
-      return done;
-    },
-    [project.slides, renderOne, slideCount],
-  );
+  const renderAll = useCallback(async (): Promise<{ slide: Slide; blob: Blob }[]> => {
+    const done: { slide: Slide; blob: Blob }[] = [];
+    for (const [index, target] of project.slides.entries()) {
+      setProgress(`${String(index + 1)}/${String(slideCount)}…`);
+      done.push({ slide: target, blob: await renderOne(target) });
+    }
+    return done;
+  }, [project.slides, renderOne, slideCount]);
 
   const exportActiveSlide = useCallback(async () => {
     if (slide === null) return;
-    setProgress({ action: "png", label: "Rendering…" });
+    setProgress("Rendering…");
     try {
       const blob = await renderOne(slide);
       downloadBlob(blob, slideExportName(slide, project.name));
@@ -125,8 +116,8 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
   const exportAllSlides = useCallback(async () => {
     if (slideCount === 0) return;
     try {
-      const rendered = await renderAll("zip", "");
-      setProgress({ action: "zip", label: "Zipping…" });
+      const rendered = await renderAll();
+      setProgress("Zipping…");
       const entries = await Promise.all(
         rendered.map(async (entry, index) => ({
           name: slideExportName(entry.slide, project.name, index),
@@ -147,7 +138,7 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
 
   const shareActiveSlide = useCallback(async () => {
     if (slide === null) return;
-    setProgress({ action: "share", label: "Preparing…" });
+    setProgress("Preparing…");
     try {
       const blob = await renderOne(slide);
       const file = new File([blob], slideExportName(slide, project.name), {
@@ -164,7 +155,7 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
          * origin and revoked a second later, so whatever the recipient received
          * resolved to nothing on their machine. The reader was told the share
          * had happened and no image ever arrived, which is worse than being
-         * told to use Download PNG. This button is also only on screen when the
+         * told to use Download PNG. This item is also only on screen when the
          * probe at mount already said files are shareable, so the branch was
          * close to unreachable besides.
          */
@@ -188,7 +179,7 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
       const held = shareAllCache.current;
       let files = held !== null && held.signature === signature ? held.files : null;
       if (files === null) {
-        const rendered = await renderAll("share-all", "Preparing ");
+        const rendered = await renderAll();
         files = rendered.map(
           (entry, index) =>
             new File([entry.blob], slideExportName(entry.slide, project.name, index), {
@@ -225,61 +216,63 @@ export function ExportMenu({ store, library }: ExportMenuProps) {
     }
   }, [project, renderAll, slideCount, toast]);
 
-  const labelFor = (action: Action, resting: string): string =>
-    progress?.action === action ? progress.label : resting;
-
   return (
-    <>
-      {sharing ? (
-        <>
-          <Button
-            variant="ghost"
-            aria-label="AirDrop current slide"
-            title="AirDrop current slide"
-            disabled={slide === null || busy}
-            onClick={() => {
-              void shareActiveSlide();
-            }}
-          >
-            <span>{labelFor("share", "AirDrop")}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            aria-label="AirDrop all slides"
-            title="AirDrop all slides"
-            disabled={slideCount === 0 || busy}
-            onClick={() => {
-              void shareAllSlides();
-            }}
-          >
-            <span>{labelFor("share-all", "AirDrop all")}</span>
-          </Button>
-        </>
-      ) : null}
-      <Button
-        variant="ghost"
-        aria-label="Download current slide as PNG"
-        title="Download PNG"
-        disabled={slide === null || busy}
-        onClick={() => {
-          void exportActiveSlide();
-        }}
-      >
-        <Icon name="download" />
-        <span>{labelFor("png", "PNG")}</span>
-      </Button>
-      <Button
-        variant="ghost"
-        aria-label="Download all slides as a ZIP"
-        title="Download all slides as a ZIP"
-        disabled={slideCount === 0 || busy}
-        onClick={() => {
-          void exportAllSlides();
-        }}
-      >
-        <Icon name="archive" />
-        <span>{labelFor("zip", "ZIP")}</span>
-      </Button>
-    </>
+    <DropdownMenu.Root modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <Button variant="ghost" aria-label="Export" aria-busy={busy} title="Export">
+          <Icon name="download" />
+          {/*
+           * Fixed width, so "Rendering…" or a slide count does not widen the
+           * button and shove the rest of the header sideways.
+           */}
+          <span className={styles.label}>{progress ?? "Export"}</span>
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end">
+        <DropdownMenu.Item
+          icon="download"
+          aria-label="Download current slide as PNG"
+          disabled={slide === null || busy}
+          onSelect={() => {
+            void exportActiveSlide();
+          }}
+        >
+          PNG
+        </DropdownMenu.Item>
+        <DropdownMenu.Item
+          icon="archive"
+          aria-label="Download all slides as a ZIP"
+          disabled={slideCount === 0 || busy}
+          onSelect={() => {
+            void exportAllSlides();
+          }}
+        >
+          ZIP
+        </DropdownMenu.Item>
+        {sharing ? (
+          <>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item
+              aria-label="AirDrop current slide"
+              disabled={slide === null || busy}
+              onSelect={() => {
+                void shareActiveSlide();
+              }}
+            >
+              AirDrop
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              aria-label="AirDrop all slides"
+              disabled={slideCount === 0 || busy}
+              onSelect={() => {
+                void shareAllSlides();
+              }}
+            >
+              AirDrop all
+            </DropdownMenu.Item>
+          </>
+        ) : null}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
   );
 }

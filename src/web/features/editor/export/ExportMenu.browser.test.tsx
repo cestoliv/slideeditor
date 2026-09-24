@@ -15,7 +15,7 @@ import { canShareFiles, shareFiles } from "./share.js";
 import { libraryItem, solidImage } from "./testing.js";
 
 /*
- * The four export buttons.
+ * The four export actions, behind the Export menu.
  *
  * Nothing here reaches into the component's state. A download is observed
  * through the anchor the browser is handed, and a share through the files
@@ -106,6 +106,20 @@ async function open(project: Project) {
   return { store, screen };
 }
 
+const trigger = () => page.getByRole("button", { name: "Export" });
+
+/** Opens the Export menu once it is idle again, and returns one of its rows. */
+async function row(name: string) {
+  await expect.element(trigger()).toHaveTextContent("Export");
+  await trigger().click();
+  return page.getByRole("menuitem", { name });
+}
+
+/** Presses one of the menu's rows. */
+async function choose(name: string) {
+  await (await row(name)).click();
+}
+
 /* Every download in one place, so a test reads the anchor rather than the DOM. */
 type Download = { filename: string; bytes: Uint8Array };
 
@@ -176,14 +190,12 @@ const PNG_MAGIC = [137, 80, 78, 71];
 describe("downloading", () => {
   it("downloads one PNG named after the slide", async () => {
     const project = projectOf(2);
-    const { screen } = await open(project);
-    const button = screen.getByRole("button", { name: "Download current slide as PNG" });
-    await expect.element(button).toBeEnabled();
+    await open(project);
 
     const downloads = await withDownloads(async () => {
-      await button.click();
-      // The button reports its own work, so waiting on it waits on the render.
-      await expect.element(button).toBeEnabled();
+      await choose("Download current slide as PNG");
+      // The trigger reports the work, so waiting on it waits on the render.
+      await expect.element(trigger()).toHaveTextContent("Export");
       await expect
         .element(page.getByText("PNG downloaded at full resolution"))
         .toBeVisible();
@@ -200,12 +212,10 @@ describe("downloading", () => {
 
   it("downloads a ZIP holding one PNG per slide", async () => {
     const project = projectOf(3);
-    const { screen } = await open(project);
-    const button = screen.getByRole("button", { name: "Download all slides as a ZIP" });
-    await expect.element(button).toBeEnabled();
+    await open(project);
 
     const downloads = await withDownloads(async () => {
-      await button.click();
+      await choose("Download all slides as a ZIP");
       await expect.element(page.getByText("3 slides downloaded as a ZIP")).toBeVisible();
     });
 
@@ -222,9 +232,9 @@ describe("downloading", () => {
   it("names a file after a slideshow whose name has no letters in it", async () => {
     const project = projectOf(1, { name: "!!! ??? ***" });
     expect(safeFilename(project.name)).toBe("slide");
-    const { screen } = await open(project);
+    await open(project);
     const downloads = await withDownloads(async () => {
-      await screen.getByRole("button", { name: "Download current slide as PNG" }).click();
+      await choose("Download current slide as PNG");
       await expect
         .element(page.getByText("PNG downloaded at full resolution"))
         .toBeVisible();
@@ -236,9 +246,9 @@ describe("downloading", () => {
     // Every other fixture here is 9:16, so a menu that hard-coded 1920 would
     // pass all of them. renderSlideCanvas is covered across ratios in
     // render.browser.test.tsx; this covers the menu's wiring of one into it.
-    const { screen } = await open(projectOf(1, { ratio: { w: 1, h: 1 } }));
+    await open(projectOf(1, { ratio: { w: 1, h: 1 } }));
     const downloads = await withDownloads(async () => {
-      await screen.getByRole("button", { name: "Download current slide as PNG" }).click();
+      await choose("Download current slide as PNG");
       await expect
         .element(page.getByText("PNG downloaded at full resolution"))
         .toBeVisible();
@@ -250,13 +260,13 @@ describe("downloading", () => {
   });
 
   it("offers nothing to export while the slideshow is empty", async () => {
-    const { screen } = await open(projectOf(0));
+    await open(projectOf(0));
     await expect
-      .element(screen.getByRole("button", { name: "Download all slides as a ZIP" }))
-      .toBeDisabled();
+      .element(await row("Download all slides as a ZIP"))
+      .toHaveAttribute("aria-disabled", "true");
     await expect
-      .element(screen.getByRole("button", { name: "Download current slide as PNG" }))
-      .toBeDisabled();
+      .element(page.getByRole("menuitem", { name: "Download current slide as PNG" }))
+      .toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -279,41 +289,37 @@ describe("sharing", () => {
     restoreNavigator();
   });
 
-  it("hides the share buttons when the browser cannot share files", async () => {
+  it("hides the share rows when the browser cannot share files", async () => {
     Object.defineProperty(navigator, "canShare", {
       configurable: true,
       value: () => false,
     });
-    const { screen } = await open(projectOf(2));
+    await open(projectOf(2));
     /*
-     * The positive signal is the pair of download buttons. They come from the
-     * same render as the share buttons, so finding them proves the menu drew
-     * and that the two AirDrop buttons are absent by choice rather than because
+     * The positive signal is the pair of download rows. They come from the
+     * same render as the share rows, so finding them proves the menu drew
+     * and that the two AirDrop rows are absent by choice rather than because
      * nothing rendered at all.
      */
+    await expect.element(await row("Download current slide as PNG")).toBeVisible();
     await expect
-      .element(screen.getByRole("button", { name: "Download current slide as PNG" }))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: "Download all slides as a ZIP" }))
+      .element(page.getByRole("menuitem", { name: "Download all slides as a ZIP" }))
       .toBeVisible();
     expect(
-      document.querySelectorAll('button[aria-label^="AirDrop"]'),
-      "no AirDrop button is on the page",
+      document.querySelectorAll('[role="menuitem"][aria-label^="AirDrop"]'),
+      "no AirDrop row is in the menu",
     ).toHaveLength(0);
   });
 
-  it("shows the share buttons when the browser can share files", async () => {
+  it("shows the share rows when the browser can share files", async () => {
     Object.defineProperty(navigator, "canShare", {
       configurable: true,
       value: () => true,
     });
-    const { screen } = await open(projectOf(2));
+    await open(projectOf(2));
+    await expect.element(await row("AirDrop current slide")).toBeVisible();
     await expect
-      .element(screen.getByRole("button", { name: "AirDrop current slide" }))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: "AirDrop all slides" }))
+      .element(page.getByRole("menuitem", { name: "AirDrop all slides" }))
       .toBeVisible();
   });
 
@@ -331,9 +337,8 @@ describe("sharing", () => {
       },
     });
 
-    const { screen } = await open(projectOf(2));
-    const button = screen.getByRole("button", { name: "AirDrop current slide" });
-    await button.click();
+    await open(projectOf(2));
+    await choose("AirDrop current slide");
     await expect.poll(() => shared.length).toBe(1);
 
     const files = shared[0]?.files ?? [];
@@ -365,16 +370,14 @@ describe("sharing", () => {
       },
     });
 
-    const { screen } = await open(projectOf(3));
-    const button = screen.getByRole("button", { name: "AirDrop all slides" });
-    await button.click();
+    await open(projectOf(3));
+    await choose("AirDrop all slides");
     await expect
       .element(page.getByText("Slides are ready — tap AirDrop all again."))
       .toBeVisible();
 
     allowed = true;
-    await expect.element(button).toBeEnabled();
-    await button.click();
+    await choose("AirDrop all slides");
     await expect.poll(() => shared.length).toBe(1);
 
     const files = shared[0]?.files ?? [];
@@ -414,16 +417,14 @@ describe("sharing", () => {
       get: () => ({ isActive: active, hasBeenActive: true }),
     });
 
-    const { screen } = await open(projectOf(3));
-    const button = screen.getByRole("button", { name: "AirDrop all slides" });
-    await button.click();
+    await open(projectOf(3));
+    await choose("AirDrop all slides");
     await expect
       .element(page.getByText("Slides are ready — tap AirDrop all again."))
       .toBeVisible();
 
     active = true;
-    await expect.element(button).toBeEnabled();
-    await button.click();
+    await choose("AirDrop all slides");
     await expect.poll(() => shared.length).toBe(1);
     /*
      * One share, not two. A menu that skipped the activation check would have
@@ -444,7 +445,7 @@ describe("sharing", () => {
      * app.js keyed this cache on project.updatedAt, which only moves when the
      * server answers a save, so an edit made since the last one served the
      * previous render. The key is the document itself here, and this is what
-     * says so: the same button, pressed twice around one edit, has to hand over
+     * says so: the same row, pressed twice around one edit, has to hand over
      * different bytes the second time.
      */
     const shared: ShareData[] = [];
@@ -466,9 +467,8 @@ describe("sharing", () => {
       },
     });
 
-    const { store, screen } = await open(projectOf(1, { text: true }));
-    const button = screen.getByRole("button", { name: "AirDrop all slides" });
-    await button.click();
+    const { store } = await open(projectOf(1, { text: true }));
+    await choose("AirDrop all slides");
     await expect.poll(() => shared.length).toBe(1);
 
     store.mutate((document) => {
@@ -477,8 +477,7 @@ describe("sharing", () => {
     });
 
     allowed = true;
-    await expect.element(button).toBeEnabled();
-    await button.click();
+    await choose("AirDrop all slides");
     await expect.poll(() => shared.length).toBe(2);
 
     const before = shared[0]?.files?.[0];
@@ -528,16 +527,14 @@ describe("sharing", () => {
     });
 
     try {
-      const { screen } = await open(projectOf(3));
-      const button = screen.getByRole("button", { name: "AirDrop all slides" });
-      await button.click();
+      await open(projectOf(3));
+      await choose("AirDrop all slides");
       await expect.poll(() => shared.length).toBe(1);
       const afterFirst = encodes;
       expect(afterFirst, "three slides, three PNGs").toBe(3);
 
       allowed = true;
-      await expect.element(button).toBeEnabled();
-      await button.click();
+      await choose("AirDrop all slides");
       await expect.poll(() => shared.length).toBe(2);
       expect(encodes, "the second press encoded nothing new").toBe(afterFirst);
     } finally {
@@ -573,14 +570,14 @@ describe("sharing", () => {
     let asked = 0;
     Object.defineProperty(navigator, "canShare", {
       configurable: true,
-      // The probe at mount says yes so the button exists, and the batch says no.
+      // The probe at mount says yes so the row exists, and the batch says no.
       value: (data: ShareData) => {
         asked += 1;
         return (data.files?.length ?? 0) < 2;
       },
     });
-    const { screen } = await open(projectOf(3));
-    await screen.getByRole("button", { name: "AirDrop all slides" }).click();
+    await open(projectOf(3));
+    await choose("AirDrop all slides");
     await expect
       .element(page.getByText("This browser can’t share multiple images at once."))
       .toBeVisible();

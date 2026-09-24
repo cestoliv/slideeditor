@@ -50,7 +50,10 @@ it("exports the active slide as a 1080-wide PNG", async () => {
     .toBeVisible();
 
   const downloads = watchDownloads();
-  await userEvent.click(page.getByLabelText("Download current slide as PNG"));
+  await userEvent.click(page.getByRole("button", { name: "Export" }));
+  await userEvent.click(
+    page.getByRole("menuitem", { name: "Download current slide as PNG" }),
+  );
   // The toast is the app saying the export finished, and it is downstream of the
   // download itself rather than merely later than the click.
   await expect.element(page.getByText("PNG downloaded at full resolution")).toBeVisible();
@@ -81,7 +84,10 @@ it("exports every slide as a ZIP holding one PNG each", async () => {
   await expect.element(page.getByLabelText("Text layer: First")).toBeVisible();
 
   const downloads = watchDownloads();
-  await userEvent.click(page.getByLabelText("Download all slides as a ZIP"));
+  await userEvent.click(page.getByRole("button", { name: "Export" }));
+  await userEvent.click(
+    page.getByRole("menuitem", { name: "Download all slides as a ZIP" }),
+  );
   await expect.element(page.getByText("3 slides downloaded as a ZIP")).toBeVisible();
 
   expect(downloads).toHaveLength(1);

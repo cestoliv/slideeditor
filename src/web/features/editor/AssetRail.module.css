@@ -61,7 +61,10 @@
   background: var(--color-accent);
 }
 
-.search {
+/* Scoped by the rail, so it outranks the input's own `width: 100%`, which
+ * with these margins would run past the rail's edge. */
+.rail .search {
+  width: auto;
   margin: 0 var(--space-3) var(--space-2);
 }
 
@@ -167,6 +170,7 @@
 /* styles.css:719-739. */
 .actions {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-1);
   padding: var(--space-3);
   border-top: var(--border-width) solid var(--color-line);

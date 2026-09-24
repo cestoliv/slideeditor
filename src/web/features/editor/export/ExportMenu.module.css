@@ -1,0 +1,6 @@
+/* Wide enough for the longest progress labels, "Rendering…" and "Preparing…". */
+.label {
+  min-width: 6.25em;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
