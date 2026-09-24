@@ -7,6 +7,7 @@ import { Editor } from "../features/editor/Editor.js";
 import { LibraryAdmin } from "../features/library/LibraryAdmin.js";
 import { Header } from "../features/shell/Header.js";
 import { NotFound } from "../features/shell/NotFound.js";
+import { useProjects } from "./projects.js";
 
 /*
  * Every screen the app has a URL for. Ported from routeFromPathname
@@ -59,11 +60,17 @@ export function AppRoutes() {
 
 function EditorRoute() {
   const { id } = useParams();
+  const { projects } = useProjects();
   // The path cannot match without the segment, so this is unreachable in
   // practice; answering with the not-found screen keeps it from being a crash
   // if it ever becomes reachable.
   if (id === undefined) return <NotFound />;
-  return <Editor projectId={id} />;
+  // Whichever draft the dashboard lists first, so a finished slideshow leads
+  // straight to the next one without the round trip through the dashboard.
+  const nextDraftId = projects.find(
+    (project) => project.status === "draft" && project.id !== id,
+  )?.id;
+  return <Editor projectId={id} nextDraftId={nextDraftId} />;
 }
 
 function SettingsRoute() {
