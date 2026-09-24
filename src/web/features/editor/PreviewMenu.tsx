@@ -1,6 +1,6 @@
 import type { Ratio } from "@shared/schema/index.js";
 import { Button, DropdownMenu, Icon } from "../../design/index.js";
-import { PREVIEW_CHROMES, suggestedChrome } from "./chrome/chrome.js";
+import { PREVIEW_CHROMES, asChromeId, suggestedChrome } from "./chrome/chrome.js";
 import type { ChromeId } from "./chrome/chrome.js";
 
 /*
@@ -12,16 +12,6 @@ import type { ChromeId } from "./chrome/chrome.js";
  * nothing is drawn changes nothing anyone can see, so one ChromeId carries both:
  * "none" is off, and every other value is both on and which.
  */
-
-const CHROME_IDS: readonly ChromeId[] = [
-  "none",
-  ...PREVIEW_CHROMES.map((option) => option.id),
-];
-
-/* Radix hands back a plain string, so the union is checked rather than asserted. */
-function asChromeId(value: string): ChromeId | null {
-  return CHROME_IDS.find((id) => id === value) ?? null;
-}
 
 export type PreviewMenuProps = {
   chrome: ChromeId;

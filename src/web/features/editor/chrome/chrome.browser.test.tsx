@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { page, userEvent } from "vitest/browser";
@@ -13,6 +13,7 @@ import { Editor } from "../Editor.js";
 import type { EditorClient } from "../Editor.js";
 import { fixtureProject } from "../testing.js";
 import type { ThumbnailRenderer } from "../useSlideThumbnail.js";
+import { LAST_CHROME_KEY } from "./chrome.js";
 
 /*
  * Files share one page, so a viewport left behind here reaches the next one.
@@ -30,6 +31,11 @@ afterAll(async () => {
  */
 beforeAll(async () => {
   await page.viewport(1280, 900);
+});
+
+/* The overlay pick outlives a slideshow, so each test starts with none remembered. */
+beforeEach(() => {
+  localStorage.removeItem(LAST_CHROME_KEY);
 });
 
 /* Everything the mock-ups put on screen, and nothing the document ever holds. */
@@ -212,6 +218,38 @@ it("draws no chrome until one is chosen, then draws it over the stage", async ()
  * because of it, so this can fail. What it must never carry is a word the mock
  * put on screen.
  */
+it("opens the next slideshow with the overlay picked last", async () => {
+  const first = await mount(world(fixtureProject()));
+  await expect
+    .element(first.getByRole("button", { name: "Choose the UI preview overlay" }))
+    .toBeVisible();
+  await chooseOverlay(/^TikTok/);
+  await vi.waitFor(() => {
+    expect(chromeNode()?.dataset["chrome"]).toBe("tiktok");
+  });
+  await first.unmount();
+
+  const project = fixtureProject();
+  project.ratio = { w: 4, h: 5 };
+  const second = await mount(world(project));
+  await vi.waitFor(() => {
+    expect(chromeNode()?.dataset["chrome"]).toBe("tiktok");
+  });
+
+  await chooseOverlay("Off");
+  await vi.waitFor(() => {
+    expect(chromeNode()).toBeNull();
+  });
+  await second.unmount();
+
+  const third = await mount(world(fixtureProject()));
+  await expect
+    .element(third.getByRole("button", { name: "Choose the UI preview overlay" }))
+    .toBeVisible();
+  expect(chromeNode()).toBeNull();
+  third.unmount();
+});
+
 it("never draws the chrome into an export", async () => {
   const stage = world(fixtureProject({ slides: 1, texts: 1 }));
   const screen = await mount(stage);

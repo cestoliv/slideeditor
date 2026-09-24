@@ -25,3 +25,36 @@ export const PREVIEW_CHROMES: readonly ChromeChoice[] = [
 export function suggestedChrome(ratio: Ratio): ChromeId {
   return suggestedPlatformChrome(ratio);
 }
+
+const CHROME_IDS: readonly ChromeId[] = [
+  "none",
+  ...PREVIEW_CHROMES.map((option) => option.id),
+];
+
+/* Radix and localStorage hand back a plain string, so the union is checked rather than asserted. */
+export function asChromeId(value: string): ChromeId | null {
+  return CHROME_IDS.find((id) => id === value) ?? null;
+}
+
+export const LAST_CHROME_KEY = "slide-studio:last-chrome";
+
+/**
+ * The overlay picked last, in any slideshow of any account. A reader who
+ * previews for TikTok keeps previewing for TikTok. A `localStorage` read can
+ * throw in private browsing, which falls back to no overlay.
+ */
+export function rememberedChrome(): ChromeId {
+  try {
+    return asChromeId(localStorage.getItem(LAST_CHROME_KEY) ?? "") ?? "none";
+  } catch {
+    return "none";
+  }
+}
+
+export function rememberChrome(chrome: ChromeId): void {
+  try {
+    localStorage.setItem(LAST_CHROME_KEY, chrome);
+  } catch {
+    // Private browsing can refuse the write; the overlay still changed.
+  }
+}
