@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
+import { outlineColorFor, textColorOf } from "@shared/geometry/index.js";
 import type { TextLayout } from "@shared/text/index.js";
 import type { TextLayer } from "@shared/schema/index.js";
 import { editorText, placeTextCaret, selectAllOf } from "./inlineEditing.js";
@@ -7,14 +8,16 @@ import { textBlockStyle } from "./renderTextDom.js";
 import styles from "./InlineTextEditor.module.css";
 
 /*
- * The transparent editor that sits exactly over the painted glyphs. Ported from
- * startTextEditing (app.js:3899-3948) and styles.css:1828-1853.
+ * The editor that takes over from the painted glyphs while a layer is edited.
+ * Ported from startTextEditing (app.js:3899-3948) and styles.css:1828-1853.
  *
- * Every one of its colours is transparent and only the caret is painted. That
- * is not decoration: the text a reader sees while typing is the real render
- * underneath, wrapped and measured by the shared layout, rather than the
- * browser's own approximation of it. Give this element a visible colour and
- * every character shifts the moment someone clicks into a layer.
+ * It paints its own glyphs, and text.module.css hides the painted block
+ * underneath. The browser then draws the caret and the selection on the same
+ * text it edits. A transparent editor over the painted render put the caret
+ * wherever the two layouts disagreed, which was anywhere whitespace collapsed
+ * or a line wrapped differently. The pills, the rules and the box still come
+ * from the shared layout, and the block is the layout's wrap column, so the
+ * browser breaks lines where the export does.
  *
  * It mounts when editing starts and unmounts when editing ends, so the caret
  * work below runs once per editing session rather than on every keystroke.
@@ -67,7 +70,19 @@ export function InlineTextEditor({
     else placeTextCaret(element, request.clientX, request.clientY);
   }, []);
 
-  const style: CSSProperties = { ...textBlockStyle(layout, layer) };
+  const color = textColorOf(layer);
+  const style: CSSProperties = {
+    ...textBlockStyle(layout, layer),
+    color,
+    // The painted outline is an SVG stroke behind the fill. This is the same
+    // stroke in CSS, so an outline layer keeps its look while it is edited.
+    ...(layer.style === "outline"
+      ? {
+          WebkitTextStroke: `${String(layout.outlineWidth)}px ${outlineColorFor(color)}`,
+          paintOrder: "stroke fill",
+        }
+      : {}),
+  };
 
   return (
     <span

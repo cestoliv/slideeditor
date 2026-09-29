@@ -1,30 +1,27 @@
 /*
  * Ported from styles.css:1828-1853.
  *
- * The glyphs here are invisible on purpose. They exist so the browser has a
- * real text flow to put a caret and a selection into, while what the reader
- * sees is the layer painted underneath from the shared layout.
+ * The glyphs here are the ones the reader sees while editing. text.module.css
+ * hides the painted block underneath, so the caret and the text never part.
  */
 
 .editor {
   position: absolute;
   z-index: var(--z-raised);
   display: block;
-  overflow: hidden;
-  color: transparent;
+  /* A line's glyphs overhang its line height. A clipping editor scrolls that
+   * overhang into view around the caret, and every glyph moves up with it.
+   * The layer box clips the text instead (TextLayerView.tsx). */
   outline: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  -webkit-text-fill-color: transparent;
   caret-color: var(--color-accent);
   cursor: text;
   pointer-events: auto;
   user-select: text;
 }
 
-/* styles.css:1844. A selection has to be visible without painting the glyphs. */
+/* styles.css:1844. */
 .editor::selection {
-  color: transparent;
   background: color-mix(in srgb, var(--color-accent) 42%, transparent);
-  -webkit-text-fill-color: transparent;
 }
