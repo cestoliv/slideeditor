@@ -19,7 +19,7 @@ import { LayerBox, layerClipCss } from "./LayerBox.js";
 import type { Handle } from "./LayerBox.js";
 import { InlineTextEditor } from "../text/InlineTextEditor.js";
 import type { CaretRequest } from "../text/InlineTextEditor.js";
-import { renderTextDom, textBlockStyle } from "../text/renderTextDom.js";
+import { renderTextDom } from "../text/renderTextDom.js";
 import { useTextLayout } from "../text/useTextLayout.js";
 import styles from "./TextLayerView.module.css";
 
@@ -152,49 +152,26 @@ export function TextLayerView({
     });
   }, [layer.text, layer.height, layout.contentHeight, stage.height, writeText]);
 
-  const isContentPress = (target: EventTarget | null): boolean =>
-    target instanceof Element &&
-    target.closest("[data-text-content], [data-text-editor]") !== null;
-
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      const contentPress = isContentPress(event.target);
-
       if (editing) {
         // A press inside the editor belongs to the editor, so the caret moves
         // rather than the layer (app.js:3821).
-        if (contentPress) return;
+        if (
+          event.target instanceof Element &&
+          event.target.closest("[data-text-editor]") !== null
+        ) {
+          return;
+        }
         onEndEditing();
-      } else if (
-        /*
-         * app.js:3823-3829, the deliberate two-step from commit 749e7f1: a
-         * press on an unselected box only selects it, and a second press on
-         * the glyphs of an already selected box starts editing.
-         *
-         * "Already selected" is carried by contentPress alone, and deliberately
-         * so. Only the hit area and the editor answer that test, and the hit
-         * area is rendered for a selected layer only, exactly as
-         * styles.css:1798 gave `.text-content` its pointer events. app.js
-         * checked the selection here as well; that second check could not fail
-         * independently of the first, and a guard no test can kill is a guard
-         * the next reader deletes without noticing. The render condition is
-         * pinned instead, by "gives the glyphs no press of their own until the
-         * layer is selected".
-         */
-        contentPress &&
-        event.button === 0 &&
-        !(event.metaKey || event.ctrlKey)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        onStartEditing(textId, {
-          mode: "point",
-          clientX: event.clientX,
-          clientY: event.clientY,
-        });
-        return;
       }
 
+      /*
+       * A press on a selected box drags it like any other. app.js opened the
+       * editor on a second press (commit 749e7f1), which turned
+       * select, resize, then drag into an accidental edit. A double click
+       * opens it instead.
+       */
       if (!prepareLayerPointerSelection(store, event, "text", textId)) return;
       if (store.getSnapshot().croppingOverlayId !== null) {
         onFinishCrop();
@@ -202,7 +179,7 @@ export function TextLayerView({
       }
       beginMove(event);
     },
-    [beginMove, editing, onEndEditing, onFinishCrop, onStartEditing, store, textId],
+    [beginMove, editing, onEndEditing, onFinishCrop, store, textId],
   );
 
   const onDoubleClick = useCallback(
@@ -210,7 +187,11 @@ export function TextLayerView({
       if (editing || event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
-      onStartEditing(textId, { mode: "all" });
+      onStartEditing(textId, {
+        mode: "point",
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
     },
     [editing, onStartEditing, textId],
   );
@@ -227,9 +208,8 @@ export function TextLayerView({
        * app.js:3860-3862 dispatched a synthetic dblclick here to reach the one
        * handler. The handler is a function now, so it is called directly.
        *
-       * Only once the layer is selected, which mirrors the two-step a pointer
-       * takes: the first Enter selects, through LayerBox's activation, and the
-       * second opens the editor.
+       * Only once the layer is selected: the first Enter selects, through
+       * LayerBox's activation, and the second opens the editor.
        */
       if (event.key === "Enter" && selected) {
         event.preventDefault();
@@ -292,19 +272,6 @@ export function TextLayerView({
         <div aria-hidden={editing ? "true" : undefined}>
           {renderTextDom(layer, layout)}
         </div>
-        {selected && !editing ? (
-          /*
-           * styles.css:1798. The glyphs themselves take the press that starts an
-           * edit, and only while the layer is selected. Anywhere else in the box
-           * drags the layer instead, which is what makes the two-step work.
-           */
-          <div
-            className={styles.hitArea}
-            data-text-content="true"
-            data-testid="text-hit"
-            style={textBlockStyle(layout, layer)}
-          />
-        ) : null}
         {editing ? (
           <InlineTextEditor
             value={layer.text}

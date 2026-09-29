@@ -15,7 +15,6 @@ import {
   libraryFor,
   measuredStage,
   pointer,
-  press,
 } from "./testing.js";
 
 /*
@@ -71,10 +70,8 @@ function renderedLines(id: string): string[] {
 /**
  * A press at a point on the canvas, delivered to whatever is topmost there.
  *
- * Dispatching on an element chosen in advance is what made the two-step
- * untestable: `event.target` was the box whatever the layer rendered, so
- * `closest("[data-text-content]")` was null however the hit area was gated. The
- * browser resolves the target here, the way it does for a real pointer.
+ * The browser resolves the target here, the way it does for a real pointer, so
+ * a test cannot pass by dispatching on an element that would never be hit.
  */
 function pressAt(point: { x: number; y: number }): Element {
   const target = document.elementFromPoint(point.x, point.y);
@@ -82,6 +79,21 @@ function pressAt(point: { x: number; y: number }): Element {
   target.dispatchEvent(pointer("pointerdown", point.x, point.y));
   target.dispatchEvent(pointer("pointerup", point.x, point.y));
   return target;
+}
+
+/** Two presses and the dblclick the browser fires after them. */
+function doubleClickAt(point: { x: number; y: number }): void {
+  pressAt(point);
+  const target = pressAt(point);
+  target.dispatchEvent(
+    new MouseEvent("dblclick", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: point.x,
+      clientY: point.y,
+    }),
+  );
 }
 
 /** The centre of the first painted line, in client coordinates. */
@@ -122,17 +134,9 @@ function editorLines(editor: HTMLElement): string[] {
   return lines.map((line) => line.trimEnd());
 }
 
-/** Selects the layer, then presses its glyphs, which is the two-step to edit. */
+/** Double clicks the glyphs, at their centre unless told otherwise. */
 async function startEditing(id: string, at?: { x: number; y: number }) {
-  const box = layerElement("text", id);
-  press(box, centreOf(box));
-  await expect
-    .poll(() => insideOf(id).querySelector('[data-testid="text-hit"]'))
-    .not.toBe(null);
-  const target = insideOf(id).querySelector<HTMLElement>('[data-testid="text-hit"]');
-  if (target === null) throw new Error("No editable glyphs.");
-  const point = at ?? centreOf(target);
-  target.dispatchEvent(pointer("pointerdown", point.x, point.y));
+  doubleClickAt(at ?? glyphPoint(id));
   const editor = page.getByRole("textbox", { name: "Edit text layer" });
   await expect.element(editor).toBeVisible();
   return (await editor.element()) as HTMLElement;
@@ -237,49 +241,39 @@ it("renders a boxed text with no colour of its own dark on its white pill", asyn
   await expect.poll(() => block.style.color).toBe("rgb(17, 17, 17)");
 });
 
-it("only starts editing on the second press of the two-step", async () => {
-  const { id } = await open((text) => {
-    text.text = "Two step";
+it("drags a selected layer from its glyphs rather than editing it", async () => {
+  const { store, id } = await open((text) => {
+    text.text = "Drag me";
   });
-  await expect.poll(() => renderedLines(id)).toEqual(["Two step"]);
+  await expect.poll(() => renderedLines(id)).toEqual(["Drag me"]);
+  store.selectOnly("text", id);
+  await expect.poll(() => layerElement("text", id).dataset["selected"]).toBe("true");
+  const start = textOf(store).x;
   const glyphs = glyphPoint(id);
 
-  // First press, straight onto the glyphs. It selects and nothing more, which
-  // is the affordance from commit 749e7f1.
-  pressAt(glyphs);
+  // Select, resize, then drag is the main flow. A second press on the glyphs
+  // used to open the editor, so the drag typed into the box instead.
+  const target = document.elementFromPoint(glyphs.x, glyphs.y);
+  if (target === null) throw new Error("Nothing under the pointer.");
+  target.dispatchEvent(pointer("pointerdown", glyphs.x, glyphs.y));
+  target.dispatchEvent(pointer("pointermove", glyphs.x + 40, glyphs.y));
+  target.dispatchEvent(pointer("pointerup", glyphs.x + 40, glyphs.y));
 
-  await expect.poll(() => layerElement("text", id).dataset["selected"]).toBe("true");
+  await expect.poll(() => textOf(store).x).toBeGreaterThan(start);
   expect(page.getByRole("textbox", { name: "Edit text layer" }).query()).toBe(null);
+});
 
-  // Second press, on the same pixel. Now the glyphs take it.
-  pressAt(glyphs);
+it("starts editing on a double click, even on an unselected layer", async () => {
+  const { id } = await open((text) => {
+    text.text = "Two clicks";
+  });
+  await expect.poll(() => renderedLines(id)).toEqual(["Two clicks"]);
+
+  doubleClickAt(glyphPoint(id));
 
   await expect
     .element(page.getByRole("textbox", { name: "Edit text layer" }))
     .toBeVisible();
-});
-
-it("gives the glyphs no press of their own until the layer is selected", async () => {
-  const { store, id } = await open((text) => {
-    text.text = "Two step";
-  });
-  await expect.poll(() => renderedLines(id)).toEqual(["Two step"]);
-  const glyphs = glyphPoint(id);
-  const hitArea = () => insideOf(id).querySelector('[data-testid="text-hit"]');
-
-  // styles.css:1798. Nothing over the glyphs takes a press while the layer is
-  // unselected, so the press reaches the box and drags it instead. The second
-  // assertion is on what the press would be read as, not on what element it
-  // lands on: `not.toBe(null)` against a null hit area would say nothing.
-  expect(hitArea()).toBe(null);
-  expect(
-    document.elementFromPoint(glyphs.x, glyphs.y)?.closest("[data-text-content]"),
-  ).toBe(null);
-
-  store.selectOnly("text", id);
-
-  await expect.poll(hitArea).not.toBe(null);
-  await expect.poll(() => document.elementFromPoint(glyphs.x, glyphs.y)).toBe(hitArea());
 });
 
 it("enters inline editing and keeps the caret where it was clicked", async () => {
@@ -483,9 +477,9 @@ it("starts editing from the keyboard on Enter", async () => {
   store.selectOnly("text", id);
   const box = layerElement("text", id);
   box.focus();
-  // Enter opens the editor only once the layer is selected, mirroring the
-  // two-step a pointer takes: on an unselected layer the first Enter selects it
-  // (LayerBox's activation) and the second opens the editor.
+  // Enter opens the editor only once the layer is selected: on an unselected
+  // layer the first Enter selects it (LayerBox's activation) and the second
+  // opens the editor.
   await expect.poll(() => box.dataset["selected"]).toBe("true");
 
   box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));

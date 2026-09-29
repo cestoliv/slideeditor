@@ -132,26 +132,7 @@ it("leaves the shortcut to the field when a text layer is being edited", async (
   await deleteTheLayer("Delete this line");
 
   // Into the inline editor, which is a contenteditable and owns its own undo.
-  // The two-step: a click selects the layer, and a press on its glyphs edits.
-  const survivor = page.getByLabelText("Text layer: Keep this line");
-  await userEvent.click(survivor);
-  const box = await survivor.element();
-  await expect.poll(() => box.querySelector('[data-testid="text-hit"]')).not.toBe(null);
-  const glyphs = box.querySelector<HTMLElement>('[data-testid="text-hit"]');
-  if (glyphs === null) throw new Error("No editable glyphs.");
-  const rect = glyphs.getBoundingClientRect();
-  glyphs.dispatchEvent(
-    new PointerEvent("pointerdown", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      pointerId: 1,
-      button: 0,
-      buttons: 1,
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2,
-    }),
-  );
+  await userEvent.dblClick(page.getByLabelText("Text layer: Keep this line"));
   const editor = page.getByRole("textbox", { name: "Edit text layer" });
   await expect.element(editor).toBeVisible();
 
