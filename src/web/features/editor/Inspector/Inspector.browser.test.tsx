@@ -694,13 +694,11 @@ it("grows the box when the font outgrows it", async () => {
 });
 
 /*
- * app.js:2943 caps the grown box at the whole canvas
- * (Math.min(1, neededPixels / state.stageHeight)). Without the cap a text can be
- * given a height greater than the slide it sits on, which no stage can draw.
- * The text below overflows 180px type well past one canvas height, so the cap is
- * doing work rather than being satisfied by accident.
+ * app.js:2943 capped the grown box at the whole canvas, which dropped every
+ * line past it. A box grows for as long as its text needs now, the way
+ * compose.ts sizes one, so the 180px type below ends up taller than the slide.
  */
-it("never grows a box past the whole canvas", async () => {
+it("grows a box past the whole canvas when the text needs it", async () => {
   const store = storeFor(fixtureProject({ texts: 1 }));
   store.mutate((document) => {
     const text = document.slides[0]?.texts[0];
@@ -718,10 +716,8 @@ it("never grows a box past the whole canvas", async () => {
 
   await vi.waitFor(() => {
     expect(liveText(store).size).toBe(180);
-    // It grew, so the refit ran and the cap is what stopped it.
-    expect(liveText(store).height).toBeGreaterThan(0.1);
+    expect(liveText(store).height).toBeGreaterThan(1);
   });
-  expect(liveText(store).height).toBe(1);
   screen.unmount();
 });
 

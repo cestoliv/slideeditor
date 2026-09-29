@@ -445,6 +445,21 @@ it("reports the height the box would need to show every line", () => {
   expect(layout.contentHeight).toBeGreaterThan(92);
 });
 
+it("keeps every line of a box sized to exactly its content height", () => {
+  // compose.ts stores the content height as a fraction of the canvas, so a
+  // renderer multiplies it back out and lands a rounding error short: this
+  // two-line box at 1920 counted 1.999999999999999 lines and drew one.
+  const layout = computeTextLayout({
+    layer: { ...base, text: "one two three four five" },
+    boxWidth: 200,
+    boxHeight: 0.0813333333333333 * 1920,
+    fontSize: 64,
+    measure,
+  });
+  expect(layout.totalLineCount).toBe(2);
+  expect(layout.lines).toHaveLength(2);
+});
+
 it("reports no overflow when every line fits", () => {
   const layout = computeTextLayout({
     layer: base,

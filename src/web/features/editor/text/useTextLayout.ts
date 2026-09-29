@@ -238,6 +238,23 @@ export function resetTextFontStateForTesting(): void {
 
 export type StageSize = { width: number; height: number };
 
+/** One layer laid out on a surface of `stage` pixels, measured with its own face. */
+export function layoutAt(layer: TextLayer, stage: StageSize): TextLayout {
+  const fontSize = fontSizeAt(layer, stage.width);
+  return computeTextLayout({
+    layer,
+    boxWidth: layer.width * stage.width,
+    boxHeight: layer.height * stage.height,
+    fontSize,
+    measure: measurerFor(
+      fontSize,
+      layer.fontFamily,
+      weightFor(layer.fontFamily, layer.weight),
+      layer.italic,
+    ),
+  });
+}
+
 /**
  * Everything needed to draw one text layer at the stage's current scale.
  *
@@ -260,21 +277,7 @@ export function useTextLayout(layer: TextLayer, stage: StageSize): TextLayout {
   );
   const { ready: fontReady, revision: fontRevision } = useTextFontState(faces);
   return useMemo(
-    () => {
-      const fontSize = fontSizeAt(layer, stage.width);
-      return computeTextLayout({
-        layer,
-        boxWidth: layer.width * stage.width,
-        boxHeight: layer.height * stage.height,
-        fontSize,
-        measure: measurerFor(
-          fontSize,
-          layer.fontFamily,
-          weightFor(layer.fontFamily, layer.weight),
-          layer.italic,
-        ),
-      });
-    },
+    () => layoutAt(layer, stage),
     // The layer object is mutated in place by the store, so its identity is not
     // a dependency anything can rely on. Every field the layout reads is listed.
     // layer.underline and layer.strikethrough are deliberately absent: they

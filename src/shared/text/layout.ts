@@ -156,9 +156,11 @@ export function computeTextLayout(input: TextLayoutInput): TextLayout {
   const wrapped = wrapText(layer.text, wrapWidth, measure);
   // At least one line survives even in a box too short to hold one, because a
   // layer that renders nothing is indistinguishable from a lost layer.
+  // The tolerance absorbs rounding: a box sized to exactly its contentHeight
+  // (compose.ts, the editor's own growth) otherwise counts 1.999… lines here.
   const visibleLineCount = Math.max(
     1,
-    Math.floor((boxHeight - verticalPadding * 2) / lineHeight),
+    Math.floor((boxHeight - verticalPadding * 2) / lineHeight + 1e-6),
   );
   const lines = wrapped.slice(0, visibleLineCount);
 

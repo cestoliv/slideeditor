@@ -119,7 +119,7 @@ export function TextInspector({ store, text, ratio }: TextInspectorProps) {
       style: text.style,
       backgroundShape: text.backgroundShape,
     };
-    const needed = Math.min(1, layout.contentHeight / canvasHeight);
+    const needed = layout.contentHeight / canvasHeight;
     // app.js:2941 only ever grows the box, so shrinking the font never
     // collapses a box the author sized by hand.
     if (needed <= text.height) return;
