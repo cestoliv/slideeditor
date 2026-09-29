@@ -145,7 +145,7 @@ export function TextLayerView({
     if (!stage.height) return;
     const needed = layout.contentHeight;
     if (needed <= layer.height * stage.height) return;
-    const next = Math.min(1, needed / stage.height);
+    const next = needed / stage.height;
     if (next <= layer.height) return;
     writeText((live) => {
       live.height = next;

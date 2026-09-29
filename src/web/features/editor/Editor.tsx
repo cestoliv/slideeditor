@@ -39,6 +39,7 @@ import type { ThumbnailRenderer } from "./useSlideThumbnail.js";
 import { ExportMenu } from "./export/ExportMenu.js";
 import { renderSlideBlob } from "./export/render.js";
 import { usePublishOnReady } from "./export/usePublishOnReady.js";
+import { useFitTextBoxes } from "./text/useFitTextBoxes.js";
 import styles from "./Editor.module.css";
 
 /*
@@ -385,6 +386,7 @@ type OpenEditorProps = {
  */
 function OpenEditor({ store, items, library, render, nextDraftId }: OpenEditorProps) {
   const { toast } = useToast();
+  useFitTextBoxes(store);
   // The pixels an agent exports can only be drawn here, so this tab renders
   // them to the server as soon as the slideshow is marked ready.
   usePublishOnReady({
