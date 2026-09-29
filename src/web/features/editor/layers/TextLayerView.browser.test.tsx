@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { page } from "@vitest/browser/context";
+import { page, userEvent } from "@vitest/browser/context";
 import { render } from "vitest-browser-react";
 import "../../../design/tokens.css";
 import "../../../design/reset.css";
@@ -23,7 +23,7 @@ import {
  *
  * Nothing here reads a class name. The render is checked through the shapes it
  * draws and the boxes they occupy, and the editor through what a reader would
- * see and where the caret lands, because those are the things the transparent
+ * see and where the caret lands, because those are the things the inline
  * editor exists to protect.
  */
 
@@ -90,6 +90,36 @@ function glyphPoint(id: string): { x: number; y: number } {
   if (line === undefined) throw new Error("No painted line.");
   const rect = line.getBoundingClientRect();
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+/** The box of one character of a text node, the first by default. */
+function glyphBox(node: ChildNode | null, index = 0): DOMRect {
+  if (node === null) throw new Error("No text.");
+  const range = document.createRange();
+  range.setStart(node, index);
+  range.setEnd(node, index + 1);
+  return range.getBoundingClientRect();
+}
+
+/** The lines the browser broke the editor's text into, trailing spaces dropped. */
+function editorLines(editor: HTMLElement): string[] {
+  const node = editor.firstChild;
+  if (!(node instanceof Text)) return [];
+  const lines: string[] = [];
+  let top: number | null = null;
+  for (let index = 0; index < node.length; index++) {
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + 1);
+    const rect = range.getClientRects()[0];
+    if (rect !== undefined && top !== null && Math.abs(rect.top - top) > 2) {
+      lines.push("");
+    }
+    if (rect !== undefined) top = rect.top;
+    if (lines.length === 0) lines.push("");
+    lines[lines.length - 1] += node.data[index] ?? "";
+  }
+  return lines.map((line) => line.trimEnd());
 }
 
 /** Selects the layer, then presses its glyphs, which is the two-step to edit. */
@@ -280,24 +310,59 @@ it("enters inline editing and keeps the caret where it was clicked", async () =>
   expect(Math.abs(caret.left - lineBox.right)).toBeGreaterThan(40);
 });
 
-it("keeps the rendered text identical while editing", async () => {
+it("paints the editor's glyphs where the layout put them", async () => {
   const { id } = await open((text) => {
-    text.text = "Steady";
+    text.text = "Steady\nhands";
   });
-  await expect.poll(() => renderedLines(id)).toEqual(["Steady"]);
-  const before = (blockOf(id).children[0] as HTMLElement).getBoundingClientRect();
+  await expect.poll(() => renderedLines(id)).toEqual(["Steady", "hands"]);
 
   const editor = await startEditing(id);
+  // A real keystroke on the last line, so the glyphs are checked after an edit.
+  window.getSelection()?.collapse(editor.firstChild, "Steady\nhands".length);
+  await userEvent.keyboard("!");
+  await expect.poll(() => renderedLines(id)).toEqual(["Steady", "hands!"]);
 
-  const after = (blockOf(id).children[0] as HTMLElement).getBoundingClientRect();
-  expect(after.left).toBeCloseTo(before.left, 1);
-  expect(after.top).toBeCloseTo(before.top, 1);
-  expect(after.width).toBeCloseTo(before.width, 1);
-  // The editor paints nothing. What the reader sees is the render underneath,
-  // which is why the glyphs above did not move.
-  const painted = getComputedStyle(editor);
-  expect(painted.webkitTextFillColor).toBe("rgba(0, 0, 0, 0)");
-  expect(painted.caretColor).not.toBe("rgba(0, 0, 0, 0)");
+  // The editor paints the glyphs and the painted block steps aside, so the
+  // caret is drawn on the very text it edits. The hidden block keeps its
+  // layout, which is what the editor's glyphs are checked against. Polled,
+  // because a face still loading under a busy suite moves both a frame apart.
+  expect(getComputedStyle(blockOf(id)).visibility).toBe("hidden");
+  expect(getComputedStyle(editor).color).not.toBe("rgba(0, 0, 0, 0)");
+  const offsets = () => {
+    const text = editor.firstChild;
+    const edited = [glyphBox(text), glyphBox(text, "Steady\n".length)];
+    return [...blockOf(id).children].flatMap((line, index) => {
+      const painted = glyphBox(line.firstChild);
+      const glyph = edited[index];
+      if (glyph === undefined) return [Infinity];
+      return [Math.abs(glyph.left - painted.left), Math.abs(glyph.top - painted.top)];
+    });
+  };
+  await expect.poll(() => Math.max(...offsets())).toBeLessThan(0.05);
+});
+
+it("wraps the editor on the lines the layout drew", async () => {
+  const words = "The quick brown foxes jump over the lazy dog and run far away";
+  const { id } = await open((text) => {
+    text.text = "";
+    text.width = 0.4;
+  });
+  const editor = await startEditing(id);
+
+  // Every prefix of the sentence, as it is typed, so some line ends inside the
+  // wrap inset. An editor wider than the wrap column keeps a word there that
+  // the layout broke.
+  for (let end = 1; end <= words.length; end++) {
+    const value = words.slice(0, end).trimEnd();
+    editor.textContent = value;
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await expect.poll(() => renderedLines(id).join(" ")).toBe(value);
+    // Polled, because a face still loading under a busy suite settles the
+    // layout a frame after the editor.
+    await expect
+      .poll(() => ({ editor: editorLines(editor), painted: renderedLines(id) }))
+      .toSatisfy(({ editor, painted }) => editor.join("\n") === painted.join("\n"));
+  }
 });
 
 it("focuses the editor when editing begins", async () => {

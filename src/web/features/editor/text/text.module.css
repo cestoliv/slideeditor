@@ -52,3 +52,8 @@
   width: 100%;
   overflow: visible;
 }
+
+/* The inline editor paints the glyphs while the layer is edited (InlineTextEditor.tsx). */
+:global([data-editing="true"]) .block {
+  visibility: hidden;
+}

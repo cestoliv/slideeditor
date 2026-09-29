@@ -1,7 +1,7 @@
 import type { CSSProperties, JSX } from "react";
 import { Fragment } from "react";
 import { outlineColorFor, textColorOf } from "@shared/geometry/index.js";
-import { fontStack } from "@shared/text/index.js";
+import { fontStack, TEXT_WRAP_INSET } from "@shared/text/index.js";
 import type { CornerRadii, JunctionCorner, TextLayout } from "@shared/text/index.js";
 import type { TextLayer } from "@shared/schema/index.js";
 import { weightFor } from "../../../app/fontFaces.js";
@@ -76,13 +76,18 @@ export function concaveCornerPath({ cx, cy, radius, quadrant }: JunctionCorner):
 /**
  * Where the block of lines sits inside the box.
  *
- * Only `textX` and `align` decide it, which is why no width is needed here: a
- * centred block spans the box, a left aligned one starts at the draw point, and
- * a right aligned one ends at it. The inline editor is positioned from this
- * same object, so the caret sits on the glyphs rather than near them.
+ * The block is the wrap column: the box less TEXT_WRAP_INSET, split evenly
+ * between both sides. A left aligned line then starts at `textX`, a right
+ * aligned one ends at it, and a centred one centres on it. The inline editor
+ * is positioned from this same object, and the browser wraps its text at the
+ * block's width. Any wider block lets the editor keep a word on a line that
+ * the layout already broke.
  */
 export function textBlockStyle(layout: TextLayout, layer: TextLayer): CSSProperties {
-  const vertical: CSSProperties = {
+  const inset = `${String((layout.fontSize * TEXT_WRAP_INSET) / 2)}px`;
+  return {
+    left: inset,
+    right: inset,
     top: `${String(layout.startY - layout.lineHeight / 2)}px`,
     height: `${String(layout.blockHeight)}px`,
     fontSize: `${String(layout.fontSize)}px`,
@@ -98,11 +103,6 @@ export function textBlockStyle(layout: TextLayout, layer: TextLayer): CSSPropert
     fontWeight: weightFor(layer.fontFamily, layer.weight),
     fontStyle: layer.italic ? "italic" : "normal",
   };
-  if (layout.align === "left")
-    return { ...vertical, left: `${String(layout.textX)}px`, right: 0 };
-  if (layout.align === "right")
-    return { ...vertical, left: 0, width: `${String(layout.textX)}px` };
-  return { ...vertical, left: 0, right: 0 };
 }
 
 export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element {
