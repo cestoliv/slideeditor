@@ -775,3 +775,92 @@ describe("validation", () => {
     });
   });
 });
+
+describe("styled text lines", () => {
+  const HOOK = "Stop scrolling, this one matters";
+
+  it("lays a plain string out exactly as before", () => {
+    const plain = compose([{ background: "bg1", texts: [HOOK] }]);
+    const styled = compose([{ background: "bg1", texts: [{ text: HOOK }] }]);
+    expect(firstSlide(styled).texts.map(({ id: _, ...text }) => text)).toEqual(
+      firstSlide(plain).texts.map(({ id: _, ...text }) => text),
+    );
+  });
+
+  it("gives a larger line a taller box and keeps the block in the frame", () => {
+    const doc = compose([
+      {
+        background: "bg1",
+        texts: [{ text: HOOK, size: 96, color: "#ffe600" }, "Read on"],
+      },
+    ]);
+    const [hook, body] = firstSlide(doc).texts;
+    expect(hook?.size).toBe(96);
+    expect(hook?.color).toBe("#FFE600");
+    expect(body?.size).toBe(BUILTIN_DEFAULTS.text.size);
+    expect(hook?.height ?? 0).toBeGreaterThan(body?.height ?? 0);
+    const bottom = Math.max(...firstSlide(doc).texts.map((text) => text.y + text.height));
+    expect(at(firstSlide(doc).texts, 0).y).toBeGreaterThanOrEqual(TEXT_TOP_LIMIT);
+    expect(bottom).toBeLessThanOrEqual(1);
+  });
+
+  it("darkens a boxed line that would otherwise be white on white", () => {
+    const doc = compose([{ background: "bg1", texts: [{ text: HOOK, style: "boxed" }] }]);
+    const text = at(firstSlide(doc).texts, 0);
+    expect(text.style).toBe("boxed");
+    expect(text.color).not.toBe(text.background);
+  });
+
+  it("recomposes a slide whose only change is a line's style", () => {
+    const first = compose([{ background: "bg1", texts: [HOOK] }]);
+    const kept = compose([{ background: "bg1", texts: [HOOK] }], { previous: first });
+    expect(firstSlide(kept)).toBe(firstSlide(first));
+    const restyled = compose([{ background: "bg1", texts: [{ text: HOOK, size: 96 }] }], {
+      previous: first,
+    });
+    expect(at(firstSlide(restyled).texts, 0).size).toBe(96);
+    // Asking for the style the line already wears keeps the slide as it is.
+    const same = compose([{ background: "bg1", texts: [{ text: HOOK, size: 96 }] }], {
+      previous: restyled,
+    });
+    expect(firstSlide(same)).toBe(firstSlide(restyled));
+  });
+});
+
+describe("styled text lines from an unparsed body", () => {
+  it("keeps a boxed line whose colour was flipped for contrast", () => {
+    const request: Composition[] = [
+      {
+        background: "bg1",
+        texts: [
+          { text: "Hook", style: "boxed", color: "#FFFFFF", background: "#FFFFFF" },
+        ],
+      },
+    ];
+    const first = compose(request);
+    expect(at(firstSlide(first).texts, 0).color).not.toBe("#FFFFFF");
+    const again = compose(request, { previous: first });
+    expect(firstSlide(again)).toBe(firstSlide(first));
+  });
+
+  it("normalises a colour so the same request keeps the slide", () => {
+    const request: Composition[] = [
+      { background: "bg1", texts: [{ text: "Hook", color: "fe0" }] },
+    ];
+    const first = compose(request);
+    expect(at(firstSlide(first).texts, 0).color).toBe("#FFEE00");
+    expect(firstSlide(compose(request, { previous: first }))).toBe(firstSlide(first));
+  });
+
+  it.each([
+    { text: "Hook", size: "big" },
+    { text: "Hook", size: 100000 },
+    { text: "Hook", style: "foo" },
+    { text: "Hook", color: "red" },
+    {},
+  ])("refuses an invalid line %j", (line) => {
+    expect(() => compose([{ background: "bg1", texts: [line as never] }])).toThrow(
+      ComposeError,
+    );
+  });
+});

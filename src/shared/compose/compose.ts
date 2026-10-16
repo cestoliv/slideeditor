@@ -1,5 +1,14 @@
-import { DESIGN_WIDTH, outputHeight } from "../geometry/index.js";
-import { DEFAULT_RATIO, RATIO_ASPECT_MAX, RATIO_ASPECT_MIN } from "../schema/index.js";
+import {
+  DESIGN_WIDTH,
+  ensureBoxedTextContrast,
+  outputHeight,
+} from "../geometry/index.js";
+import {
+  DEFAULT_RATIO,
+  RATIO_ASPECT_MAX,
+  RATIO_ASPECT_MIN,
+  styledTextSchema,
+} from "../schema/index.js";
 import { newTextLayer } from "../defaults/index.js";
 import {
   BOX_TEXT_LINE_HEIGHT,
@@ -49,12 +58,41 @@ export interface LibraryLookup {
   require(id: string, kind?: LibraryKind): LibraryItem;
 }
 
-/** The shorthand an agent speaks: a background id, asset ids, and strings. */
+/**
+ * The style an agent may set on one line of text. Position and box size stay
+ * the server's to place, so nothing here moves a line.
+ */
+export type TextStyle = Partial<
+  Pick<
+    TextLayer,
+    "size" | "style" | "color" | "background" | "weight" | "italic" | "align"
+  >
+>;
+
+const TEXT_STYLE_KEYS = [
+  "size",
+  "style",
+  "color",
+  "background",
+  "weight",
+  "italic",
+  "align",
+] as const satisfies readonly (keyof TextStyle)[];
+
+/** A line of text: a plain string takes the account's defaults. */
+export type CompositionText = string | ({ text: string } & TextStyle);
+
+/** The shorthand an agent speaks: a background id, asset ids, and texts. */
 export interface Composition {
   name?: string;
   background: string;
   assets?: string[];
-  texts?: string[];
+  texts?: CompositionText[];
+}
+
+interface StyledText {
+  text: string;
+  style: TextStyle;
 }
 
 export interface ComposeDocumentInput {
@@ -101,6 +139,7 @@ export interface CompositionProject {
 
 interface PlacedText {
   text: string;
+  style: TextStyle;
   size: number;
   height: number;
   y: number;
@@ -180,7 +219,7 @@ function composeSlide({
 }: ComposeSlideInput): Slide {
   const background = library.require(composition.background, "background");
   const assetIds = normalizeList(composition.assets);
-  const texts = normalizeList(composition.texts).map((value) => String(value));
+  const texts = normalizeList(composition.texts).map(toStyledText);
   const assets = assetIds.map((id) => library.require(id, "asset"));
 
   // An unchanged composition keeps the slide exactly as the user left it.
@@ -252,45 +291,67 @@ function composeSlide({
         };
   });
   slide.texts = laidOutTexts.map((placed) => {
-    const reused = keptTexts.get(placed.text)?.shift();
-    return reused
-      ? { ...reused, z: z++ }
-      : {
-          ...newTextLayer(
-            defaults,
-            { x: (1 - defaults.text.maxWidth) / 2, y: placed.y, z: z++ },
-            newId,
-          ),
-          text: placed.text,
-          height: placed.height,
-        };
+    // A kept line has to wear the style asked for, or a restyle would be lost.
+    const bucket = keptTexts.get(placed.text) || [];
+    const index = bucket.findIndex((layer) => hasStyle(layer, placed.style));
+    const reused = index === -1 ? undefined : bucket.splice(index, 1)[0];
+    if (reused) return { ...reused, z: z++ };
+    const layer: TextLayer = {
+      ...newTextLayer(
+        defaults,
+        { x: (1 - defaults.text.maxWidth) / 2, y: placed.y, z: z++ },
+        newId,
+      ),
+      text: placed.text,
+      height: placed.height,
+    };
+    // Only a styled line can land a box colour on its own text colour, so a
+    // plain string keeps exactly the layer it always got.
+    return Object.keys(placed.style).length
+      ? ensureBoxedTextContrast({ ...layer, ...placed.style })
+      : layer;
   });
   return slide;
 }
 
 /** Stacks texts in the lower third at the account's text size, shrinking the gap if needed. */
 function layoutTexts(
-  texts: string[],
+  texts: StyledText[],
   height: number,
   defaults: AccountDefaults,
   advanceRatioFor: (family: string) => number,
 ): PlacedText[] {
   if (!texts.length) return [];
-  const size = defaults.text.size;
   const advance = advanceRatioFor(defaults.text.fontFamily);
-  // computeTextLayout picks the line advance off the same two fields, and the
-  // two constants are tuned independently, so reading them here keeps this
-  // estimate from drifting away from what the renderer lays out.
-  const lineHeight =
-    defaults.text.style === "boxed" && defaults.text.backgroundShape !== "full"
-      ? BOX_TEXT_LINE_HEIGHT
-      : TEXT_LINE_HEIGHT;
   const boxesAt = (gap: number) => {
-    const boxes = texts.map((text) => ({
-      text,
-      size,
-      height: textHeight(text, size, height, advance, defaults.text.maxWidth, lineHeight),
-    }));
+    const boxes = texts.map(({ text, style }) => {
+      // Each line measures at its own size and style, because a hook set
+      // larger than the rest wraps to more lines and needs a taller box.
+      // Weight and italic do not change the estimate: the renderer's
+      // computeTextLayout stays the source of truth for the real wrap.
+      const size = style.size ?? defaults.text.size;
+      // computeTextLayout picks the line advance off the same two fields, and
+      // the two constants are tuned independently, so reading them here keeps
+      // this estimate from drifting away from what the renderer lays out.
+      const lineHeight =
+        (style.style ?? defaults.text.style) === "boxed" &&
+        defaults.text.backgroundShape !== "full"
+          ? BOX_TEXT_LINE_HEIGHT
+          : TEXT_LINE_HEIGHT;
+      return {
+        text,
+        style,
+        size,
+        height: textHeight(
+          text,
+          size,
+          height,
+          advance,
+          defaults.text.maxWidth,
+          lineHeight,
+        ),
+      };
+    });
     const total =
       boxes.reduce((sum, box) => sum + box.height, 0) + gap * (boxes.length - 1);
     return { boxes, total };
@@ -557,11 +618,42 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function toStyledText(value: CompositionText): StyledText {
+  if (typeof value !== "object") return { text: String(value), style: {} };
+  // The raw HTTP route hands its body over unparsed, so this is where a bad
+  // size or colour is refused. The schema strips every other key, so nothing
+  // can set geometry through here.
+  const parsed = styledTextSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new ComposeError(
+      `Text line ${JSON.stringify(value)} is invalid at ${issue?.path.join(".") || "text"}: ${issue?.message ?? "bad value"}`,
+    );
+  }
+  // Zod leaves an absent key absent, so no field holds `undefined` here.
+  const { text, ...style } = parsed.data;
+  return { text, style: style as TextStyle };
+}
+
+/**
+ * Whether a layer already wears the style asked for. An omitted field matches
+ * anything, so a plain string sent back never wipes a line's style. The
+ * request goes through the same contrast flip composeSlide applies, or a boxed
+ * line asked for in its own box colour would never match and lose its
+ * geometry on every update.
+ */
+function hasStyle(layer: TextLayer, style: TextStyle): boolean {
+  const wanted = ensureBoxedTextContrast({ ...layer, ...style });
+  return TEXT_STYLE_KEYS.every(
+    (key) => style[key] === undefined || wanted[key] === layer[key],
+  );
+}
+
 function sameComposition(
   slide: Slide,
   backgroundId: string,
   assetIds: string[],
-  texts: string[],
+  texts: StyledText[],
 ): boolean {
   if (slide.backgroundItemId !== backgroundId) return false;
   const currentAssets = (slide.overlays || [])
@@ -570,9 +662,15 @@ function sameComposition(
     .map((overlay) => overlay.itemId);
   const currentTexts = (slide.texts || [])
     .slice()
-    .sort((a, b) => (a.z || 0) - (b.z || 0))
-    .map((text) => text.text);
-  return sameList(currentAssets, assetIds) && sameList(currentTexts, texts);
+    .sort((a, b) => (a.z || 0) - (b.z || 0));
+  return (
+    sameList(currentAssets, assetIds) &&
+    currentTexts.length === texts.length &&
+    currentTexts.every(
+      (layer, index) =>
+        layer.text === texts[index]?.text && hasStyle(layer, texts[index].style),
+    )
+  );
 }
 
 function sameList(a: string[], b: string[]): boolean {
@@ -595,7 +693,7 @@ function normalizeRatio(ratio: Ratio | undefined): Ratio {
   return { w, h };
 }
 
-function normalizeList(value: string[] | string | null | undefined): string[] {
+function normalizeList<T>(value: T[] | T | null | undefined): T[] {
   if (value == null) return [];
   return (Array.isArray(value) ? value : [value]).filter(
     (entry) => entry != null && entry !== "",

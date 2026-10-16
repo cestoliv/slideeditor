@@ -56,6 +56,8 @@ it("serves every tool over the transport", async () => {
       "set_slideshow_status",
       "create_slideshow",
       "update_slideshow",
+      "duplicate_slideshow",
+      "delete_slideshow",
       "export_slideshow",
       "revoke_export",
       "create_account",

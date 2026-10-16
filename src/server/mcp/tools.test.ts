@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { BUILTIN_DEFAULTS, type AccountDefaults } from "../../shared/schema/index.js";
+import { z } from "zod";
 import {
   addItem,
   asHttpError,
@@ -507,13 +508,25 @@ const PINNED = [
     name: "create_slideshow",
     title: "Create a slideshow",
     description:
-      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions, sizes or styling: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user.",
+      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. A text line can carry its own size, colour and style when one line has to stand out. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user.",
   },
   {
     name: "update_slideshow",
     title: "Update a slideshow",
     description:
       "Replace a slideshow's composition. Pass the `version` you read from get_slideshow: a stale version is rejected so you cannot overwrite the human's work. Slides whose composition is unchanged keep the layout the human adjusted, and geometry is preserved for any asset or text that is still present. A caption field you leave out keeps what is stored, so editing the slides never wipes a caption the human has been working on. Send an empty string to clear one on purpose.",
+  },
+  {
+    name: "duplicate_slideshow",
+    title: "Duplicate a slideshow",
+    description:
+      "Copy a slideshow into a new draft in the same account, layout and all. Use it to start from a template the human has already adjusted: duplicate it, then change the texts with update_slideshow. Slides and lines you leave unchanged keep the human's layout. The copy keeps the caption unless you pass a new one. Returns the new id and version.",
+  },
+  {
+    name: "delete_slideshow",
+    title: "Delete a draft slideshow",
+    description:
+      "Delete a slideshow for good. Only a draft can be deleted: a ready or published slideshow is refused, because the human has signed it off. To delete one of those, ask the human to move it back to draft.",
   },
   {
     name: "export_slideshow",
@@ -1316,4 +1329,124 @@ it("pages the library with offset, and counts every search match", async () => {
   const searched = await list({ query: "beach", limit: 1 });
   expect(searched.items).toHaveLength(1);
   expect(searched.total).toBe(3);
+});
+
+/** A slideshow with one background and one line, for the copy and delete tools. */
+async function draft(): Promise<{ id: string; version: number; backgroundId: string }> {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        name: "Template",
+        slides: [{ background: backgroundId, texts: ["Hook"] }],
+        description: "Caption",
+        hashtags: ["gym"],
+      },
+      context,
+    ),
+  ) as { id: string; version: number };
+  return { ...created, backgroundId };
+}
+
+it("duplicates a slideshow into a new draft with the same document", async () => {
+  const { id, backgroundId } = await draft();
+  await tools.set_slideshow_status.handler({ id, status: "ready" }, context);
+  const copy = payload(await tools.duplicate_slideshow.handler({ id }, context)) as {
+    id: string;
+    status: string;
+    description: string;
+    hashtags: string;
+  };
+
+  expect(copy.id).not.toBe(id);
+  expect(copy.status).toBe("draft");
+  expect(copy.description).toBe("Caption");
+  expect(copy.hashtags).toBe("#gym");
+  const source = harness.services.projects.require(id);
+  const stored = harness.services.projects.require(copy.id);
+  expect(stored.name).toBe("Template (copy)");
+  expect(stored.slides).toEqual(source.slides);
+  expect(stored.ratio).toEqual(source.ratio);
+  expect(source.status).toBe("ready");
+  expect(harness.services.library.require(backgroundId).stats.slideshowCount).toBe(2);
+});
+
+it("replaces the caption and name of a copy when asked", async () => {
+  const { id } = await draft();
+  const copy = payload(
+    await tools.duplicate_slideshow.handler(
+      { id, name: "Variant B", description: "", hashtags: "#legday" },
+      context,
+    ),
+  ) as { id: string; description: string; hashtags: string };
+  expect(harness.services.projects.require(copy.id).name).toBe("Variant B");
+  expect(copy.description).toBe("");
+  expect(copy.hashtags).toBe("#legday");
+  expect(harness.services.projects.require(id).description).toBe("Caption");
+});
+
+it("deletes a draft slideshow", async () => {
+  const { id } = await draft();
+  const body = payload(await tools.delete_slideshow.handler({ id }, context));
+  expect(body).toEqual({ removed: id });
+  expect(harness.services.projects.get(id)).toBeNull();
+});
+
+it("refuses to delete a slideshow that is not a draft", async () => {
+  const { id } = await draft();
+  await tools.set_slideshow_status.handler({ id, status: "ready" }, context);
+  const error = asHttpError(
+    await catchError(() => tools.delete_slideshow.handler({ id }, context)),
+  );
+  expect(error.status).toBe(409);
+  expect(harness.services.projects.get(id)).not.toBeNull();
+});
+
+it("styles one line of a created slideshow and keeps the rest on the defaults", async () => {
+  const id = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        slides: [{ background: id, texts: [{ text: "Hook", size: 96 }, "Body"] }],
+      },
+      context,
+    ),
+  ) as { id: string; version: number };
+  const [hook, body] = (
+    harness.services.projects.require(created.id).slides[0] as {
+      texts: { size: number }[];
+    }
+  ).texts;
+  expect(hook?.size).toBe(96);
+  expect(body?.size).toBe(context.accounts.get(ACCOUNT_ID)?.defaults.text.size);
+
+  const updated = payload(
+    await tools.update_slideshow.handler(
+      {
+        id: created.id,
+        version: created.version,
+        slides: [{ background: id, texts: [{ text: "Hook", size: 120 }, "Body"] }],
+      },
+      context,
+    ),
+  ) as { version: number };
+  expect(updated.version).toBe(created.version + 1);
+  const restyled = harness.services.projects.require(created.id).slides[0] as {
+    texts: { size: number }[];
+  };
+  expect(restyled.texts[0]?.size).toBe(120);
+});
+
+it("validates a styled line before it reaches the server", () => {
+  const schema = z.object(tools.create_slideshow.inputSchema);
+  const slide = (text: unknown) => ({
+    accountId: ACCOUNT_ID,
+    slides: [{ background: "bg", texts: [text] }],
+  });
+  expect(schema.safeParse(slide({ text: "Hook", color: "yellow" })).success).toBe(false);
+  expect(schema.safeParse(slide({ text: "Hook", size: 400 })).success).toBe(false);
+  const parsed = schema.parse(slide({ text: "Hook", color: "fe0" }));
+  expect(parsed.slides[0]?.texts?.[0]).toEqual({ text: "Hook", color: "#FFEE00" });
 });
