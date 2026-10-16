@@ -51,6 +51,22 @@ jobs:
       # eval string as CommonJS regardless of the package's own module type.
       - name: Loads sharp inside the musl image
         run: docker run --rm --entrypoint node slide-studio:ci -e "require('sharp')"
+      # preview_slideshow draws text through sharp's librsvg, which falls back
+      # to a generic face without a word when it cannot find the bundled one.
+      # The same word drawn in TikTok Sans and in a family that does not exist
+      # comes out different only when the bundled face is really used.
+      - name: Draws preview text in the bundled font
+        run: |
+          docker run --rm --entrypoint node slide-studio:ci -e "
+            const sharp = require('sharp');
+            const draw = (family) => sharp(Buffer.from(
+              '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"100\">' +
+              '<text x=\"10\" y=\"70\" font-size=\"60\" font-family=\"' + family + '\">Slide</text></svg>'
+            )).raw().toBuffer();
+            Promise.all([draw('TikTok Sans'), draw('No Such Family')]).then(([bundled, fallback]) => {
+              if (bundled.equals(fallback)) { console.error('TikTok Sans fell back'); process.exit(1); }
+            });
+          "
       # Asserts a failure: the container must refuse to run unconfigured. A
       # container that starts here would be an unauthenticated editor on a
       # published port.

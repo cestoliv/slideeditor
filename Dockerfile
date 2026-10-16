@@ -20,6 +20,13 @@ ENV NODE_ENV=production
 # stops that, not an optimisation.
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# preview_slideshow draws its text through sharp's librsvg, which finds a face
+# through fontconfig only. Alpine ships neither fonts nor a fontconfig setup,
+# so the bundled faces go where fontconfig looks. A font added from Google
+# Fonts lives in the data volume and falls back to a bundled face there.
+RUN apk add --no-cache fontconfig
+COPY assets/*.ttf /usr/share/fonts/slide-studio/
+RUN fc-cache -f
 COPY --from=build /app/dist ./dist
 COPY bin ./bin
 COPY assets ./assets

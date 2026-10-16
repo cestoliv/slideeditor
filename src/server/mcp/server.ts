@@ -37,6 +37,8 @@ export function createMcpServer(context: ToolContext): McpServer {
   registerTool(server, tools.update_account, context);
   registerTool(server, tools.add_library_item, context);
   registerTool(server, tools.update_library_item, context);
+
+  registerTool(server, tools.preview_slideshow, context);
   return server;
 }
 
