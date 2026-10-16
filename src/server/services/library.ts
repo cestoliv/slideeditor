@@ -9,9 +9,12 @@ import type {
 import { integer, optionalInteger, requiredText, text, type Row } from "../db/rows.js";
 import { HttpError } from "../errors.js";
 import { requireAccountId, type AccountService } from "./accounts.js";
-import { extensionForType, imageDimensions, type MediaStore } from "./media.js";
-
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+import {
+  extensionForType,
+  imageDimensions,
+  MAX_UPLOAD_BYTES,
+  type MediaStore,
+} from "./media.js";
 
 // Cumulative, so a deleted slideshow does not reset an item's history.
 const STATS_JOIN = `
@@ -171,7 +174,18 @@ export class LibraryService {
     `,
       )
       .all(...filters, size, skip);
-    return { items: rows.map(toItem), total: rows.length };
+    // Counted over the same match rather than read off the page, so a caller
+    // paging with offset knows where the results end.
+    const counted = this.db
+      .prepare(
+        `
+      SELECT COUNT(*) AS total FROM library_search
+      JOIN library_item AS item ON item.rowid = library_search.rowid
+      WHERE library_search MATCH ? ${where}
+    `,
+      )
+      .get(...filters);
+    return { items: rows.map(toItem), total: counted ? integer(counted, "total") : 0 };
   }
 
   count(kind: LibraryKind | null = null, accountId: string | null = null): number {
@@ -197,6 +211,19 @@ export class LibraryService {
       )
       .get(id);
     return row ? toItem(row) : null;
+  }
+
+  /**
+   * The account's oldest item of this kind stored with these bytes. MediaStore names a file
+   * after its sha256, so the media id is the checksum of the image itself.
+   */
+  findByMedia(accountId: string, kind: LibraryKind, mediaId: string): LibraryItem | null {
+    const row = this.db
+      .prepare(
+        "SELECT id FROM library_item WHERE account_id = ? AND kind = ? AND media_id = ? ORDER BY created_at LIMIT 1",
+      )
+      .get(accountId, kind, mediaId);
+    return row ? this.get(text(row, "id")) : null;
   }
 
   require(id: string, expectedKind: LibraryKind | null = null): LibraryItem {

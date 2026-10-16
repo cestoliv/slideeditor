@@ -2,6 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, existsSync } from "node:fs";
 import { writeFile, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { HttpError } from "../errors.js";
+
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const TYPES = new Map([
   ["image/png", "png"],
@@ -191,4 +194,17 @@ function jpegSize(bytes: Buffer): ImageSize | null {
 // every read below already sits behind a length check.
 function byte(bytes: Buffer, index: number): number {
   return bytes[index] ?? 0;
+}
+
+/** Ported from server/api.mjs:148-154. */
+export function decodeImage(data: unknown): Buffer {
+  if (typeof data !== "string" || !data)
+    throw new HttpError(400, "The upload needs a base64 `data` field.");
+  const payload =
+    data.includes(",") && data.startsWith("data:")
+      ? data.slice(data.indexOf(",") + 1)
+      : data;
+  const bytes = Buffer.from(payload, "base64");
+  if (!bytes.length) throw new HttpError(400, "The upload data was not valid base64.");
+  return bytes;
 }

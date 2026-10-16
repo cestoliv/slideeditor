@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { BUILTIN_DEFAULTS, type AccountDefaults } from "../../shared/schema/index.js";
 import {
   addItem,
   asHttpError,
   catchError,
   createTestApp,
   noisyPng,
+  pngFixture,
   solidPng,
   type TestApp,
 } from "../testing.js";
@@ -186,6 +188,7 @@ it("hides the media fields the editor needs and the agent does not", async () =>
     "accountId",
     "width",
     "height",
+    "url",
     "stats",
   ]);
 });
@@ -523,6 +526,30 @@ const PINNED = [
     title: "Revoke a slideshow's export URLs",
     description:
       "Stop every temporary URL this slideshow has handed out, before they expire on their own. Call it once the scheduling tool has finished downloading. It revokes PNG, JPEG and WebP URLs alike. The rendered images are kept, so a later export_slideshow still works without the human re-rendering anything.",
+  },
+  {
+    name: "create_account",
+    title: "Create an account",
+    description:
+      "Create an account: one brand, with its own library and slideshows. Partial `defaults` inherit the built-in defaults. Returns the account, whose id you pass as accountId to the other tools.",
+  },
+  {
+    name: "update_account",
+    title: "Update an account",
+    description:
+      "Rename an account or change its defaults. Fields you leave out keep their value. New defaults apply to slideshows created afterwards only: an existing slideshow keeps its ratio and layout.",
+  },
+  {
+    name: "add_library_item",
+    title: "Add a library image",
+    description:
+      "Add one image to an account's library, from a public `url` or from base64 `data`. Pass exactly one. PNG, JPEG, WebP and GIF up to 25 MB are accepted. A URL has 10 seconds to download and must not point at a private address. Write `description` (what the image shows) and `usage` (when to use it): list_library is how you choose images later, and it reads only those. If the account already holds the same image as the same kind, nothing is added: the existing item comes back with `duplicateOf`, so an import can be run again safely.",
+  },
+  {
+    name: "update_library_item",
+    title: "Describe a library image",
+    description:
+      "Rewrite a library item's name, description, usage or tags. Fields you leave out keep their value. Tags you send replace the item's tags. An item's kind cannot change, because slideshows already place it as a background or an asset.",
   },
 ];
 
@@ -1134,4 +1161,159 @@ it("revokes every grant and leaves the renders in place", async () => {
     await tools.export_slideshow.handler({ id, version }, context),
   ) as { status: string };
   expect(again.status).toBe("ready");
+});
+
+/*
+ * Account and library writes.
+ */
+
+type AccountBody = {
+  account: { id: string; name: string; defaults: AccountDefaults };
+};
+
+type ItemBody = {
+  item: { id: string; name: string; tags: string[]; url: string; description: string };
+  duplicateOf?: { id: string; name: string };
+};
+
+const IMAGE_FIELDS = {
+  accountId: ACCOUNT_ID,
+  kind: "background" as const,
+  name: "Gym floor",
+  description: "An empty gym floor at dawn.",
+  usage: "A calm hook slide.",
+};
+
+it("creates an account whose partial defaults inherit the built-in ones", async () => {
+  const body = payload(
+    await tools.create_account.handler(
+      { name: "Theo", defaults: { ratio: { w: 3, h: 4 } } },
+      context,
+    ),
+  ) as AccountBody;
+  expect(body.account.name).toBe("Theo");
+  expect(body.account.defaults.ratio).toEqual({ w: 3, h: 4 });
+  expect(body.account.defaults.text).toEqual(BUILTIN_DEFAULTS.text);
+});
+
+it("refuses an unknown font and an out-of-range size", async () => {
+  for (const text of [{ fontFamily: "Nope Sans" }, { size: 500 }]) {
+    const error = await catchError(() =>
+      tools.create_account.handler({ name: "Theo", defaults: { text } }, context),
+    );
+    expect(asHttpError(error).status).toBe(400);
+  }
+});
+
+it("merges update_account over the current defaults", async () => {
+  const created = payload(
+    await tools.create_account.handler(
+      { name: "Theo", defaults: { ratio: { w: 3, h: 4 }, text: { size: 48 } } },
+      context,
+    ),
+  ) as AccountBody;
+  const updated = payload(
+    await tools.update_account.handler(
+      { id: created.account.id, defaults: { text: { color: "#111111" } } },
+      context,
+    ),
+  ) as AccountBody;
+  expect(updated.account.name).toBe("Theo");
+  expect(updated.account.defaults.ratio).toEqual({ w: 3, h: 4 });
+  expect(updated.account.defaults.text.size).toBe(48);
+  expect(updated.account.defaults.text.color).toBe("#111111");
+});
+
+it("adds an image from a data URI, with an absolute URL", async () => {
+  const body = payload(
+    await tools.add_library_item.handler(
+      { ...IMAGE_FIELDS, data: `data:image/png;base64,${pngFixture(30, 40)}` },
+      context,
+    ),
+  ) as ItemBody;
+  expect(body.item.description).toBe(IMAGE_FIELDS.description);
+  expect(body.item.url).toMatch(/^http:\/\/localhost:4173\/media\/[0-9a-f]{64}\.png$/);
+  expect(body.duplicateOf).toBeUndefined();
+});
+
+it("adds an image from a URL through the fetcher", async () => {
+  const fetched: string[] = [];
+  const withFetcher: ToolContext = {
+    ...context,
+    fetchImage: (url) => {
+      fetched.push(url);
+      return Promise.resolve({ bytes: solidPng(20, 10), contentType: "image/png" });
+    },
+  };
+  const body = payload(
+    await tools.add_library_item.handler(
+      {
+        ...IMAGE_FIELDS,
+        url: "https://images.example.com/gym.png",
+        tags: ["Gym", "gym"],
+      },
+      withFetcher,
+    ),
+  ) as ItemBody;
+  expect(fetched).toEqual(["https://images.example.com/gym.png"]);
+  expect(body.item.tags).toEqual(["gym"]);
+});
+
+it("returns the existing item instead of adding the same image twice", async () => {
+  const args = { ...IMAGE_FIELDS, data: pngFixture(30, 40), contentType: "image/png" };
+  const first = payload(await tools.add_library_item.handler(args, context)) as ItemBody;
+  const second = payload(
+    await tools.add_library_item.handler({ ...args, name: "Again" }, context),
+  ) as ItemBody;
+  expect(second.duplicateOf).toEqual({ id: first.item.id, name: "Gym floor" });
+  expect(second.item.id).toBe(first.item.id);
+  expect(harness.services.library.count()).toBe(1);
+
+  // The same bytes as an asset are a separate item, placeable as an asset.
+  const asAsset = payload(
+    await tools.add_library_item.handler({ ...args, kind: "asset" }, context),
+  ) as ItemBody;
+  expect(asAsset.duplicateOf).toBeUndefined();
+  expect(harness.services.library.count()).toBe(2);
+});
+
+it("needs exactly one of url and data", async () => {
+  for (const source of [
+    {},
+    { url: "https://example.com/a.png", data: pngFixture(2, 2) },
+  ]) {
+    const error = await catchError(() =>
+      tools.add_library_item.handler({ ...IMAGE_FIELDS, ...source }, context),
+    );
+    expect(asHttpError(error).status).toBe(400);
+  }
+});
+
+it("updates only the fields sent, normalising tags", async () => {
+  const id = await background("Sunset");
+  const body = payload(
+    await tools.update_library_item.handler({ id, tags: "Hook, PROOF, hook" }, context),
+  ) as ItemBody;
+  expect(body.item.name).toBe("Sunset");
+  expect(body.item.tags).toEqual(["hook", "proof"]);
+});
+
+it("pages the library with offset, and counts every search match", async () => {
+  for (const name of ["Beach one", "Beach two", "Beach three"]) await background(name);
+  const list = async (args: Parameters<typeof tools.list_library.handler>[0]) =>
+    payload(await tools.list_library.handler(args, context)) as {
+      total: number;
+      items: { id: string; url: string }[];
+    };
+  const first = await list({ limit: 2 });
+  const rest = await list({ limit: 2, offset: 2 });
+  expect(first.total).toBe(3);
+  expect(first.items).toHaveLength(2);
+  expect(rest.items).toHaveLength(1);
+  expect(new Set([...first.items, ...rest.items].map((item) => item.id)).size).toBe(3);
+  expect(first.items[0]?.url).toMatch(/^http:\/\/localhost:4173\/media\//);
+
+  const searched = await list({ query: "beach", limit: 1 });
+  expect(searched.items).toHaveLength(1);
+  expect(searched.total).toBe(3);
 });

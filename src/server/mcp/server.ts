@@ -30,11 +30,16 @@ export function createMcpServer(context: ToolContext): McpServer {
   registerTool(server, tools.update_slideshow, context);
   registerTool(server, tools.export_slideshow, context);
   registerTool(server, tools.revoke_export, context);
+
+  registerTool(server, tools.create_account, context);
+  registerTool(server, tools.update_account, context);
+  registerTool(server, tools.add_library_item, context);
+  registerTool(server, tools.update_library_item, context);
   return server;
 }
 
 /**
- * The ten tools have ten different input shapes, and the SDK's callback type
+ * Each tool has its own input shape, and the SDK's callback type
  * is generic over the shape it was handed. This takes the erased shape, which
  * `ToolDefinition.handler` is a method rather than a property to allow.
  */
