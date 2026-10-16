@@ -113,3 +113,50 @@ export function lineJunctionCorners(
   }
   return corners;
 }
+
+/**
+ * Ported verbatim from roundedRectSvgPath (app.js:2785-2799). Shared so the
+ * DOM text and the server preview draw one pill outline.
+ */
+export function roundedRectPath(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  [tl, tr, br, bl]: CornerRadii,
+): string {
+  return [
+    `M ${String(x + tl)} ${String(y)}`,
+    `H ${String(x + width - tr)}`,
+    `Q ${String(x + width)} ${String(y)} ${String(x + width)} ${String(y + tr)}`,
+    `V ${String(y + height - br)}`,
+    `Q ${String(x + width)} ${String(y + height)} ${String(x + width - br)} ${String(
+      y + height,
+    )}`,
+    `H ${String(x + bl)}`,
+    `Q ${String(x)} ${String(y + height)} ${String(x)} ${String(y + height - bl)}`,
+    `V ${String(y + tl)}`,
+    `Q ${String(x)} ${String(y)} ${String(x + tl)} ${String(y)}`,
+    "Z",
+  ].join(" ");
+}
+
+/** Ported verbatim from concaveCornerSvgPath (app.js:2801-2809). */
+export function concaveCornerPath({ cx, cy, radius, quadrant }: JunctionCorner): string {
+  const up = `${String(cx)} ${String(cy - radius)}`;
+  const down = `${String(cx)} ${String(cy + radius)}`;
+  const centre = `${String(cx)} ${String(cy)}`;
+  const left = `${String(cx - radius)} ${String(cy)}`;
+  const right = `${String(cx + radius)} ${String(cy)}`;
+  const arc = `A ${String(radius)} ${String(radius)} 0 0`;
+  switch (quadrant) {
+    case "upper-left":
+      return `M ${up} L ${centre} L ${left} ${arc} 0 ${up} Z`;
+    case "upper-right":
+      return `M ${up} L ${centre} L ${right} ${arc} 1 ${up} Z`;
+    case "lower-right":
+      return `M ${down} L ${centre} L ${right} ${arc} 0 ${down} Z`;
+    case "lower-left":
+      return `M ${down} L ${centre} L ${left} ${arc} 1 ${down} Z`;
+  }
+}

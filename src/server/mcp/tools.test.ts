@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { BUILTIN_DEFAULTS, type AccountDefaults } from "../../shared/schema/index.js";
 import { z } from "zod";
@@ -39,7 +40,7 @@ afterEach(() => {
 function payload(result: ToolResult): Record<string, unknown> {
   const first = result.content[0];
   expect(first?.type).toBe("text");
-  return JSON.parse(first?.text ?? "") as Record<string, unknown>;
+  return JSON.parse(first?.type === "text" ? first.text : "") as Record<string, unknown>;
 }
 
 async function background(name = "Sunset", accountId = ACCOUNT_ID): Promise<string> {
@@ -563,6 +564,12 @@ const PINNED = [
     title: "Describe a library image",
     description:
       "Rewrite a library item's name, description, usage or tags. Fields you leave out keep their value. Tags you send replace the item's tags. An item's kind cannot change, because slideshows already place it as a background or an asset.",
+  },
+  {
+    name: "preview_slideshow",
+    title: "Preview a slideshow",
+    description:
+      "See a slideshow before the human does: one JPEG per slide, drawn on the server from the stored layout, in any status. The preview is approximate. Text is measured by estimate, so a line can wrap at a different word than in the editor, and a font added from Google Fonts is drawn in another face. Treat it as a check, not as the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: text that reaches past the slide edge (`text-out-of-frame`), text with more lines than its box shows (`text-cut`) and an image drawn over a text (`overlay-over-text`). Fix a warning with update_slideshow, for example with shorter lines, then preview again.",
   },
 ];
 
@@ -1449,4 +1456,93 @@ it("validates a styled line before it reaches the server", () => {
   expect(schema.safeParse(slide({ text: "Hook", size: 400 })).success).toBe(false);
   const parsed = schema.parse(slide({ text: "Hook", color: "fe0" }));
   expect(parsed.slides[0]?.texts?.[0]).toEqual({ text: "Hook", color: "#FFEE00" });
+});
+
+it("previews a one-slide slideshow as a JPEG of the requested width", async () => {
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        ratio: { w: 9, h: 16 },
+        slides: [{ background: await background(), texts: ["Hello"] }],
+      },
+      context,
+    ),
+  ) as { id: string; version: number };
+
+  const result = await tools.preview_slideshow.handler({ id: created.id }, context);
+
+  expect(result.content).toHaveLength(2);
+  const image = result.content[0];
+  expect(image).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+  const bytes = Buffer.from(image?.type === "image" ? image.data : "", "base64");
+  expect(await sharp(bytes).metadata()).toMatchObject({
+    format: "jpeg",
+    width: 540,
+    height: 960,
+  });
+  const last = result.content[1];
+  expect(JSON.parse(last?.type === "text" ? last.text : "")).toEqual({
+    approximate: true,
+    version: created.version,
+    slides: [{ slide: 1, width: 540, height: 960 }],
+    warnings: [],
+  });
+});
+
+it("refuses a preview of a slide the slideshow does not have", async () => {
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: await background() }] },
+      context,
+    ),
+  ) as { id: string };
+
+  const error = asHttpError(
+    await catchError(() =>
+      tools.preview_slideshow.handler({ id: created.id, slides: [1, 3] }, context),
+    ),
+  );
+
+  expect(error.status).toBe(400);
+  expect(error.message).toContain("no slide 3");
+});
+
+it("draws a line styled bigger than the rest bigger in the preview", async () => {
+  // Same text, two sizes: a bigger glyph covers more of a black background.
+  const dark = (
+    await harness.services.library.create({
+      kind: "background",
+      name: "Night",
+      description: "",
+      usage: "",
+      tags: "",
+      contentType: "image/png",
+      bytes: solidPng(270, 480, [0, 0, 0]),
+      accountId: ACCOUNT_ID,
+    })
+  ).id;
+  async function inkFor(size: number): Promise<number> {
+    const created = payload(
+      await tools.create_slideshow.handler(
+        {
+          accountId: ACCOUNT_ID,
+          slides: [
+            { background: dark, texts: [{ text: "Hook", size, color: "#FFFFFF" }] },
+          ],
+        },
+        context,
+      ),
+    ) as { id: string };
+    const image = (await tools.preview_slideshow.handler({ id: created.id }, context))
+      .content[0];
+    const bytes = Buffer.from(image?.type === "image" ? image.data : "", "base64");
+    const { data } = await sharp(bytes)
+      .greyscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return data.filter((value) => value > 128).length;
+  }
+
+  expect(await inkFor(120)).toBeGreaterThan((await inkFor(40)) * 3);
 });

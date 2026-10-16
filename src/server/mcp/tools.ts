@@ -25,6 +25,7 @@ import type { FontService } from "../services/fonts.js";
 import { fetchImage, type FetchedImage } from "../services/fetchImage.js";
 import type { LibraryService } from "../services/library.js";
 import { decodeImage, type MediaStore } from "../services/media.js";
+import { renderPreview } from "../services/preview.js";
 import type {
   ProjectListOptions,
   ProjectService,
@@ -50,10 +51,13 @@ export interface ToolContext {
 
 /**
  * The envelope every tool returns. There are no output schemas and no
- * structured content, only one JSON text block (server/mcp.mjs:160-162).
+ * structured content (server/mcp.mjs:160-162). Every tool answers with one JSON
+ * text block, and preview_slideshow puts its images, base64, ahead of it.
  */
 export type ToolResult = {
-  content: { type: "text"; text: string }[];
+  content: (
+    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+  )[];
 };
 
 /**
@@ -898,6 +902,76 @@ const updateLibraryItem = defineTool({
   },
 });
 
+const PREVIEW_WIDTH = 540;
+
+const previewSlideshow = defineTool({
+  name: "preview_slideshow",
+  title: "Preview a slideshow",
+  description:
+    "See a slideshow before the human does: one JPEG per slide, drawn on the server from the stored layout, in " +
+    "any status. The preview is approximate. Text is measured by estimate, so a line can wrap at a different word " +
+    "than in the editor, and a font added from Google Fonts is drawn in another face. Treat it as a " +
+    "check, not as the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: " +
+    "text that reaches past the slide edge (`text-out-of-frame`), text with more lines than its box shows " +
+    "(`text-cut`) and an image drawn over a text (`overlay-over-text`). Fix a warning with update_slideshow, " +
+    "for example with shorter lines, then preview again.",
+  inputSchema: {
+    id: z.string().describe("Slideshow id."),
+    slides: z
+      .array(z.number().int().min(1))
+      .min(1)
+      .optional()
+      .describe("Slide numbers to draw, counting from 1. Defaults to every slide."),
+    width: z
+      .number()
+      .int()
+      .min(108)
+      .max(1080)
+      .optional()
+      .describe(`Width of each image in pixels. Defaults to ${String(PREVIEW_WIDTH)}.`),
+  },
+  async handler({ id, slides, width }, { projects, library, media, fonts }) {
+    const project = projects.require(id);
+    const count = project.slides.length;
+    const missing = (slides ?? []).filter((number) => number > count);
+    if (missing.length > 0) {
+      throw new HttpError(
+        400,
+        `This slideshow has ${String(count)} slides, so there is no slide ${missing.join(", ")}.`,
+      );
+    }
+    // A Set, so repeating a number cannot multiply the work or the response.
+    const numbers = [
+      ...new Set(slides ?? project.slides.map((_slide, index) => index + 1)),
+    ];
+    const preview = await renderPreview(
+      { library, media, fonts },
+      project,
+      numbers,
+      width ?? PREVIEW_WIDTH,
+    );
+    return {
+      content: [
+        ...preview.slides.map((slide) => ({
+          type: "image" as const,
+          mimeType: "image/jpeg",
+          data: slide.jpeg.toString("base64"),
+        })),
+        ...json({
+          approximate: true,
+          version: project.version,
+          slides: preview.slides.map(({ slide, width, height }) => ({
+            slide,
+            width,
+            height,
+          })),
+          warnings: preview.warnings,
+        }).content,
+      ],
+    };
+  },
+});
+
 /** Every tool, list_accounts first so an agent can see its brand before anything else. */
 export const tools = {
   list_accounts: listAccounts,
@@ -917,4 +991,6 @@ export const tools = {
   update_account: updateAccount,
   add_library_item: addLibraryItem,
   update_library_item: updateLibraryItem,
+
+  preview_slideshow: previewSlideshow,
 };

@@ -152,6 +152,7 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 | `update_account`       | Rename an account or change its defaults                            |
 | `add_library_item`     | Add an image to a library from a URL or base64                      |
 | `update_library_item`  | Rewrite an item's name, description, usage, or tags                 |
+| `preview_slideshow`    | See approximate JPEGs of a slideshow's slides, with layout warnings |
 
 ### 4. How to draft a slideshow
 
@@ -238,6 +239,13 @@ default, and the server still places the line:
 
 The style fields are `size` (20 to 180), `style` (`plain`, `outline`, or
 `boxed`), `color` and `background` as hex, `weight`, `italic`, and `align`.
+
+Before you hand it over, call `preview_slideshow` to see each slide. It returns
+one JPEG per slide and a list of `warnings`: text past the slide edge
+(`text-out-of-frame`), text cut off by its box (`text-cut`), and an image drawn
+over a text (`overlay-over-text`). The server draws it with estimated text
+widths, so a line can wrap at a different word than in the editor. Fix what the
+warnings name with `update_slideshow`, then preview again.
 
 Finish by giving the user the `editUrl` from the response. That is the
 deliverable. Say what is on each slide, and leave the layout to them.

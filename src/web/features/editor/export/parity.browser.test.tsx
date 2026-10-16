@@ -18,12 +18,12 @@ import {
   parseProject,
 } from "@shared/schema/index.js";
 import type { LibraryItem, Project, Slide } from "@shared/schema/index.js";
+import { roundedRectPath } from "@shared/text/index.js";
 import { injectFontFaces, weightFor } from "../../../app/fontFaces.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { EditorStore } from "../store.js";
 import { Stage } from "../Stage.js";
 import { useLayerStack } from "../layers/LayerStack.js";
-import { roundedRectPath } from "../text/renderTextDom.js";
 import { renderSlideCanvas } from "./render.js";
 import {
   diffRatio,

@@ -64,6 +64,7 @@ it("serves every tool over the transport", async () => {
       "update_account",
       "add_library_item",
       "update_library_item",
+      "preview_slideshow",
     ]);
     // The SDK builds the JSON schema from the raw zod shape it was handed.
     expect(listed.tools[1]?.inputSchema.properties).toMatchObject({
