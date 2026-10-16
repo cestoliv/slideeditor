@@ -121,7 +121,7 @@ const boundedMaxWidthSchema = z
  * normalizes what it accepts (uppercased, # added, 3-digit expanded) so a
  * later exact-string comparison never sees two spellings of the same colour.
  */
-const hexColorSchema = z.string().transform((value, ctx) => {
+export const hexColorSchema = z.string().transform((value, ctx) => {
   const normalized = normalizeHexColor(value);
   if (normalized === null) {
     ctx.addIssue({

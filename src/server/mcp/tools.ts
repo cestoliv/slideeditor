@@ -6,7 +6,12 @@ import {
   validateComposition,
 } from "../../shared/compose/index.js";
 import type { Composition, CompositionSource } from "../../shared/compose/index.js";
-import type { LibraryItem, Slide } from "../../shared/schema/index.js";
+import {
+  styledTextSchema,
+  type LibraryItem,
+  type Slide,
+} from "../../shared/schema/index.js";
+import { FONT_SIZE_MAX, FONT_SIZE_MIN } from "../../shared/text/index.js";
 import { HttpError } from "../errors.js";
 import type { AccountService } from "../services/accounts.js";
 import { convertRender, extensionFor, mimeTypeFor } from "../services/convert.js";
@@ -105,9 +110,16 @@ const SLIDE_SHAPE = z.object({
     .optional()
     .describe("Library item ids of assets to place on the slide."),
   texts: z
-    .array(z.string())
+    .array(z.union([z.string(), styledTextSchema]))
     .optional()
-    .describe("Lines of text to place on the slide, in reading order."),
+    .describe(
+      "Lines of text to place on the slide, in reading order. A string takes the account's text style. " +
+        `An object styles that one line: \`size\` (${String(FONT_SIZE_MIN)}-${String(FONT_SIZE_MAX)}), ` +
+        "`style` (plain, outline or boxed), `color`, `background`, `weight`, `italic` and `align`. " +
+        "Use it for a hook set larger than the rest or a key word in another colour. On a new line, a field " +
+        "you leave out takes the account's default. On a line already on the slide, it keeps its current " +
+        "value. The server still places every line.",
+    ),
 });
 
 const RATIO_SHAPE = z.object({ w: z.number().positive(), h: z.number().positive() });
@@ -306,8 +318,8 @@ const createSlideshow = defineTool({
     "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any " +
     "number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, " +
     "so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set " +
-    "positions, sizes or styling: the server lays everything out from the account's defaults and the human " +
-    "adjusts it by hand afterwards. Call list_accounts first if you do not already know the accountId. Returns " +
+    "positions: the server lays everything out from the account's defaults and the human adjusts it by hand " +
+    "afterwards. A text line can carry its own size, colour and style when one line has to stand out. Call list_accounts first if you do not already know the accountId. Returns " +
     "the edit URL to hand back to the user.",
   inputSchema: {
     accountId: z
@@ -411,6 +423,66 @@ const updateSlideshow = defineTool({
       hashtags: project.hashtags,
       editUrl: editUrl(baseUrl(), project.id),
     });
+  },
+});
+
+const duplicateSlideshow = defineTool({
+  name: "duplicate_slideshow",
+  title: "Duplicate a slideshow",
+  description:
+    "Copy a slideshow into a new draft in the same account, layout and all. Use it to start from a template the " +
+    "human has already adjusted: duplicate it, then change the texts with update_slideshow. Slides and lines you " +
+    "leave unchanged keep the human's layout. The copy keeps the caption unless you pass a new one. Returns the " +
+    "new id and version.",
+  inputSchema: {
+    id: z.string().describe("Id of the slideshow to copy."),
+    name: z
+      .string()
+      .optional()
+      .describe('Name of the copy. Defaults to "<name> (copy)".'),
+    description: DESCRIPTION_SHAPE.optional(),
+    hashtags: HASHTAGS_SHAPE.optional(),
+  },
+  async handler({ id, name, description, hashtags }, { projects, baseUrl }) {
+    const source = projects.require(id);
+    // Same account only: a library item belongs to one account, and create()
+    // refuses a document that references another account's images.
+    const project = projects.create({
+      name: name ?? `${source.name} (copy)`,
+      accountId: source.accountId,
+      document: { ratio: source.ratio, slides: source.slides },
+      description: description ?? source.description,
+      hashtags: hashtags ?? source.hashtags,
+    });
+    return json({
+      id: project.id,
+      version: project.version,
+      status: project.status,
+      slideCount: project.slides.length,
+      description: project.description,
+      hashtags: project.hashtags,
+      editUrl: editUrl(baseUrl(), project.id),
+    });
+  },
+});
+
+const deleteSlideshow = defineTool({
+  name: "delete_slideshow",
+  title: "Delete a draft slideshow",
+  description:
+    "Delete a slideshow for good. Only a draft can be deleted: a ready or published slideshow is refused, " +
+    "because the human has signed it off. To delete one of those, ask the human to move it back to draft.",
+  inputSchema: { id: z.string().describe("Slideshow id.") },
+  async handler({ id }, { projects }) {
+    const project = projects.require(id);
+    if (project.status !== "draft") {
+      throw new HttpError(
+        409,
+        `Only a draft slideshow can be deleted, and this one is ${project.status}.`,
+        { status: project.status },
+      );
+    }
+    return json(projects.remove(id));
   },
 });
 
@@ -836,6 +908,8 @@ export const tools = {
   set_slideshow_status: setSlideshowStatus,
   create_slideshow: createSlideshow,
   update_slideshow: updateSlideshow,
+  duplicate_slideshow: duplicateSlideshow,
+  delete_slideshow: deleteSlideshow,
   export_slideshow: exportSlideshow,
   revoke_export: revokeExport,
 

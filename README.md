@@ -143,6 +143,8 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 | `get_slideshow`        | Read one slideshow's composition, status, and caption               |
 | `create_slideshow`     | Draft a slideshow and its caption. Returns the edit URL.            |
 | `update_slideshow`     | Edit an existing one, guarded by its version                        |
+| `duplicate_slideshow`  | Copy a slideshow into a new draft in the same account               |
+| `delete_slideshow`     | Delete a draft slideshow                                            |
 | `set_slideshow_status` | Move a slideshow between draft, ready, and published                |
 | `export_slideshow`     | Get temporary public image URLs for a ready slideshow's slides      |
 | `revoke_export`        | Revoke a slideshow's export URLs before they expire                 |
@@ -219,9 +221,23 @@ Pick the ratio from where it will be posted: `9:16` for TikTok, Reels, or
 Stories; `4:5` or `3:4` for an Instagram feed post; `1:1` for a square; `1.91:1`
 for landscape. Default is 9:16.
 
-Do not try to set positions, sizes, colors, or fonts. There are no parameters for
-them. The server places everything, and the human adjusts it afterwards. That
-split is the point of the tool.
+Do not try to set positions or fonts. There are no parameters for them. The
+server places everything, and the human adjusts it afterwards. That split is the
+point of the tool.
+
+To make one line stand out, such as a hook set larger than the rest, pass that
+line as an object instead of a string. A field you leave out takes the account's
+default, and the server still places the line:
+
+```json
+"texts": [
+  { "text": "Stop scrolling", "size": 96, "color": "#FFE600" },
+  "Five things to know first"
+]
+```
+
+The style fields are `size` (20 to 180), `style` (`plain`, `outline`, or
+`boxed`), `color` and `background` as hex, `weight`, `italic`, and `align`.
 
 Finish by giving the user the `editUrl` from the response. That is the
 deliverable. Say what is on each slide, and leave the layout to them.
@@ -240,6 +256,13 @@ on purpose.
 Slides whose composition you leave untouched keep the exact layout the human
 gave them. On a slide you do change, any asset or text line that is still there
 keeps its position too. So a small edit stays small.
+
+To reuse a slideshow the human has already adjusted as a template, call
+`duplicate_slideshow`. The copy is a new draft in the same account, with the
+same layout and caption. Then change its texts with `update_slideshow`.
+
+To remove a draft you no longer need, call `delete_slideshow`. Only a draft can
+be deleted. A ready or published slideshow is refused with a 409.
 
 ### 6. Exporting a slideshow
 
