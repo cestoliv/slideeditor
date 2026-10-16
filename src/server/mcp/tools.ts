@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   composeDocument,
@@ -5,7 +6,7 @@ import {
   validateComposition,
 } from "../../shared/compose/index.js";
 import type { Composition, CompositionSource } from "../../shared/compose/index.js";
-import type { Slide } from "../../shared/schema/index.js";
+import type { LibraryItem, Slide } from "../../shared/schema/index.js";
 import { HttpError } from "../errors.js";
 import type { AccountService } from "../services/accounts.js";
 import { convertRender, extensionFor, mimeTypeFor } from "../services/convert.js";
@@ -16,8 +17,9 @@ import {
   type StoredRender,
 } from "../services/exports.js";
 import type { FontService } from "../services/fonts.js";
+import { fetchImage, type FetchedImage } from "../services/fetchImage.js";
 import type { LibraryService } from "../services/library.js";
-import type { MediaStore } from "../services/media.js";
+import { decodeImage, type MediaStore } from "../services/media.js";
 import type {
   ProjectListOptions,
   ProjectService,
@@ -36,10 +38,13 @@ export interface ToolContext {
   // reading the PNG bytes and writing the converted ones.
   media: MediaStore;
   baseUrl: () => string;
+  // Replaced by a test that serves its image from loopback, which the real
+  // fetcher refuses.
+  fetchImage?: (url: string) => Promise<FetchedImage>;
 }
 
 /**
- * The envelope all ten tools return. There are no output schemas and no
+ * The envelope every tool returns. There are no output schemas and no
  * structured content, only one JSON text block (server/mcp.mjs:160-162).
  */
 export type ToolResult = {
@@ -161,17 +166,26 @@ const listLibrary = defineTool({
         "Order of results. Use `least-used` to favour items you have not used before. Defaults to relevance when searching, newest otherwise.",
       ),
     limit: z.number().int().min(1).max(200).optional(),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Items to skip, for paging. Keep calling with offset + limit until it reaches `total`.",
+      ),
     accountId: z
       .string()
       .min(1)
       .optional()
       .describe("Limit to one account. Omit to search every account."),
   },
-  async handler({ kind, query, sort, limit, accountId }, { library }) {
+  async handler({ kind, query, sort, limit, offset, accountId }, { library, baseUrl }) {
     const result = library.list({
       kind: kind || null,
       query: query || "",
       limit: limit || 50,
+      offset: offset ?? 0,
       sort: sort || "recent",
       ...(accountId === undefined ? {} : { accountId }),
     });
@@ -187,6 +201,7 @@ const listLibrary = defineTool({
         accountId: item.accountId,
         width: item.width,
         height: item.height,
+        url: absoluteUrl(baseUrl(), item.url),
         stats: item.stats,
       })),
     });
@@ -645,7 +660,173 @@ const revokeExport = defineTool({
   },
 });
 
-/** The ten tools, list_accounts first so an agent can see its brand before anything else. */
+/*
+ * Account and library writes. Kept together, apart from the tools above, so
+ * a change to either set stays out of the other's way.
+ */
+
+/** A media path the way get_library_item stores it, made fetchable with the caller's token. */
+function absoluteUrl(base: string, path: string): string {
+  return `${base}${path}`;
+}
+
+function withAbsoluteUrl(item: LibraryItem, base: string): LibraryItem {
+  return { ...item, url: absoluteUrl(base, item.url) };
+}
+
+/*
+ * Every field optional, because the service merges what is sent over what is
+ * there. The service validates the values too, so the shape only describes
+ * them to the agent.
+ */
+const ACCOUNT_DEFAULTS_SHAPE = z
+  .object({
+    ratio: RATIO_SHAPE.optional().describe(
+      "Aspect ratio of new slideshows, such as {w: 3, h: 4}.",
+    ),
+    text: z
+      .object({
+        fontFamily: z.string().describe("A font this installation knows."),
+        size: z.number().describe("Text size, from 20 to 180."),
+        style: z.enum(["plain", "outline", "boxed"]),
+        color: z.string().describe("Hex colour, such as #111111."),
+        background: z.string().describe("Hex colour of the box behind boxed text."),
+        backgroundShape: z.enum(["lines", "full"]),
+        align: z.enum(["left", "center", "right"]),
+        maxWidth: z.number().describe("Text width as a fraction of the slide, 0 to 1."),
+        weight: z.number().nullable(),
+        italic: z.boolean(),
+        underline: z.boolean(),
+        strikethrough: z.boolean(),
+      })
+      .partial()
+      .optional(),
+  })
+  .describe(
+    "The look new slideshows start from. A field you leave out keeps its current value, or the built-in default on a new account.",
+  );
+
+const TAGS_SHAPE = z
+  .union([z.array(z.string()), z.string()])
+  .describe(
+    'Tags, as a list (["hook", "gym"]) or one comma-separated string. Stored lowercase, each once.',
+  );
+
+const createAccount = defineTool({
+  name: "create_account",
+  title: "Create an account",
+  description:
+    "Create an account: one brand, with its own library and slideshows. Partial `defaults` inherit the " +
+    "built-in defaults. Returns the account, whose id you pass as accountId to the other tools.",
+  inputSchema: {
+    name: z.string().describe("Account name, as shown in the editor."),
+    defaults: ACCOUNT_DEFAULTS_SHAPE.optional(),
+  },
+  async handler({ name, defaults }, { accounts }) {
+    return json({ account: accounts.create({ name, defaults }) });
+  },
+});
+
+const updateAccount = defineTool({
+  name: "update_account",
+  title: "Update an account",
+  description:
+    "Rename an account or change its defaults. Fields you leave out keep their value. New defaults apply " +
+    "to slideshows created afterwards only: an existing slideshow keeps its ratio and layout.",
+  inputSchema: {
+    id: z.string().describe("Account id."),
+    name: z.string().optional(),
+    defaults: ACCOUNT_DEFAULTS_SHAPE.optional(),
+  },
+  async handler({ id, name, defaults }, { accounts }) {
+    return json({ account: accounts.update(id, { name, defaults }) });
+  },
+});
+
+const addLibraryItem = defineTool({
+  name: "add_library_item",
+  title: "Add a library image",
+  description:
+    "Add one image to an account's library, from a public `url` or from base64 `data`. Pass exactly one. " +
+    "PNG, JPEG, WebP and GIF up to 25 MB are accepted. A URL has 10 seconds to download and " +
+    "must not point at a private address. Write `description` (what the image shows) and `usage` (when " +
+    "to use it): list_library is how you choose images later, and it reads only those. If the account " +
+    "already holds the same image as the same kind, nothing is added: the existing item comes back with `duplicateOf`, so " +
+    "an import can be run again safely.",
+  inputSchema: {
+    accountId: z.string().describe("The account the image belongs to."),
+    kind: z
+      .enum(["background", "asset"])
+      .describe("`background` fills a slide. `asset` is placed on top of one."),
+    name: z.string().trim().min(1),
+    description: z.string().trim().min(1).describe("What the image shows."),
+    usage: z.string().trim().min(1).describe("When and how to use it on a slide."),
+    tags: TAGS_SHAPE.optional(),
+    url: z.string().optional().describe("Public http or https URL of the image."),
+    data: z.string().optional().describe("The image as base64, or as a data: URI."),
+    contentType: z
+      .string()
+      .optional()
+      .describe(
+        "MIME type of `data`, such as image/png. Read from a data: URI if omitted.",
+      ),
+  },
+  async handler(args, context) {
+    const { library, baseUrl } = context;
+    const { url, data } = args;
+    if ((url === undefined) === (data === undefined)) {
+      throw new HttpError(400, "Pass exactly one of `url` or `data`.");
+    }
+    const image =
+      url === undefined
+        ? {
+            bytes: decodeImage(data),
+            contentType: args.contentType ?? /^data:([^;,]+)/.exec(data ?? "")?.[1] ?? "",
+          }
+        : await (context.fetchImage ?? fetchImage)(url);
+    const mediaId = createHash("sha256").update(image.bytes).digest("hex");
+    const existing = library.findByMedia(args.accountId, args.kind, mediaId);
+    if (existing) {
+      return json({
+        item: withAbsoluteUrl(existing, baseUrl()),
+        duplicateOf: { id: existing.id, name: existing.name },
+      });
+    }
+    const item = await library.create({
+      kind: args.kind,
+      name: args.name,
+      description: args.description,
+      usage: args.usage,
+      tags: args.tags,
+      contentType: image.contentType,
+      bytes: image.bytes,
+      accountId: args.accountId,
+    });
+    return json({ item: withAbsoluteUrl(item, baseUrl()) });
+  },
+});
+
+const updateLibraryItem = defineTool({
+  name: "update_library_item",
+  title: "Describe a library image",
+  description:
+    "Rewrite a library item's name, description, usage or tags. Fields you leave out keep their value. " +
+    "Tags you send replace the item's tags. An item's kind cannot change, because slideshows already " +
+    "place it as a background or an asset.",
+  inputSchema: {
+    id: z.string().describe("Library item id."),
+    name: z.string().optional(),
+    description: z.string().optional().describe("What the image shows."),
+    usage: z.string().optional().describe("When and how to use it on a slide."),
+    tags: TAGS_SHAPE.optional(),
+  },
+  async handler({ id, name, description, usage, tags }, { library, baseUrl }) {
+    const item = library.update(id, { name, description, usage, tags });
+    return json({ item: withAbsoluteUrl(item, baseUrl()) });
+  },
+});
+
+/** Every tool, list_accounts first so an agent can see its brand before anything else. */
 export const tools = {
   list_accounts: listAccounts,
   list_library: listLibrary,
@@ -657,4 +838,9 @@ export const tools = {
   update_slideshow: updateSlideshow,
   export_slideshow: exportSlideshow,
   revoke_export: revokeExport,
+
+  create_account: createAccount,
+  update_account: updateAccount,
+  add_library_item: addLibraryItem,
+  update_library_item: updateLibraryItem,
 };

@@ -170,23 +170,17 @@ it("reports the whole library in total, not the page", async () => {
   expect(library.list({ kind: "background" }).total).toBe(1);
 });
 
-it("reports the page size as the total of a search, which is the inherited bug", async () => {
+it("counts every match as the total of a search, not the page", async () => {
   app = createTestApp();
   const { library } = app.services;
   for (const name of ["Arrow one", "Arrow two", "Arrow three"]) {
     await addItem(library, "asset", name, { description: "an arrow" });
   }
 
-  // Pinning today's answer, not endorsing it. server/library.mjs:81 returned
-  // rows.length, so the total of a search is the size of the page that came
-  // back. Task 7 carries it rather than changing a live API response.
   const page = library.list({ query: "arrow", limit: 2 });
   expect(page.items.length).toBe(2);
-  expect(page.total, "the match count is 3, and this reports the page").toBe(2);
-  expect(
-    library.list({ query: "arrow" }).total,
-    "a page big enough to hold them agrees with the truth",
-  ).toBe(3);
+  expect(page.total).toBe(3);
+  expect(library.list({ query: "arrow", kind: "background" }).total).toBe(0);
   expect(library.list({ query: "nothingmatches" }).total).toBe(0);
 });
 

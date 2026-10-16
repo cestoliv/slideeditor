@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { HttpError } from "../errors.js";
+import { decodeImage } from "../services/media.js";
 import { asFields, countValue, field, queryValue } from "./input.js";
 
 interface IdParams {
@@ -64,17 +64,4 @@ export function libraryRoutes(app: FastifyInstance): void {
       force: queryValue(request.query, "force") === "1",
     }),
   );
-}
-
-/** Ported from server/api.mjs:148-154. */
-function decodeImage(data: unknown): Buffer {
-  if (typeof data !== "string" || !data)
-    throw new HttpError(400, "The upload needs a base64 `data` field.");
-  const payload =
-    data.includes(",") && data.startsWith("data:")
-      ? data.slice(data.indexOf(",") + 1)
-      : data;
-  const bytes = Buffer.from(payload, "base64");
-  if (!bytes.length) throw new HttpError(400, "The upload data was not valid base64.");
-  return bytes;
 }

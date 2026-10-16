@@ -108,18 +108,6 @@ code in every checkout. The citations record why a formula is shaped the way it
 is, which is worth reading when you change one, and git holds that for as long
 as the repo exists.
 
-## A defect carried on purpose
-
-Not a bug someone missed. Recorded so the next person does not rediscover it,
-and not in scope for the rewrite.
-
-**`list()` reports the page length rather than the match count when a search
-term is given.** `LibraryService.list` in `src/server/services/library.ts`
-returns `total: rows.length` on the FTS branch and `total: this.count(...)` on
-the unfiltered branch. An agent paging through search results reads a `total`
-that never exceeds its own `limit`. The route and the MCP tool both pass it
-through, so fixing it changes an API that agents read.
-
 ## Before you open a pull request
 
 Run `npm run check && npm test`. CI runs the same two commands and blocks the

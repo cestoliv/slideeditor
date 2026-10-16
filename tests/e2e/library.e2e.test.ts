@@ -179,7 +179,7 @@ it("accepts two agents uploading the same image at the same time", async () => {
   expect([bitmap.width, bitmap.height]).toEqual([320, 240]);
 });
 
-it("reports the page length rather than the match count when a search is paged", async () => {
+it("reports the match count rather than the page length when a search is paged", async () => {
   const tag = uniqueTag();
   await seedLibrary(baseUrl, tag);
 
@@ -187,18 +187,9 @@ it("reports the page length rather than the match count when a search is paged",
   expect(everything.items).toHaveLength(8);
   expect(everything.total).toBe(8);
 
-  /*
-   * A known defect, carried on purpose and documented here rather than fixed.
-   * `list()`'s search branch returns `rows.length` as the total
-   * (src/server/services/library.ts), so a paged search tells an agent the page
-   * is the whole result. An agent paging on `total` therefore stops after the
-   * first page. The unpaged branch above gets it right, which is what makes the
-   * disagreement visible.
-   */
   const paged = await searchLibrary(tag, 3);
   expect(paged.items).toHaveLength(3);
-  expect(paged.total).toBe(3);
-  expect(paged.total).not.toBe(everything.total);
+  expect(paged.total).toBe(8);
 });
 
 async function itemStatus(id: string): Promise<number> {

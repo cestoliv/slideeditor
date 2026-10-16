@@ -146,6 +146,10 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 | `set_slideshow_status` | Move a slideshow between draft, ready, and published                |
 | `export_slideshow`     | Get temporary public image URLs for a ready slideshow's slides      |
 | `revoke_export`        | Revoke a slideshow's export URLs before they expire                 |
+| `create_account`       | Create an account, with partial defaults                            |
+| `update_account`       | Rename an account or change its defaults                            |
+| `add_library_item`     | Add an image to a library from a URL or base64                      |
+| `update_library_item`  | Rewrite an item's name, description, usage, or tags                 |
 
 ### 4. How to draft a slideshow
 
@@ -282,9 +286,30 @@ they have adjusted the layout, and `published` means they have posted it.
   assets are separate. Filter by `kind` when searching.
 - **`This slideshow changed since you loaded it`** — re-read with
   `get_slideshow` and retry with the new version.
-- **An empty library** — the user has not uploaded anything yet. Ask them to add
-  images at `/library/backgrounds` and `/library/assets`, with a description and
-  a usage note on each. Do not invent ids.
+- **An empty library** — nothing is uploaded yet. Add images with
+  `add_library_item`, or ask the user to add them at `/library/backgrounds` and
+  `/library/assets`. Do not invent ids.
+
+### 9. Adding accounts and images
+
+`create_account` takes a `name` and optional `defaults`. A field you leave out
+of `defaults` takes the built-in value. `update_account` merges what you send
+over the account's current defaults. New defaults apply to slideshows created
+afterwards only. An existing slideshow keeps its ratio and layout.
+
+`add_library_item` adds one image, from a public `url` or from base64 `data`.
+Pass exactly one. It accepts PNG, JPEG, WebP, and GIF. `description` and `usage` are required, because they are what
+`list_library` gives you to choose images with later. The server refuses a URL
+on a private address, a download over 25 MB, and one that takes longer than 10
+seconds. If the account already holds the same image as the same kind, nothing is added: the
+existing item comes back with `duplicateOf`, so you can run an import again.
+
+`update_library_item` rewrites a name, a description, a usage note, or the tags.
+A field you leave out keeps its value.
+
+`list_library` returns at most 200 items. To read a larger library, pass
+`offset` and keep paging until it reaches `total`. Each item carries an absolute
+`url`, which you can fetch with your token to look at the image.
 
 ## Authentication
 
