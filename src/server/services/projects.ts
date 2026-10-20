@@ -54,6 +54,9 @@ export interface ProjectCreateInput {
   description?: unknown;
   hashtags?: unknown;
   accountId: unknown;
+  // True when an agent composed the document, so it is kept as the baseline
+  // layoutChanged() compares the human's later edits against.
+  composed?: boolean;
 }
 
 /**
@@ -148,6 +151,7 @@ export class ProjectService {
     description,
     hashtags,
     accountId,
+    composed = false,
   }: ProjectCreateInput): StoredProject {
     const account = requireAccountId(this.accounts, accountId, "A slideshow");
     const now = Date.now();
@@ -161,8 +165,8 @@ export class ProjectService {
       this.db
         .prepare(
           `
-      INSERT INTO project (id, name, document, version, status, description, hashtags, account_id, created_at, updated_at)
-      VALUES (?, ?, ?, 1, 'draft', ?, ?, ?, ?, ?)
+      INSERT INTO project (id, name, document, version, status, description, hashtags, account_id, composed_document, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 'draft', ?, ?, ?, ?, ?, ?)
     `,
         )
         .run(
@@ -172,6 +176,7 @@ export class ProjectService {
           normalizeDescription(description),
           normalizeHashtags(hashtags),
           account,
+          composed ? JSON.stringify(body) : null,
           now,
           now,
         );
@@ -233,6 +238,36 @@ export class ProjectService {
       version: nextVersion,
     });
     return this.require(id);
+  }
+
+  /** The document as first composed, or null for one an agent never composed. */
+  composedDocument(id: string): StoredDocument | null {
+    this.require(id);
+    const row = this.db
+      .prepare("SELECT composed_document FROM project WHERE id = ?")
+      .get(id);
+    const stored = row?.["composed_document"];
+    return typeof stored === "string" ? normalizeDocument(safeParse(stored)) : null;
+  }
+
+  /**
+   * How many slides the human changed since the agent composed them: a text
+   * or an overlay moved, resized, rotated, cropped, rewritten, added or
+   * removed. Null when there is no composed version to compare with.
+   */
+  layoutChanged(id: string): number | null {
+    const composed = this.composedDocument(id);
+    if (!composed) return null;
+    const current = this.require(id).slides;
+    let changed = 0;
+    for (
+      let index = 0;
+      index < Math.max(current.length, composed.slides.length);
+      index++
+    ) {
+      if (slideLayout(current[index]) !== slideLayout(composed.slides[index])) changed++;
+    }
+    return changed;
   }
 
   remove(id: string): { removed: string } {
@@ -375,6 +410,40 @@ function toProject(row: Row): StoredProject {
     updatedAt: integer(row, "updated_at"),
     ...normalizeDocument(safeParse(text(row, "document"))),
   };
+}
+
+const TEXT_LAYOUT = ["id", "text", "x", "y", "width", "height", "size", "rotation"];
+const OVERLAY_LAYOUT = [
+  "id",
+  "itemId",
+  "x",
+  "y",
+  "width",
+  "height",
+  "rotation",
+  "cropX",
+  "cropY",
+  "cropW",
+  "cropH",
+];
+
+/**
+ * The fields of a slide a layout fix touches, as one comparable string. Only
+ * these, because an editor save also back-fills fields such as z or italic
+ * that the compositor never wrote, and those are no fix.
+ */
+function slideLayout(slide: unknown): string {
+  const source = asRecord(slide);
+  if (!source) return "";
+  const pick = (list: unknown, keys: string[]): unknown[] =>
+    (Array.isArray(list) ? list : []).map((entry) => {
+      const layer = asRecord(entry) ?? {};
+      return keys.map((key) => layer[key] ?? null);
+    });
+  return JSON.stringify([
+    pick(source["texts"], TEXT_LAYOUT),
+    pick(source["overlays"], OVERLAY_LAYOUT),
+  ]);
 }
 
 export function normalizeDocument(

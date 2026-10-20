@@ -497,7 +497,7 @@ const PINNED = [
     name: "get_slideshow",
     title: "Read a slideshow",
     description:
-      "Read one slideshow as a composition: per slide, its background id, asset ids and texts. Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow.",
+      "Read one slideshow as a composition: per slide, its background id, asset ids and texts. Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow. `layoutChanged` counts the slides the human changed by hand since the slideshow was created or duplicated, or is null when no agent composed it.",
   },
   {
     name: "set_slideshow_status",
@@ -1391,6 +1391,33 @@ it("replaces the caption and name of a copy when asked", async () => {
   expect(copy.description).toBe("");
   expect(copy.hashtags).toBe("#legday");
   expect(harness.services.projects.require(id).description).toBe("Caption");
+});
+
+it("keeps the composed document when update_slideshow rewrites the slides", async () => {
+  const { id, version, backgroundId } = await draft();
+  const composed = harness.services.projects.composedDocument(id);
+  await tools.update_slideshow.handler(
+    { id, version, slides: [{ background: backgroundId, texts: ["New hook"] }] },
+    context,
+  );
+  expect(harness.services.projects.require(id).slides).not.toEqual(composed?.slides);
+  expect(harness.services.projects.composedDocument(id)).toEqual(composed);
+});
+
+it("stores a copy's starting document as its composed version", async () => {
+  const { id } = await draft();
+  const copy = payload(await tools.duplicate_slideshow.handler({ id }, context)) as {
+    id: string;
+  };
+  const stored = harness.services.projects.require(copy.id);
+  expect(harness.services.projects.composedDocument(copy.id)).toEqual({
+    ratio: stored.ratio,
+    slides: stored.slides,
+  });
+  const read = payload(await tools.get_slideshow.handler({ id: copy.id }, context)) as {
+    slideshow: { layoutChanged: number | null };
+  };
+  expect(read.slideshow.layoutChanged).toBe(0);
 });
 
 it("deletes a draft slideshow", async () => {

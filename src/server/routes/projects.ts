@@ -28,9 +28,16 @@ export function projectRoutes(app: FastifyInstance): void {
     };
   });
 
-  app.get<{ Params: IdParams }>("/api/projects/:id", (request) => ({
-    project: app.projects.require(request.params.id),
-  }));
+  app.get<{ Params: IdParams }>("/api/projects/:id", (request) => {
+    const project = app.projects.require(request.params.id);
+    if (queryValue(request.query, "include") !== "composed") return { project };
+    return {
+      project: {
+        ...project,
+        composedDocument: app.projects.composedDocument(project.id),
+      },
+    };
+  });
 
   app.put<{ Params: IdParams }>("/api/projects/:id", (request) => {
     const body = asFields(request.body);

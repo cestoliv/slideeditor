@@ -300,4 +300,11 @@ export const MIGRATIONS: string[] = [
   -- every reference count.
   ALTER TABLE font ADD COLUMN italic_media_id TEXT;
   `,
+  `
+  -- The document exactly as the agent composed it, written once by
+  -- create_slideshow and duplicate_slideshow and never updated after. Comparing
+  -- it with the live document shows how much layout the human still fixes by
+  -- hand. NULL for a slideshow created in the editor, or before this column.
+  ALTER TABLE project ADD COLUMN composed_document TEXT;
+  `,
 ];

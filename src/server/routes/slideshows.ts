@@ -32,6 +32,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
         status: project.status,
         description: project.description,
         hashtags: project.hashtags,
+        layoutChanged: app.projects.layoutChanged(project.id),
       },
       editUrl: editUrl(app.baseUrl(), project.id),
     };
@@ -57,6 +58,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       description: field(body, "description"),
       hashtags: field(body, "hashtags"),
       accountId: field(body, "accountId"),
+      composed: true,
     });
     return {
       id: project.id,

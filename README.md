@@ -279,6 +279,14 @@ To reuse a slideshow the human has already adjusted as a template, call
 `duplicate_slideshow`. The copy is a new draft in the same account, with the
 same layout and caption. Then change its texts with `update_slideshow`.
 
+`get_slideshow` also returns `layoutChanged`: the number of slides the human
+changed by hand since the slideshow was created or duplicated. A slide counts
+when one of its texts or overlays moved, was resized, rotated, cropped,
+rewritten, added, or removed. The server keeps the document exactly as
+`create_slideshow` or `duplicate_slideshow` composed it, and never updates that
+copy, so `update_slideshow` does not reset the count. The value is `null` for a
+slideshow made in the editor.
+
 To remove a draft you no longer need, call `delete_slideshow`. Only a draft can
 be deleted. A ready or published slideshow is refused with a 409.
 
@@ -509,7 +517,7 @@ PATCH  /api/library/:id
 DELETE /api/library/:id          409 when in use, unless force=1
 GET    /api/projects?status=&account=
 POST   /api/projects             accountId required
-GET    /api/projects/:id
+GET    /api/projects/:id         ?include=composed adds composedDocument
 PUT    /api/projects/:id         guarded by version
 PATCH  /api/projects/:id/status
 DELETE /api/projects/:id
