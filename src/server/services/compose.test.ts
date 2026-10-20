@@ -48,7 +48,7 @@ async function fixture(): Promise<Fixture> {
 /**
  * Everything must sit inside the canvas and clear of the text block — except
  * the text block itself, which is allowed to be the one thing that does not
- * fit. layoutTexts (shared/compose/compose.ts) fixes the account's text size
+ * fit. measureTexts (shared/compose/compose.ts) fixes the account's text size
  * with no shrink-to-fit ladder: a block too tall for the slide is centered
  * instead, so it overflows the top and bottom edges by the same amount
  * rather than being clipped, shrunk, or floored off one edge only. Both

@@ -7,7 +7,23 @@ import {
   validateComposition,
 } from "./compose.js";
 import type { Composition, LibraryLookup } from "./compose.js";
-import { ASSET_TOP_MARGIN, TEXT_BOTTOM_MARGIN, TEXT_TOP_LIMIT } from "./constants.js";
+import {
+  ASSET_LEFT,
+  ASSET_MAX_WIDTH,
+  ASSET_TEXT_GAP,
+  ASSET_TOP,
+  ASSET_TOP_MARGIN,
+  SAFE_BOTTOM,
+  SAFE_RIGHT,
+  SAFE_TOP,
+  SIDE_MARGIN,
+  TEXT_BOTTOM_MARGIN,
+  TEXT_CENTER_FIRST,
+  TEXT_CENTER_LAST,
+  TEXT_CENTER_MIDDLE,
+  TEXT_LEFT,
+  TEXT_TOP_LIMIT,
+} from "./constants.js";
 import { DESIGN_WIDTH, outputHeight } from "../geometry/index.js";
 import {
   DEFAULT_ADVANCE_RATIO,
@@ -59,6 +75,12 @@ function at<T>(list: T[], index: number): T {
 
 function firstSlide(doc: SlideDocument): Slide {
   return at(doc.slides, 0);
+}
+
+function blockCenter(slide: Slide): number {
+  const top = Math.min(...slide.texts.map((text) => text.y));
+  const bottom = Math.max(...slide.texts.map((text) => text.y + text.height));
+  return (top + bottom) / 2;
 }
 
 const PORTRAIT = { w: 9, h: 16 };
@@ -264,8 +286,11 @@ describe("preserving work a human did by hand", () => {
     expect(at(firstSlide(second).overlays, 0).id).not.toBe(
       at(firstSlide(first).overlays, 0).id,
     );
-    // The text is back where the lower-third stack puts it.
-    expect(at(firstSlide(second).texts, 0).y).toBeGreaterThanOrEqual(0.5);
+    // The text is back where the layout puts it, clear of the asset.
+    const overlay = at(firstSlide(second).overlays, 0);
+    expect(at(firstSlide(second).texts, 0).y).toBeGreaterThanOrEqual(
+      overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP,
+    );
     // The slide itself is the same slide, only its geometry is new.
     expect(firstSlide(second).id).toBe(firstSlide(first).id);
   });
@@ -294,12 +319,97 @@ describe("preserving work a human did by hand", () => {
 });
 
 describe("layout", () => {
-  it("stacks texts in the lower third", () => {
+  it("stacks touching texts at the left edge, centred on the hook's height", () => {
     const doc = compose([{ background: "bg1", assets: [], texts: ["One", "Two"] }]);
-    for (const text of firstSlide(doc).texts) {
-      expect(text.y).toBeGreaterThanOrEqual(0.5);
-      expect(text.x).toBe((1 - BUILTIN_DEFAULTS.text.maxWidth) / 2);
+    const [one, two] = firstSlide(doc).texts;
+    if (!one || !two) throw new Error("expected two texts");
+    expect(one.x).toBe(TEXT_LEFT);
+    expect(two.x).toBe(TEXT_LEFT);
+    expect(two.y).toBeCloseTo(one.y + one.height, 10);
+    expect(blockCenter(firstSlide(doc))).toBeCloseTo(TEXT_CENTER_FIRST, 10);
+  });
+
+  it("places the hook high, the middle slides lower and the call to action lowest", () => {
+    const slide: Composition = { background: "bg1", texts: ["A line of text"] };
+    const doc = compose([slide, slide, slide, slide]);
+    const centers = doc.slides.map(blockCenter);
+    expect(centers[0]).toBeCloseTo(TEXT_CENTER_FIRST, 10);
+    expect(centers[1]).toBeCloseTo(TEXT_CENTER_MIDDLE, 10);
+    expect(centers[2]).toBeCloseTo(TEXT_CENTER_MIDDLE, 10);
+    expect(centers[3]).toBeCloseTo(TEXT_CENTER_LAST, 10);
+  });
+
+  it("treats a lone slide as the hook", () => {
+    const doc = compose([{ background: "bg1", texts: ["A line of text"] }]);
+    expect(blockCenter(firstSlide(doc))).toBeCloseTo(TEXT_CENTER_FIRST, 10);
+  });
+
+  it("keeps a tall hook inside the safe zone rather than on its target", () => {
+    const texts = Array.from({ length: 14 }, (_, index) => `Line ${index}`);
+    const slide = firstSlide(compose([{ background: "bg1", texts }]));
+    expect(at(slide.texts, 0).y).toBeCloseTo(SAFE_TOP, 10);
+  });
+
+  // Every ratio the golden fixture records, plus 3:4, the ratio of nearly
+  // every published slideshow.
+  it.each([
+    { w: 9, h: 16 },
+    { w: 3, h: 4 },
+    { w: 4, h: 5 },
+    { w: 1, h: 1 },
+    { w: 1.91, h: 1 },
+  ])("keeps a fitting block inside the safe zone at $w:$h", (ratio) => {
+    const compositions: Composition[] = [
+      { background: "bg1", texts: ["A caption long enough to wrap onto a second line"] },
+      { background: "bg2", assets: ["a1", "a2", "a3", "a4"], texts: ["One", "Two"] },
+      { background: "bg2", assets: ["a2"], texts: ["Only text here"] },
+      { background: "bg1", assets: ["a1"], texts: ["Short line"] },
+    ];
+    const doc = compose(compositions, { ratio });
+    for (const slide of doc.slides) {
+      for (const box of [...slide.texts, ...slide.overlays]) {
+        expect(box.y).toBeGreaterThanOrEqual(SAFE_TOP - 1e-9);
+        expect(box.y + (box.height ?? 0)).toBeLessThanOrEqual(SAFE_BOTTOM + 1e-9);
+        expect(box.x + box.width).toBeLessThanOrEqual(SAFE_RIGHT + 1e-9);
+      }
+      for (const overlay of slide.overlays) {
+        for (const text of slide.texts) {
+          expect(overlay.y + (overlay.height ?? 0)).toBeLessThanOrEqual(text.y + 1e-9);
+        }
+      }
     }
+    expect(blockCenter(at(doc.slides, 0))).toBeLessThan(
+      blockCenter(at(doc.slides, doc.slides.length - 1)),
+    );
+  });
+
+  it("starts the text below a lone asset that its target would overlap", () => {
+    const slide = firstSlide(
+      compose([{ background: "bg1", assets: ["a2"], texts: ["Under the asset"] }]),
+    );
+    const overlay = at(slide.overlays, 0);
+    expect(overlay.x).toBe(ASSET_LEFT);
+    expect(overlay.y).toBe(ASSET_TOP);
+    expect(overlay.width).toBe(ASSET_MAX_WIDTH);
+    expect(at(slide.texts, 0).y).toBeCloseTo(
+      overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP,
+      10,
+    );
+  });
+
+  it("shrinks a lone tall asset so the text below it stays in the safe zone", () => {
+    const texts = Array.from({ length: 6 }, (_, index) => `Line ${index}`);
+    const slide = firstSlide(
+      compose([{ background: "bg1", assets: ["a2"], texts }], { ratio: { w: 1, h: 1 } }),
+    );
+    const overlay = at(slide.overlays, 0);
+    const last = at(slide.texts, slide.texts.length - 1);
+    expect(overlay.width).toBeLessThan(ASSET_MAX_WIDTH);
+    expect(last.y + last.height).toBeCloseTo(SAFE_BOTTOM, 10);
+    expect(at(slide.texts, 0).y).toBeCloseTo(
+      overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP,
+      10,
+    );
   });
 
   it("never lets an asset overlap the text block", () => {
@@ -323,14 +433,14 @@ describe("layout", () => {
       { background: "bg1", assets: ["a1", "a2", "a3", "a4"], texts: ["One"] },
     ]);
     const last = at(firstSlide(doc).overlays, 3);
-    expect(last.x + last.width / 2).toBeCloseTo(0.5, 10);
+    expect(last.x + last.width / 2).toBeCloseTo((SIDE_MARGIN + SAFE_RIGHT) / 2, 10);
     // The lone item keeps the size a full row would have given it.
     const firstOfRow = at(firstSlide(doc).overlays, 0);
     expect(last.width).toBeCloseTo(firstOfRow.width, 10);
   });
 
   it("starts the first asset row at the top margin", () => {
-    const doc = compose([{ background: "bg1", assets: ["a3"], texts: [] }]);
+    const doc = compose([{ background: "bg1", assets: ["a3", "a3"], texts: [] }]);
     expect(at(firstSlide(doc).overlays, 0).y).toBeCloseTo(ASSET_TOP_MARGIN, 10);
   });
 
@@ -344,11 +454,11 @@ describe("layout", () => {
   });
 
   /*
-   * Finding 10: layoutTexts had no font file to measure a family's average
+   * Finding 10: measureTexts had no font file to measure a family's average
    * glyph width against, so it read a shared, name-keyed constant with only
    * two entries. composeDocument now takes an `advanceRatioFor` a caller
    * with a real font catalogue (server/services/fonts.ts's FontService) can
-   * inject — this is what proves it actually reaches layoutTexts, by giving
+   * inject — this is what proves it actually reaches measureTexts, by giving
    * the exact same string a wider "measured" advance and checking the
    * resulting block is taller, rather than the fixed, name-keyed value
    * every input got before.
@@ -396,7 +506,7 @@ describe("layout", () => {
     }
   });
 
-  it("composes a text exactly maxWidth wide and centred, for a non-default maxWidth", () => {
+  it("composes a text exactly maxWidth wide at the left edge, for a non-default maxWidth", () => {
     const custom: AccountDefaults = {
       ...BUILTIN_DEFAULTS,
       text: { ...BUILTIN_DEFAULTS.text, maxWidth: 0.5 },
@@ -413,8 +523,23 @@ describe("layout", () => {
     );
     const text = at(firstSlide(doc).texts, 0);
     expect(text.width).toBe(0.5);
-    expect(text.x).toBe((1 - 0.5) / 2);
+    expect(text.x).toBe(TEXT_LEFT);
   });
+
+  it.each([
+    { maxWidth: 0.7, x: SAFE_RIGHT - 0.7 },
+    { maxWidth: 0.9, x: (1 - 0.9) / 2 },
+  ])(
+    "moves a $maxWidth wide text left of the safe zone edge, or centres it",
+    ({ maxWidth, x }) => {
+      const custom: AccountDefaults = {
+        ...BUILTIN_DEFAULTS,
+        text: { ...BUILTIN_DEFAULTS.text, maxWidth },
+      };
+      const doc = compose([{ background: "bg1", texts: ["Wide"] }], { defaults: custom });
+      expect(at(firstSlide(doc).texts, 0).x).toBeCloseTo(x, 10);
+    },
+  );
 
   /*
    * Every composed box is maxWidth wide, short text included. Hugging a short
@@ -431,14 +556,14 @@ describe("layout", () => {
   });
 
   /*
-   * The bug this file's textBox was rewritten for: layoutTexts sized a box
+   * The bug this file's textBox was rewritten for: layoutTexts (now measureTexts) sized a box
    * from a character count divided by an average line length, which ignored
    * word boundaries, TEXT_WRAP_INSET and TEXT_VERTICAL_PADDING alike, and so
    * undercounted lines for most real captions. computeTextLayout clips to
    * whatever the box holds, so the missing lines were dropped on export.
    *
    * Laying the composed layers out through computeTextLayout itself — with a
-   * measurer built from the same advance layoutTexts estimates against — is
+   * measurer built from the same advance measureTexts estimates against — is
    * what proves the two agree. Nothing weaker does: the old estimate looked
    * fine on its own terms and only disagreed with the renderer.
    */
@@ -476,7 +601,7 @@ describe("layout", () => {
       expect(text.size).toBe(BUILTIN_DEFAULTS.text.size);
     }
     /*
-     * Forty long lines at 64px cannot fit under TEXT_BLOCK_MAX at either gap.
+     * Forty long lines at 64px cannot fit the frame.
      * Size stays fixed — there is no smaller rung to fall back to — so the
      * block runs off the frame either way. Flooring it at TEXT_TOP_LIMIT (the
      * previous behaviour) dumped the whole overflow on the bottom edge, which
@@ -513,7 +638,7 @@ describe("layout", () => {
    *
    * charsPerLine mirrors textBox()'s own wrap width (compose.ts) rather than
    * a hardcoded line width, so a tuned constant does not silently desync
-   * this from what layoutTexts actually wraps at. A single unbroken word is
+   * this from what measureTexts actually wraps at. A single unbroken word is
    * wider than maxWidth at every count above one, so lineText always gets
    * the full-width box and wrapText splits it by character.
    */
@@ -530,11 +655,10 @@ describe("layout", () => {
 
   /**
    * A stack of `texts.length` texts whose lines sum to `lineCounts`, so the
-   * block's total height is controlled by both dimensions layoutTexts' gap
-   * math depends on (line count, which sets each box's height, and text
-   * count, which sets how many gaps are summed) — finer control than
-   * varying text count alone, which only moves in whole extra-line-plus-gap
-   * steps too coarse to land close to a specific boundary.
+   * block's total height is controlled by both line count and text count
+   * (each box adds its own vertical padding) — finer control than varying
+   * text count alone, which only moves in whole box steps too coarse to
+   * land close to a specific boundary.
    */
   function stackOfLineCounts(lineCounts: number[]): string[] {
     return lineCounts.map(lineText);
@@ -551,11 +675,9 @@ describe("layout", () => {
   }
 
   it("floors, rather than centers, a text block whose total sits well inside (0.90, 1.0)", () => {
-    // 11 single-line texts plus 4 two-line texts: comfortably inside the
-    // band per this file's own constants.
-    const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(11).fill(1), 2, 2, 2, 2]),
-    );
+    // 10 two-line texts plus 1 three-line text: comfortably inside the band
+    // per this file's own constants.
+    const { first, total } = measuredBlock(stackOfLineCounts([...Array(10).fill(2), 3]));
     expect(
       total,
       "picks a block inside the band this regression is about",
@@ -571,13 +693,9 @@ describe("layout", () => {
   });
 
   it("still floors, not centers, a text block right at the edge of the band, just above 0.90", () => {
-    // 12 single-line texts plus 3 two-line texts: 18 lines total across 15
-    // texts, landing just over the old (wrong) 0.90 threshold — see this
-    // file's own comment above for why text count, not just line count,
-    // has to be tuned to land this close.
-    const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(12).fill(1), 2, 2, 2]),
-    );
+    // 1 two-line text plus 7 three-line texts lands just over the old
+    // (wrong) 0.90 threshold.
+    const { first, total } = measuredBlock(stackOfLineCounts([2, ...Array(7).fill(3)]));
     const oldThreshold = 1 - TEXT_BOTTOM_MARGIN - TEXT_TOP_LIMIT;
     expect(
       total,
@@ -588,8 +706,9 @@ describe("layout", () => {
   });
 
   it("centers a text block right at the edge of the band, just above 1.0", () => {
-    // 19 single-line texts lands just over a total of 1 at these constants.
-    const { first, total } = measuredBlock(stackOfLineCounts(Array(19).fill(1)));
+    // 1 two-line text plus 8 three-line texts lands just over a total of 1
+    // at these constants.
+    const { first, total } = measuredBlock(stackOfLineCounts([2, ...Array(8).fill(3)]));
     expect(total, "picks a block just past the frame's own height").toBeGreaterThan(1);
     expect(total).toBeLessThan(1.1);
     // Centered, not floored: the top overflows past y = 0 by the same
@@ -609,14 +728,12 @@ describe("layout", () => {
    * centering exists to prevent. The four tests below sit inside that band
    * (approximated here, at these constants, as (0.96, 1.0]) and either side
    * of the corrected `1 - TEXT_TOP_LIMIT` (0.98) threshold, none of which the
-   * three tests above cover (0.9367, 0.9067 and 1.0313 respectively).
+   * three tests above cover (0.9320, 0.9120 and 1.0307 respectively).
    */
   it("still floors, not centers, a text block just above 0.96, below the corrected threshold", () => {
-    // 13 single-line texts plus 3 two-line texts: lands just past 0.96 but
-    // still under 1 - TEXT_TOP_LIMIT, so flooring places it without clipping.
-    const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(13).fill(1), 2, 2, 2]),
-    );
+    // 12 two-line texts: lands just past 0.96 but still under
+    // 1 - TEXT_TOP_LIMIT, so flooring places it without clipping.
+    const { first, total } = measuredBlock(stackOfLineCounts(Array(12).fill(2)));
     expect(total, "lands in the band this fix covers").toBeGreaterThan(0.96);
     expect(total).toBeLessThan(1 - TEXT_TOP_LIMIT);
     expect(first.y).toBeCloseTo(TEXT_TOP_LIMIT, 10);
@@ -625,11 +742,11 @@ describe("layout", () => {
   });
 
   it("centers, not floors, a text block just past the corrected 1 - TEXT_TOP_LIMIT threshold", () => {
-    // 15 single-line texts plus 2 two-line texts: lands just past the fixed
+    // 2 two-line texts plus 7 three-line texts: lands just past the fixed
     // threshold. The old `total > 1` guard floored this instead, and
     // flooring at TEXT_TOP_LIMIT then ran the block's bottom past y = 1.
     const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(15).fill(1), 2, 2]),
+      stackOfLineCounts([2, 2, ...Array(7).fill(3)]),
     );
     expect(total).toBeGreaterThan(1 - TEXT_TOP_LIMIT);
     expect(total).toBeLessThan(1);
@@ -644,17 +761,19 @@ describe("layout", () => {
     // the regression band. The old guard floored it at TEXT_TOP_LIMIT (0.02),
     // running the bottom past y = 1 and clipping the last line off the slide
     // while that 0.02 of headroom sat unused at the top.
-    const { first, total } = measuredBlock(stackOfLineCounts([...Array(17).fill(1), 2]));
+    const { first, total } = measuredBlock(
+      stackOfLineCounts([...Array(19).fill(1), 2, 2]),
+    );
     expect(total).toBeCloseTo(0.999, 3);
     expect(first.y).toBeCloseTo((1 - total) / 2, 10);
     expect(first.y + total).toBeLessThanOrEqual(1);
   });
 
   it("centers a text block just above 1.0, at the closed edge of the band", () => {
-    // 12 single-line texts plus 4 two-line texts: lands just over a total of
+    // 8 two-line texts plus 3 three-line texts: lands just over a total of
     // 1, closer to that boundary than the "just above 1.0" test above.
     const { first, total } = measuredBlock(
-      stackOfLineCounts([...Array(12).fill(1), 2, 2, 2, 2]),
+      stackOfLineCounts([...Array(8).fill(2), 3, 3, 3]),
     );
     expect(total).toBeGreaterThan(1);
     expect(total).toBeLessThan(1.01);

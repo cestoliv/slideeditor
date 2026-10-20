@@ -30,13 +30,22 @@ import type {
 } from "../schema/index.js";
 import {
   ASSET_GAP,
+  ASSET_LEFT,
+  ASSET_MAX_WIDTH,
   ASSET_ROW_MAX,
+  ASSET_TEXT_GAP,
+  ASSET_TOP,
   ASSET_TOP_MARGIN,
-  CONTENT_WIDTH,
-  TEXT_BLOCK_MAX,
+  SAFE_BOTTOM,
+  SAFE_RIGHT,
+  SAFE_TOP,
+  SIDE_MARGIN,
   TEXT_BOTTOM_MARGIN,
+  TEXT_CENTER_FIRST,
+  TEXT_CENTER_LAST,
+  TEXT_CENTER_MIDDLE,
   TEXT_GAP,
-  TEXT_GAP_TIGHT,
+  TEXT_LEFT,
   TEXT_TOP_LIMIT,
 } from "./constants.js";
 
@@ -103,7 +112,7 @@ export interface ComposeDocumentInput {
   previous?: SlideDocument | null | undefined;
   newId?: (() => string) | undefined;
   /**
-   * The per-family average glyph advance layoutTexts estimates line-wrap
+   * The per-family average glyph advance measureTexts estimates line-wrap
    * height from — this module has no font file to measure against, and
    * (being shared code) no database to read a measured one from either. A
    * caller with a font catalogue to consult (server/services/fonts.ts's
@@ -137,12 +146,11 @@ export interface CompositionProject {
   slides: CompositionSlide[];
 }
 
-interface PlacedText {
+interface MeasuredText {
   text: string;
   style: TextStyle;
   size: number;
   height: number;
-  y: number;
 }
 
 interface PlacedAsset {
@@ -156,6 +164,7 @@ interface PlacedAsset {
 interface ComposeSlideInput {
   composition: Composition;
   index: number;
+  slideCount: number;
   ratio: Ratio;
   library: LibraryLookup;
   defaults: AccountDefaults;
@@ -194,6 +203,7 @@ export function composeDocument({
       composeSlide({
         composition,
         index,
+        slideCount: slides.length,
         ratio: safeRatio,
         library,
         defaults,
@@ -209,6 +219,7 @@ export function composeDocument({
 function composeSlide({
   composition,
   index,
+  slideCount,
   ratio,
   library,
   defaults,
@@ -232,11 +243,39 @@ function composeSlide({
   }
 
   const height = outputHeight(ratio);
-  const laidOutTexts = layoutTexts(texts, height, defaults, advanceRatioFor);
-  const textBlockTop = laidOutTexts.length
-    ? Math.min(...laidOutTexts.map((text) => text.y))
-    : 1;
-  const laidOutAssets = layoutAssets(assets, height, textBlockTop);
+  const measured = measureTexts(texts, height, defaults, advanceRatioFor);
+  const total =
+    measured.reduce((sum, box) => sum + box.height, 0) +
+    TEXT_GAP * Math.max(0, measured.length - 1);
+  const fitsSafeZone = total <= SAFE_BOTTOM - SAFE_TOP;
+  const fallbackTop = fallbackTextTop(total);
+  // Assets go first and leave room for the whole text block below them, so
+  // pushing the text under the lowest asset keeps it in the zone. The one
+  // exception is a block that leaves assets less than layoutAssets' floor.
+  const assetAreaBottom = !measured.length
+    ? SAFE_BOTTOM
+    : fitsSafeZone
+      ? SAFE_BOTTOM - total - ASSET_TEXT_GAP
+      : fallbackTop >= 0
+        ? fallbackTop - 0.04
+        : 1 - TEXT_BOTTOM_MARGIN;
+  const laidOutAssets = layoutAssets(assets, height, assetAreaBottom);
+  const lowestAsset = Math.max(
+    -Infinity,
+    ...laidOutAssets.map((asset) => asset.y + asset.height),
+  );
+  const textTop = fitsSafeZone
+    ? Math.max(
+        clamp(roleCenter(index, slideCount) - total / 2, SAFE_TOP, SAFE_BOTTOM - total),
+        lowestAsset + ASSET_TEXT_GAP,
+      )
+    : fallbackTop;
+  let cursor = textTop;
+  const laidOutTexts = measured.map((box) => {
+    const placed = { ...box, y: cursor };
+    cursor += box.height + TEXT_GAP;
+    return placed;
+  });
 
   const slide: Slide = {
     id: previousSlide?.id || newId(),
@@ -299,7 +338,7 @@ function composeSlide({
     const layer: TextLayer = {
       ...newTextLayer(
         defaults,
-        { x: (1 - defaults.text.maxWidth) / 2, y: placed.y, z: z++ },
+        { x: textLeft(defaults.text.maxWidth), y: placed.y, z: z++ },
         newId,
       ),
       text: placed.text,
@@ -314,88 +353,71 @@ function composeSlide({
   return slide;
 }
 
-/** Stacks texts in the lower third at the account's text size, shrinking the gap if needed. */
-function layoutTexts(
+/** Measures each text box at its own size and style, in canvas fractions. */
+function measureTexts(
   texts: StyledText[],
   height: number,
   defaults: AccountDefaults,
   advanceRatioFor: (family: string) => number,
-): PlacedText[] {
-  if (!texts.length) return [];
+): MeasuredText[] {
   const advance = advanceRatioFor(defaults.text.fontFamily);
-  const boxesAt = (gap: number) => {
-    const boxes = texts.map(({ text, style }) => {
-      // Each line measures at its own size and style, because a hook set
-      // larger than the rest wraps to more lines and needs a taller box.
-      // Weight and italic do not change the estimate: the renderer's
-      // computeTextLayout stays the source of truth for the real wrap.
-      const size = style.size ?? defaults.text.size;
-      // computeTextLayout picks the line advance off the same two fields, and
-      // the two constants are tuned independently, so reading them here keeps
-      // this estimate from drifting away from what the renderer lays out.
-      const lineHeight =
-        (style.style ?? defaults.text.style) === "boxed" &&
-        defaults.text.backgroundShape !== "full"
-          ? BOX_TEXT_LINE_HEIGHT
-          : TEXT_LINE_HEIGHT;
-      return {
-        text,
-        style,
-        size,
-        height: textHeight(
-          text,
-          size,
-          height,
-          advance,
-          defaults.text.maxWidth,
-          lineHeight,
-        ),
-      };
-    });
-    const total =
-      boxes.reduce((sum, box) => sum + box.height, 0) + gap * (boxes.length - 1);
-    return { boxes, total };
-  };
-  const preferred = boxesAt(TEXT_GAP);
-  // The tight gap is used whenever the preferred one overflows, whether or not
-  // the tight gap itself fits: there is no smaller size to fall back to any
-  // more, so a block that cannot fit either gap is placed anyway and allowed
-  // to run off both edges of the slide equally (see the centering below).
-  const { boxes, total, gap } =
-    preferred.total <= TEXT_BLOCK_MAX
-      ? { ...preferred, gap: TEXT_GAP }
-      : { ...boxesAt(TEXT_GAP_TIGHT), gap: TEXT_GAP_TIGHT };
-  // Size is fixed at the account's value now that the ladder is gone, so a
-  // tall block cannot be shrunk to fit. Bottom-anchored (cursor keeps the
-  // block's bottom edge at 1 - TEXT_BOTTOM_MARGIN) whenever flooring the top
-  // at TEXT_TOP_LIMIT still leaves the block's bottom at or above y = 1 —
-  // that is, whenever `total <= 1 - TEXT_TOP_LIMIT`. Centering on the whole
-  // frame, overflowing top and bottom equally, is reserved for a block that
-  // cannot fit even flush against the top (total > 1 - TEXT_TOP_LIMIT): only
-  // then does spreading the overflow evenly beat flooring it at
-  // TEXT_TOP_LIMIT and running the excess off the bottom edge, which on a
-  // 9:16 slide is where a platform's caption and action chrome sit.
-  //
-  // The boundary used to be `total > 1`, which let a block just under that —
-  // needing the top floored by less than TEXT_TOP_LIMIT of clearance — get
-  // bottom-anchored anyway. Flooring then clamps the top at TEXT_TOP_LIMIT
-  // rather than letting it go negative, so the *bottom* absorbs whatever
-  // clearance the floor couldn't: a total of 0.984 (with TEXT_TOP_LIMIT at
-  // 0.02) needs the top pushed up to -0.004 to sit flush against the bottom
-  // margin, gets floored at 0.02 instead, and ends up with its bottom at
-  // 1.004 — clipped off the slide, with 0.02 of headroom sitting unused
-  // above it. Comparing against `1 - TEXT_TOP_LIMIT` instead catches every
-  // total that flooring cannot place without clipping and routes it to
-  // centering, which spends that same headroom evenly on both edges instead.
-  let cursor =
-    total > 1 - TEXT_TOP_LIMIT
-      ? (1 - total) / 2
-      : Math.max(TEXT_TOP_LIMIT, 1 - TEXT_BOTTOM_MARGIN - total);
-  return boxes.map((box) => {
-    const placed = { ...box, y: cursor };
-    cursor += box.height + gap;
-    return placed;
+  return texts.map(({ text, style }) => {
+    // Each line measures at its own size and style, because a hook set
+    // larger than the rest wraps to more lines and needs a taller box.
+    // Weight and italic do not change the estimate: the renderer's
+    // computeTextLayout stays the source of truth for the real wrap.
+    const size = style.size ?? defaults.text.size;
+    // computeTextLayout picks the line advance off the same two fields, and
+    // the two constants are tuned independently, so reading them here keeps
+    // this estimate from drifting away from what the renderer lays out.
+    const lineHeight =
+      (style.style ?? defaults.text.style) === "boxed" &&
+      defaults.text.backgroundShape !== "full"
+        ? BOX_TEXT_LINE_HEIGHT
+        : TEXT_LINE_HEIGHT;
+    return {
+      text,
+      style,
+      size,
+      height: textHeight(text, size, height, advance, defaults.text.maxWidth, lineHeight),
+    };
   });
+}
+
+/** Where a text block's centre goes: the hook sits high, the call to action low. */
+function roleCenter(index: number, slideCount: number): number {
+  if (index === 0) return TEXT_CENTER_FIRST;
+  return index === slideCount - 1 ? TEXT_CENTER_LAST : TEXT_CENTER_MIDDLE;
+}
+
+/** Left edge of a text box: clear of the action buttons while it fits, centred otherwise. */
+function textLeft(maxWidth: number): number {
+  if (TEXT_LEFT + maxWidth <= SAFE_RIGHT) return TEXT_LEFT;
+  return SIDE_MARGIN + maxWidth <= SAFE_RIGHT
+    ? SAFE_RIGHT - maxWidth
+    : (1 - maxWidth) / 2;
+}
+
+/**
+ * Where a text block taller than the safe zone starts. Size is fixed at the
+ * account's value, so a tall block cannot be shrunk to fit. Bottom-anchored
+ * (the block's bottom edge at 1 - TEXT_BOTTOM_MARGIN) whenever flooring the
+ * top at TEXT_TOP_LIMIT still leaves the block's bottom at or above y = 1,
+ * that is whenever `total <= 1 - TEXT_TOP_LIMIT`. A block that cannot fit
+ * even flush against the top is centred on the whole frame, overflowing top
+ * and bottom equally: flooring it would run the whole excess off the bottom
+ * edge, which on a 9:16 slide is where a platform's caption and action
+ * chrome sit, and would clip a total just under 1 while headroom sits unused
+ * above it.
+ */
+function fallbackTextTop(total: number): number {
+  return total > 1 - TEXT_TOP_LIMIT
+    ? (1 - total) / 2
+    : Math.max(TEXT_TOP_LIMIT, 1 - TEXT_BOTTOM_MARGIN - total);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 /**
@@ -431,39 +453,49 @@ function textHeight(
   return content / height;
 }
 
-/** Spreads assets above the text block, at most three to a row, never overlapping it. */
+/**
+ * Places assets above `areaBottom`. A lone asset sits top left, at most
+ * ASSET_MAX_WIDTH wide. Several share rows of at most three, centred in the
+ * band left of SAFE_RIGHT.
+ */
 function layoutAssets(
   assets: LibraryItem[],
   height: number,
-  textBlockTop: number,
+  areaBottom: number,
 ): PlacedAsset[] {
   if (!assets.length) return [];
   const areaTop = ASSET_TOP_MARGIN;
-  // A block that overflows the top of the frame (textBlockTop < 0, possible
-  // now that a fixed size can no longer shrink to fit — layoutTexts) leaves
-  // no real boundary inside the frame to lay out against: text and assets
-  // are already going to overlap somewhere no matter what this picks. Rather
-  // than feed that off-canvas number into the same arithmetic and let the
-  // 0.08 floor below eat it, this falls back to the frame's own bottom
-  // margin — the area assets would get if there were no text at all — so an
-  // account's overflowing caption can no longer collapse every asset on the
-  // slide to a sliver as a side effect nobody chose.
-  const areaBottom =
-    textBlockTop >= 0
-      ? Math.max(areaTop + 0.08, textBlockTop - 0.04)
-      : 1 - TEXT_BOTTOM_MARGIN;
-  const areaHeight = areaBottom - areaTop;
+  // A tall text block leaves almost no room above it. The floor keeps every
+  // asset visible, even if the text below it then leaves the safe zone or,
+  // for a block taller than the zone, overlaps it.
+  const bottom = Math.max(areaTop + 0.08, areaBottom);
+  const aspectOf = (item: LibraryItem) => (item.height || 1) / (item.width || 1);
+
+  const [lone] = assets;
+  if (lone && assets.length === 1) {
+    const aspect = aspectOf(lone);
+    let width = ASSET_MAX_WIDTH;
+    let boxHeight = (width * DESIGN_WIDTH * aspect) / height;
+    if (ASSET_TOP + boxHeight > bottom) {
+      boxHeight = bottom - ASSET_TOP;
+      width = (boxHeight * height) / (DESIGN_WIDTH * aspect);
+    }
+    return [{ item: lone, x: ASSET_LEFT, y: ASSET_TOP, width, height: boxHeight }];
+  }
+
+  const areaHeight = bottom - areaTop;
   const rows = chunk(assets, ASSET_ROW_MAX);
   const rowHeight = (areaHeight - ASSET_GAP * (rows.length - 1)) / rows.length;
   const placed: PlacedAsset[] = [];
   // Every row uses the same column count, so a partial last row keeps the same
   // item size and simply sits centered instead of stretching.
   const columns = Math.min(assets.length, ASSET_ROW_MAX);
-  const slotWidth = (CONTENT_WIDTH - ASSET_GAP * (columns - 1)) / columns;
+  const bandWidth = SAFE_RIGHT - SIDE_MARGIN;
+  const slotWidth = (bandWidth - ASSET_GAP * (columns - 1)) / columns;
 
   rows.forEach((row, rowIndex) => {
     const sized = row.map((item) => {
-      const aspect = (item.height || 1) / (item.width || 1);
+      const aspect = aspectOf(item);
       let width = slotWidth;
       let boxHeight = (width * DESIGN_WIDTH * aspect) / height;
       if (boxHeight > rowHeight) {
@@ -476,7 +508,7 @@ function layoutAssets(
       sized.reduce((sum, box) => sum + box.width, 0) + ASSET_GAP * (row.length - 1);
     const tallest = Math.max(...sized.map((box) => box.height));
     const rowTop = areaTop + rowIndex * (rowHeight + ASSET_GAP);
-    let cursor = (1 - rowWidth) / 2;
+    let cursor = SIDE_MARGIN + (bandWidth - rowWidth) / 2;
     for (const box of sized) {
       placed.push({
         item: box.item,

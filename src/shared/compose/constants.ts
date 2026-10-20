@@ -7,37 +7,64 @@
 /** Side gutter, as a fraction of the slide width (server/compose.mjs:6). */
 export const SIDE_MARGIN = 0.06;
 
-/** The band a text spans between the two gutters (server/compose.mjs:7). */
-export const CONTENT_WIDTH = 1 - SIDE_MARGIN * 2;
-
 /** Clearance kept below the last text (server/compose.mjs:8). */
 export const TEXT_BOTTOM_MARGIN = 0.08;
 
-/** Preferred spacing between stacked texts (server/compose.mjs:9). */
-export const TEXT_GAP = 0.022;
-
-/** The spacing tried once the preferred one overflows (server/compose.mjs:10). */
-export const TEXT_GAP_TIGHT = 0.01;
-
 /**
- * The tallest a text block may be at TEXT_GAP before layoutTexts falls back
- * to TEXT_GAP_TIGHT instead (server/compose.mjs:11). Originally the point
- * past which the size ladder shrank the block to fit; the ladder is gone
- * (product decision, see this file's own header comment), so past this a
- * block only tries the tighter gap — nothing shrinks any more.
+ * Spacing between stacked texts. Zero, because on published slideshows the
+ * pills touch and read as one block (median gap −0.017).
  */
-export const TEXT_BLOCK_MAX = 0.46;
+export const TEXT_GAP = 0;
 
 /**
  * The highest a text block may start when it fits within the frame between
  * this and TEXT_BOTTOM_MARGIN (server/compose.mjs:14). A block too tall for
- * that is centered on the whole frame instead (layoutTexts), so this is not
+ * that is centered on the whole frame instead (fallbackTextTop in compose.ts), so this is not
  * a hard floor: an unfittable block's top can sit above it.
  */
 export const TEXT_TOP_LIMIT = 0.02;
 
 /** Clearance kept above the first asset row (server/compose.mjs:16). */
 export const ASSET_TOP_MARGIN = 0.07;
+
+// The safe zone and the placement targets below are measured on the 929
+// slides published by hand before 2026-10-20, where nearly every text and
+// asset was moved off the old defaults. TikTok draws its tabs above
+// SAFE_TOP, its caption below SAFE_BOTTOM and its action buttons right of
+// SAFE_RIGHT.
+
+/** Top edge of the safe zone, as a fraction of the slide height. */
+export const SAFE_TOP = 0.07;
+
+/** Bottom edge of the safe zone, as a fraction of the slide height. */
+export const SAFE_BOTTOM = 0.8;
+
+/** Right edge of the safe zone, as a fraction of the slide width. */
+export const SAFE_RIGHT = 0.76;
+
+/** Left edge of a composed text. */
+export const TEXT_LEFT = 0.1;
+
+/** Vertical centre of the first slide's text block, the hook. */
+export const TEXT_CENTER_FIRST = 0.36;
+
+/** Vertical centre of a middle slide's text block. */
+export const TEXT_CENTER_MIDDLE = 0.47;
+
+/** Vertical centre of the last slide's text block, the call to action. */
+export const TEXT_CENTER_LAST = 0.55;
+
+/** Left edge of a lone asset. */
+export const ASSET_LEFT = 0.14;
+
+/** Top edge of a lone asset. */
+export const ASSET_TOP = 0.1;
+
+/** The widest a lone asset may be. */
+export const ASSET_MAX_WIDTH = 0.4;
+
+/** Clearance kept between the lowest asset and the text block below it. */
+export const ASSET_TEXT_GAP = 0.02;
 
 /** Spacing between assets, both across a row and between rows (server/compose.mjs:17). */
 export const ASSET_GAP = 0.03;
