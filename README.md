@@ -151,7 +151,7 @@ If `SLIDE_STUDIO_PASSWORD` is set, add a bearer token instead. See
 | `create_account`       | Create an account, with partial defaults                            |
 | `update_account`       | Rename an account or change its defaults                            |
 | `add_library_item`     | Add an image to a library from a URL or base64                      |
-| `update_library_item`  | Rewrite an item's name, description, usage, or tags                 |
+| `update_library_item`  | Rewrite an item's name, description, usage, tags, or layout hints   |
 | `preview_slideshow`    | See approximate JPEGs of a slideshow's slides, with layout warnings |
 
 ### 4. How to draft a slideshow
@@ -235,6 +235,11 @@ to action). A lone asset sits top left, at most 40% of the width, and the text
 moves below it when the two would overlap. Several assets share rows above the
 text. A block too tall for the safe zone is placed as before: at the bottom, or
 centred when it cannot fit the slide.
+
+A background can carry `layoutHints` that say where its text goes. The server
+moves the block into the `freeZone` third of the image, at the spot nearest its
+role target, and off the `subject` box when another spot fits. A background with
+no hints keeps the placement above.
 
 To make one line stand out, such as a hook set larger than the rest, pass that
 line as an object instead of a string. A field you leave out takes the account's
@@ -353,8 +358,23 @@ on a private address, a download over 25 MB, and one that takes longer than 10
 seconds. If the account already holds the same image as the same kind, nothing is added: the
 existing item comes back with `duplicateOf`, so you can run an import again.
 
-`update_library_item` rewrites a name, a description, a usage note, or the tags.
-A field you leave out keeps its value.
+`update_library_item` rewrites a name, a description, a usage note, the tags, or
+the layout hints. A field you leave out keeps its value.
+
+Give every background `layoutHints` once. To fill them, fetch its `url` and look
+at the image. All values are fractions of the image:
+
+```json
+"layoutHints": {
+  "freeZone": "top",
+  "subject": { "x": 0.25, "y": 0.4, "w": 0.5, "h": 0.35 }
+}
+```
+
+`freeZone` is the third with the most empty space: `top`, `middle`, or
+`bottom`. `subject` is the box around the face or the main subject. Hints apply
+to slides composed afterwards only. An existing slide keeps its layout, and
+`layoutHints: null` clears them.
 
 `list_library` returns at most 200 items. To read a larger library, pass
 `offset` and keep paging until it reaches `total`. Each item carries an absolute

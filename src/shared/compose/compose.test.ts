@@ -24,7 +24,7 @@ import {
   TEXT_LEFT,
   TEXT_TOP_LIMIT,
 } from "./constants.js";
-import { DESIGN_WIDTH, outputHeight } from "../geometry/index.js";
+import { DESIGN_WIDTH, getImageLayout, outputHeight } from "../geometry/index.js";
 import {
   DEFAULT_ADVANCE_RATIO,
   TEXT_WRAP_INSET,
@@ -34,9 +34,9 @@ import {
 import { BUILTIN_DEFAULTS } from "../schema/index.js";
 import type { AccountDefaults } from "../schema/index.js";
 
-// compose reads only id, kind, width and height off a library item, so the
-// stub carries those and nothing else.
-type StubItem = Pick<LibraryItem, "id" | "kind" | "width" | "height">;
+// compose reads only id, kind, width, height and layout hints off a library
+// item, so the stub carries those and nothing else.
+type StubItem = Pick<LibraryItem, "id" | "kind" | "width" | "height" | "layoutHints">;
 
 const items: Record<string, StubItem> = {
   bg1: { id: "bg1", kind: "background", width: 1080, height: 1920 },
@@ -45,6 +45,59 @@ const items: Record<string, StubItem> = {
   a2: { id: "a2", kind: "asset", width: 200, height: 400 },
   a3: { id: "a3", kind: "asset", width: 300, height: 300 },
   a4: { id: "a4", kind: "asset", width: 500, height: 100 },
+  // Portrait photos the shape of a 9:16 slide, so on PORTRAIT an image
+  // fraction is a slide fraction.
+  emptyHints: {
+    id: "emptyHints",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: {},
+  },
+  topZone: {
+    id: "topZone",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: { freeZone: "top" },
+  },
+  middleFace: {
+    id: "middleFace",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: { subject: { x: 0.2, y: 0.4, w: 0.6, h: 0.2 } },
+  },
+  bottomZoneMiddleFace: {
+    id: "bottomZoneMiddleFace",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: { freeZone: "bottom", subject: { x: 0.2, y: 0.4, w: 0.6, h: 0.2 } },
+  },
+  // Subject at 0.22 to 0.28, inside the top zone, just above the block's
+  // spot at the zone's bottom: below it would leave the zone, above it stays.
+  topZoneSmallFace: {
+    id: "topZoneSmallFace",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: { freeZone: "top", subject: { x: 0.2, y: 0.22, w: 0.6, h: 0.06 } },
+  },
+  tallFace: {
+    id: "tallFace",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: { subject: { x: 0.2, y: 0, w: 0.6, h: 1 } },
+  },
+  faceOnTheRight: {
+    id: "faceOnTheRight",
+    kind: "background",
+    width: 1080,
+    height: 1920,
+    layoutHints: { subject: { x: 0.8, y: 0.4, w: 0.2, h: 0.2 } },
+  },
 };
 
 const library: LibraryLookup = {
@@ -779,6 +832,81 @@ describe("layout", () => {
     expect(total).toBeLessThan(1.01);
     expect(first.y).toBeCloseTo((1 - total) / 2, 10);
     expect(first.y).toBeLessThan(0);
+  });
+});
+
+describe("layout hints on the background", () => {
+  const middleSlide = (background: string, ratio = PORTRAIT): Slide =>
+    at(
+      compose(
+        [
+          { background: "bg1", texts: ["Hook"] },
+          { background, texts: ["A middle slide", "with two lines"] },
+          { background: "bg1", texts: ["Follow"] },
+        ],
+        { ratio },
+      ).slides,
+      1,
+    );
+  const geometry = (slide: Slide) =>
+    slide.texts.map(({ x, y, height }) => ({ x, y, height }));
+  const span = (slide: Slide) => ({
+    top: Math.min(...slide.texts.map((text) => text.y)),
+    bottom: Math.max(...slide.texts.map((text) => text.y + text.height)),
+  });
+
+  it("places a middle slide's text in a free zone at the top", () => {
+    const { top, bottom } = span(middleSlide("topZone"));
+    expect(top).toBeGreaterThanOrEqual(SAFE_TOP);
+    expect(bottom).toBeLessThanOrEqual(1 / 3 + 1e-9);
+    // The role target sits below the zone, so the block touches its bottom.
+    expect(bottom).toBeCloseTo(1 / 3, 9);
+  });
+
+  it("gives an empty hint exactly the layout of no hint", () => {
+    expect(geometry(middleSlide("emptyHints"))).toEqual(geometry(middleSlide("bg1")));
+  });
+
+  it("moves the text off a subject it would cover", () => {
+    // Unhinted, the middle block centres on 0.47, right over 0.40 to 0.60.
+    const before = span(middleSlide("bg1"));
+    expect(before.top < 0.6 && before.bottom > 0.4).toBe(true);
+    const { top, bottom } = span(middleSlide("middleFace"));
+    expect(bottom <= 0.4 + 1e-9 || top >= 0.6 - 1e-9).toBe(true);
+    expect(top).toBeGreaterThanOrEqual(SAFE_TOP);
+    expect(bottom).toBeLessThanOrEqual(SAFE_BOTTOM + 1e-9);
+  });
+
+  it("keeps the free zone when it already clears the subject", () => {
+    const { top, bottom } = span(middleSlide("bottomZoneMiddleFace"));
+    expect(top).toBeGreaterThanOrEqual(2 / 3 - 1e-9);
+    expect(bottom).toBeLessThanOrEqual(SAFE_BOTTOM + 1e-9);
+  });
+
+  it("dodges a subject inside the free zone without leaving the zone", () => {
+    const { top, bottom } = span(middleSlide("topZoneSmallFace"));
+    expect(bottom).toBeLessThanOrEqual(0.22 + 1e-9);
+    expect(top).toBeGreaterThanOrEqual(SAFE_TOP);
+  });
+
+  it("keeps the role placement when no spot clears the subject", () => {
+    expect(geometry(middleSlide("tallFace"))).toEqual(geometry(middleSlide("bg1")));
+  });
+
+  it("ignores a subject beside the text column", () => {
+    expect(geometry(middleSlide("faceOnTheRight"))).toEqual(geometry(middleSlide("bg1")));
+  });
+
+  it("reads the subject through the background's crop on another ratio", () => {
+    // A 9:16 photo covering a 3:4 slide loses its top and bottom, so image
+    // fractions 0.4 to 0.6 land wider apart on the slide.
+    const ratio = { w: 3, h: 4 };
+    const height = outputHeight(ratio);
+    const layout = getImageLayout({ width: 1080, height: 1920 }, DESIGN_WIDTH, height);
+    const subjectTop = (layout.top + 0.4 * layout.height) / height;
+    const subjectBottom = (layout.top + 0.6 * layout.height) / height;
+    const { top, bottom } = span(middleSlide("middleFace", ratio));
+    expect(bottom <= subjectTop + 1e-9 || top >= subjectBottom - 1e-9).toBe(true);
   });
 });
 

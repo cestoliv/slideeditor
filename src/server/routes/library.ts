@@ -41,6 +41,7 @@ export function libraryRoutes(app: FastifyInstance): void {
       width: field(body, "width"),
       height: field(body, "height"),
       accountId: field(body, "accountId"),
+      layoutHints: field(body, "layoutHints"),
       bytes,
     });
     return { item };
@@ -55,6 +56,7 @@ export function libraryRoutes(app: FastifyInstance): void {
         usage: field(body, "usage"),
         tags: field(body, "tags"),
         kind: field(body, "kind"),
+        layoutHints: field(body, "layoutHints"),
       }),
     };
   });

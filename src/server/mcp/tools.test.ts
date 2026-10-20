@@ -479,7 +479,7 @@ const PINNED = [
     name: "list_library",
     title: "List library images",
     description:
-      "List or search the background and asset libraries. Read each item's `description` (what the image shows) and `usage` (when and how to use it) to choose well. Each item also carries `stats`, a record of how often it has been used before. When several items fit the slide equally well, pick the one with the lower `stats.timesUsed`, or the older `stats.lastUsedAt`, so slideshows do not all end up looking the same. Sort by `least-used` to see the neglected ones first. Returns ids to pass to create_slideshow.",
+      "List or search the background and asset libraries. Read each item's `description` (what the image shows) and `usage` (when and how to use it) to choose well. Each item also carries `stats`, a record of how often it has been used before. When several items fit the slide equally well, pick the one with the lower `stats.timesUsed`, or the older `stats.lastUsedAt`, so slideshows do not all end up looking the same. Sort by `least-used` to see the neglected ones first. A background without `layoutHints` has not been reviewed yet: open its `url`, look at it, and write them with update_library_item. Returns ids to pass to create_slideshow.",
   },
   {
     name: "get_library_item",
@@ -557,13 +557,13 @@ const PINNED = [
     name: "add_library_item",
     title: "Add a library image",
     description:
-      "Add one image to an account's library, from a public `url` or from base64 `data`. Pass exactly one. PNG, JPEG, WebP and GIF up to 25 MB are accepted. A URL has 10 seconds to download and must not point at a private address. Write `description` (what the image shows) and `usage` (when to use it): list_library is how you choose images later, and it reads only those. If the account already holds the same image as the same kind, nothing is added: the existing item comes back with `duplicateOf`, so an import can be run again safely.",
+      "Add one image to an account's library, from a public `url` or from base64 `data`. Pass exactly one. PNG, JPEG, WebP and GIF up to 25 MB are accepted. A URL has 10 seconds to download and must not point at a private address. Write `description` (what the image shows) and `usage` (when to use it): list_library is how you choose images later, and it reads only those. If the account already holds the same image as the same kind, nothing is added: the existing item comes back with `duplicateOf`, so an import can be run again safely. For a background, look at the image and fill `layoutHints`.",
   },
   {
     name: "update_library_item",
     title: "Describe a library image",
     description:
-      "Rewrite a library item's name, description, usage or tags. Fields you leave out keep their value. Tags you send replace the item's tags. An item's kind cannot change, because slideshows already place it as a background or an asset.",
+      "Rewrite a library item's name, description, usage, tags or layout hints. Fields you leave out keep their value. Tags and layout hints you send replace the old ones, and `layoutHints: null` clears them. When you review a background, look at its image and fill `layoutHints`. Hints change only slides composed afterwards. An item's kind cannot change, because slideshows already place it as a background or an asset.",
   },
   {
     name: "preview_slideshow",
@@ -1316,6 +1316,56 @@ it("updates only the fields sent, normalising tags", async () => {
   ) as ItemBody;
   expect(body.item.name).toBe("Sunset");
   expect(body.item.tags).toEqual(["hook", "proof"]);
+});
+
+it("stores layout hints, lists them, and clears them with null", async () => {
+  const id = await background("Portrait");
+  const layoutHints = {
+    freeZone: "top" as const,
+    subject: { x: 0.2, y: 0.4, w: 0.6, h: 0.3 },
+  };
+  await tools.update_library_item.handler({ id, layoutHints }, context);
+  const listed = payload(await tools.list_library.handler({}, context)) as {
+    items: { id: string; layoutHints?: unknown }[];
+  };
+  expect(listed.items.find((item) => item.id === id)?.layoutHints).toEqual(layoutHints);
+  // A patch that leaves the hints out keeps them.
+  const renamed = payload(
+    await tools.update_library_item.handler({ id, name: "Face" }, context),
+  ) as { item: { layoutHints?: unknown } };
+  expect(renamed.item.layoutHints).toEqual(layoutHints);
+  const cleared = payload(
+    await tools.update_library_item.handler({ id, layoutHints: null }, context),
+  ) as { item: { layoutHints?: unknown } };
+  expect(cleared.item.layoutHints).toBeUndefined();
+});
+
+it("composes a middle slide into its background's free zone", async () => {
+  const id = await background("Portrait");
+  await tools.update_library_item.handler(
+    { id, layoutHints: { freeZone: "top" } },
+    context,
+  );
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        ratio: { w: 9, h: 16 },
+        slides: ["Hook", "Middle", "Follow"].map((text) => ({
+          background: id,
+          texts: [text],
+        })),
+      },
+      context,
+    ),
+  ) as { id: string };
+  // The fixture is square, so on a 9:16 slide the cover crop trims only its
+  // sides, and the top third of the image is the top third of the slide.
+  const project = harness.services.projects.require(created.id);
+  const middle = project.slides[1] as { texts: { y: number; height: number }[] };
+  const [text] = middle.texts;
+  expect(text?.y).toBeGreaterThanOrEqual(0.07);
+  expect((text?.y ?? 1) + (text?.height ?? 0)).toBeLessThanOrEqual(1 / 3 + 1e-9);
 });
 
 it("pages the library with offset, and counts every search match", async () => {

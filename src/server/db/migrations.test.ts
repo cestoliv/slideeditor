@@ -30,7 +30,7 @@ it("creates the auth tables and lands on the current version", () => {
       "slideshow_render_variant",
     ]),
   );
-  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(10);
+  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(11);
   db.close();
 });
 
@@ -67,6 +67,8 @@ it("adds composed_document to a slideshow that already exists, empty", () => {
   const paths = dataPaths(directory);
   const before = openDb(paths.database);
   before.exec("ALTER TABLE project DROP COLUMN composed_document");
+  // Added by a later migration, so a database at version 9 never had it.
+  before.exec("ALTER TABLE library_item DROP COLUMN layout_hints");
   before.exec("PRAGMA user_version = 9");
   before
     .prepare(
@@ -77,10 +79,31 @@ it("adds composed_document to a slideshow that already exists, empty", () => {
   before.close();
 
   const after = openDb(paths.database);
-  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(10);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(11);
   expect(
     after.prepare("SELECT composed_document FROM project WHERE id = 'p1'").get(),
   ).toEqual({ composed_document: null });
+  after.close();
+});
+
+it("adds empty layout_hints to a library item that already exists", () => {
+  const paths = dataPaths(directory);
+  const before = openDb(paths.database);
+  before.exec("ALTER TABLE library_item DROP COLUMN layout_hints");
+  before.exec("PRAGMA user_version = 10");
+  before
+    .prepare(
+      `INSERT INTO library_item (id, kind, name, media_id, ext, width, height, account_id, created_at, updated_at)
+       VALUES ('i1', 'background', 'Beach', 'm1', 'png', 10, 10, 'default', 0, 0)`,
+    )
+    .run();
+  before.close();
+
+  const after = openDb(paths.database);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(11);
+  expect(
+    after.prepare("SELECT layout_hints FROM library_item WHERE id = 'i1'").get(),
+  ).toEqual({ layout_hints: "" });
   after.close();
 });
 
@@ -130,6 +153,7 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.exec("DROP INDEX library_item_account_idx");
   before.exec("ALTER TABLE project DROP COLUMN account_id");
   before.exec("ALTER TABLE library_item DROP COLUMN account_id");
+  before.exec("ALTER TABLE library_item DROP COLUMN layout_hints");
   before.exec("DROP TABLE font");
   before.exec("DROP TABLE account");
   before.exec("DROP TABLE slideshow_render");
@@ -139,7 +163,7 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.close();
 
   const after = openDb(paths.database, paths.token);
-  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(10);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(11);
   expect(after.prepare("SELECT name FROM auth_token").get()?.["name"]).toBe("legacy");
   after.close();
 });

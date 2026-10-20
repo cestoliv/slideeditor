@@ -7,6 +7,7 @@ import {
 } from "../../shared/compose/index.js";
 import type { Composition, CompositionSource } from "../../shared/compose/index.js";
 import {
+  layoutHintsSchema,
   styledTextSchema,
   type LibraryItem,
   type Slide,
@@ -165,7 +166,9 @@ const listLibrary = defineTool({
     "and `usage` (when and how to use it) to choose well. Each item also carries `stats`, a record of how often " +
     "it has been used before. When several items fit the slide equally well, pick the one with the lower " +
     "`stats.timesUsed`, or the older `stats.lastUsedAt`, so slideshows do not all end up looking the same. " +
-    "Sort by `least-used` to see the neglected ones first. Returns ids to pass to create_slideshow.",
+    "Sort by `least-used` to see the neglected ones first. A background without `layoutHints` has not been " +
+    "reviewed yet: open its `url`, look at it, and write them with update_library_item. Returns ids to pass " +
+    "to create_slideshow.",
   inputSchema: {
     kind: z
       .enum(["background", "asset"])
@@ -219,6 +222,7 @@ const listLibrary = defineTool({
         height: item.height,
         url: absoluteUrl(baseUrl(), item.url),
         stats: item.stats,
+        ...(item.layoutHints ? { layoutHints: item.layoutHints } : {}),
       })),
     });
   },
@@ -789,6 +793,14 @@ const ACCOUNT_DEFAULTS_SHAPE = z
     "The look new slideshows start from. A field you leave out keeps its current value, or the built-in default on a new account.",
   );
 
+const LAYOUT_HINTS_SHAPE = layoutHintsSchema.describe(
+  "Where a background leaves room for text, in fractions of the image (0 is the top or left edge, 1 the " +
+    "bottom or right). Look at the image before you write this. `freeZone` is the third of the image with " +
+    "the most empty space for text: `top`, `middle` or `bottom`. `subject` is the box around the face or " +
+    "the main subject, {x, y, w, h}, which text must not cover. create_slideshow puts the text in the free " +
+    "zone and off the subject. Ignored on an asset.",
+);
+
 const TAGS_SHAPE = z
   .union([z.array(z.string()), z.string()])
   .describe(
@@ -835,7 +847,7 @@ const addLibraryItem = defineTool({
     "must not point at a private address. Write `description` (what the image shows) and `usage` (when " +
     "to use it): list_library is how you choose images later, and it reads only those. If the account " +
     "already holds the same image as the same kind, nothing is added: the existing item comes back with `duplicateOf`, so " +
-    "an import can be run again safely.",
+    "an import can be run again safely. For a background, look at the image and fill `layoutHints`.",
   inputSchema: {
     accountId: z.string().describe("The account the image belongs to."),
     kind: z
@@ -845,6 +857,7 @@ const addLibraryItem = defineTool({
     description: z.string().trim().min(1).describe("What the image shows."),
     usage: z.string().trim().min(1).describe("When and how to use it on a slide."),
     tags: TAGS_SHAPE.optional(),
+    layoutHints: LAYOUT_HINTS_SHAPE.optional(),
     url: z.string().optional().describe("Public http or https URL of the image."),
     data: z.string().optional().describe("The image as base64, or as a data: URI."),
     contentType: z
@@ -881,6 +894,7 @@ const addLibraryItem = defineTool({
       description: args.description,
       usage: args.usage,
       tags: args.tags,
+      layoutHints: args.layoutHints,
       contentType: image.contentType,
       bytes: image.bytes,
       accountId: args.accountId,
@@ -893,18 +907,24 @@ const updateLibraryItem = defineTool({
   name: "update_library_item",
   title: "Describe a library image",
   description:
-    "Rewrite a library item's name, description, usage or tags. Fields you leave out keep their value. " +
-    "Tags you send replace the item's tags. An item's kind cannot change, because slideshows already " +
-    "place it as a background or an asset.",
+    "Rewrite a library item's name, description, usage, tags or layout hints. Fields you leave out keep " +
+    "their value. Tags and layout hints you send replace the old ones, and `layoutHints: null` clears them. " +
+    "When you review a background, look at its image and fill `layoutHints`. Hints change only slides " +
+    "composed afterwards. An item's kind cannot change, because slideshows already place it as a " +
+    "background or an asset.",
   inputSchema: {
     id: z.string().describe("Library item id."),
     name: z.string().optional(),
     description: z.string().optional().describe("What the image shows."),
     usage: z.string().optional().describe("When and how to use it on a slide."),
     tags: TAGS_SHAPE.optional(),
+    layoutHints: LAYOUT_HINTS_SHAPE.nullable().optional(),
   },
-  async handler({ id, name, description, usage, tags }, { library, baseUrl }) {
-    const item = library.update(id, { name, description, usage, tags });
+  async handler(
+    { id, name, description, usage, tags, layoutHints },
+    { library, baseUrl },
+  ) {
+    const item = library.update(id, { name, description, usage, tags, layoutHints });
     return json({ item: withAbsoluteUrl(item, baseUrl()) });
   },
 });

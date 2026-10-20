@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { layoutHintsSchema } from "../../shared/schema/index.js";
 import type {
+  LayoutHints,
   LibraryItem,
   LibraryKind,
   LibrarySort,
@@ -67,6 +69,7 @@ export interface LibraryCreateInput {
   width?: unknown;
   height?: unknown;
   accountId: unknown;
+  layoutHints?: unknown;
 }
 
 export type LibraryPatch = Partial<{
@@ -75,6 +78,7 @@ export type LibraryPatch = Partial<{
   usage: unknown;
   tags: unknown;
   kind: unknown;
+  layoutHints: unknown;
 }>;
 
 /** A slideshow that would break if the item went away. Declared in @shared/schema. */
@@ -249,6 +253,7 @@ export class LibraryService {
     width,
     height,
     accountId,
+    layoutHints,
   }: LibraryCreateInput): Promise<LibraryItem> {
     if (!isKind(kind)) throw new HttpError(400, `Unknown kind: ${kind}`);
     const account = requireAccountId(this.accounts, accountId, "A library item");
@@ -257,6 +262,7 @@ export class LibraryService {
       throw new HttpError(413, "Images must be 25MB or smaller.");
     const ext = extensionForType(contentType);
     if (!ext) throw new HttpError(415, `Unsupported image type: ${contentType}`);
+    const hints = cleanHints(layoutHints);
 
     // Trust the file's own header first. Client values only fill in for the
     // formats the parser does not decode.
@@ -279,8 +285,8 @@ export class LibraryService {
     this.db
       .prepare(
         `
-      INSERT INTO library_item (id, kind, name, description, usage, tags, media_id, ext, width, height, account_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO library_item (id, kind, name, description, usage, tags, media_id, ext, width, height, account_id, layout_hints, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -295,6 +301,7 @@ export class LibraryService {
         Math.round(measured.width),
         Math.round(measured.height),
         account,
+        hints,
         now,
         now,
       );
@@ -313,15 +320,28 @@ export class LibraryService {
       usage: patch.usage === undefined ? existing.usage : cleanText(patch.usage),
       tags: patch.tags === undefined ? existing.tags.join(", ") : cleanTags(patch.tags),
       kind: patch.kind === undefined ? existing.kind : patch.kind,
+      layoutHints:
+        patch.layoutHints === undefined
+          ? cleanHints(existing.layoutHints)
+          : cleanHints(patch.layoutHints),
     };
     if (!isKind(next.kind)) throw new HttpError(400, `Unknown kind: ${next.kind}`);
     this.db
       .prepare(
         `
-      UPDATE library_item SET name = ?, description = ?, usage = ?, tags = ?, kind = ?, updated_at = ? WHERE id = ?
+      UPDATE library_item SET name = ?, description = ?, usage = ?, tags = ?, kind = ?, layout_hints = ?, updated_at = ? WHERE id = ?
     `,
       )
-      .run(next.name, next.description, next.usage, next.tags, next.kind, Date.now(), id);
+      .run(
+        next.name,
+        next.description,
+        next.usage,
+        next.tags,
+        next.kind,
+        next.layoutHints,
+        Date.now(),
+        id,
+      );
     return this.require(id);
   }
 
@@ -376,6 +396,7 @@ function toItem(row: Row): LibraryItem {
   const mediaId = text(row, "media_id");
   const ext = text(row, "ext");
   const tags = text(row, "tags");
+  const hints = readHints(text(row, "layout_hints"));
   return {
     id: text(row, "id"),
     kind: text(row, "kind") === "asset" ? "asset" : "background",
@@ -402,7 +423,36 @@ function toItem(row: Row): LibraryItem {
       firstUsedAt: optionalInteger(row, "first_used_at") || null,
       lastUsedAt: optionalInteger(row, "last_used_at") || null,
     },
+    ...(hints ? { layoutHints: hints } : {}),
   };
+}
+
+/**
+ * The column text for a hint sent over the wire. `null` and `{}` clear it,
+ * and anything the schema refuses is a 400 that names the bad field.
+ */
+function cleanHints(value: unknown): string {
+  if (value == null) return "";
+  const parsed = layoutHintsSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new HttpError(
+      400,
+      `layoutHints is invalid at ${issue?.path.join(".") || "layoutHints"}: ${issue?.message ?? "bad value"}`,
+    );
+  }
+  return Object.keys(parsed.data).length ? JSON.stringify(parsed.data) : "";
+}
+
+function readHints(stored: string): LayoutHints | null {
+  if (!stored) return null;
+  try {
+    const parsed = layoutHintsSchema.safeParse(JSON.parse(stored));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    // A hand-edited column must not take the whole library listing down.
+    return null;
+  }
 }
 
 /** The two kinds a library item can be. Replaces the KINDS set, which could not narrow. */

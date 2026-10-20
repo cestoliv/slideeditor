@@ -1,6 +1,7 @@
 import {
   DESIGN_WIDTH,
   ensureBoxedTextContrast,
+  getImageLayout,
   outputHeight,
 } from "../geometry/index.js";
 import {
@@ -18,8 +19,10 @@ import {
   advanceRatioFor as defaultAdvanceRatioFor,
   wrapText,
 } from "../text/index.js";
+import type { ImageSlide } from "../geometry/index.js";
 import type {
   AccountDefaults,
+  LayoutHints,
   LibraryItem,
   LibraryKind,
   Overlay,
@@ -264,10 +267,34 @@ function composeSlide({
     -Infinity,
     ...laidOutAssets.map((asset) => asset.y + asset.height),
   );
+  const imageScale = previousSlide?.imageScale ?? 1;
+  const imageX = previousSlide?.imageX ?? 0;
+  const imageY = previousSlide?.imageY ?? 0;
+  const target = roleCenter(index, slideCount);
   const textTop = fitsSafeZone
-    ? Math.max(
-        clamp(roleCenter(index, slideCount) - total / 2, SAFE_TOP, SAFE_BOTTOM - total),
-        lowestAsset + ASSET_TEXT_GAP,
+    ? hintedTextTop(
+        Math.max(
+          clamp(target - total / 2, SAFE_TOP, SAFE_BOTTOM - total),
+          lowestAsset + ASSET_TEXT_GAP,
+        ),
+        {
+          total,
+          target,
+          minTop: Math.max(SAFE_TOP, lowestAsset + ASSET_TEXT_GAP),
+          left: textLeft(defaults.text.maxWidth),
+          width: defaults.text.maxWidth,
+          hints: background.layoutHints,
+          image: toSlideFractions(
+            {
+              width: background.width,
+              height: background.height,
+              imageScale,
+              imageX,
+              imageY,
+            },
+            height,
+          ),
+        },
       )
     : fallbackTop;
   let cursor = textTop;
@@ -285,9 +312,9 @@ function composeSlide({
     backgroundItemId: background.id,
     width: background.width,
     height: background.height,
-    imageScale: previousSlide?.imageScale ?? 1,
-    imageX: previousSlide?.imageX ?? 0,
-    imageY: previousSlide?.imageY ?? 0,
+    imageScale,
+    imageX,
+    imageY,
     overlays: [],
     texts: [],
   };
@@ -389,6 +416,80 @@ function roleCenter(index: number, slideCount: number): number {
   if (index === 0) return TEXT_CENTER_FIRST;
   return index === slideCount - 1 ? TEXT_CENTER_LAST : TEXT_CENTER_MIDDLE;
 }
+
+interface HintedPlacement {
+  total: number;
+  target: number;
+  minTop: number;
+  left: number;
+  width: number;
+  hints: LayoutHints | undefined;
+  image: ImageToSlide;
+}
+
+/** Maps a fraction of the background image to a fraction of the slide. */
+interface ImageToSlide {
+  x(value: number): number;
+  y(value: number): number;
+}
+
+function toSlideFractions(slide: ImageSlide, height: number): ImageToSlide {
+  const layout = getImageLayout(slide, DESIGN_WIDTH, height);
+  return {
+    x: (value) => (layout.left + value * layout.width) / DESIGN_WIDTH,
+    y: (value) => (layout.top + value * layout.height) / height,
+  };
+}
+
+/**
+ * Moves a text block that fits the safe zone to where the background leaves
+ * room for it. The free zone is a third of the image. The block goes to the
+ * spot in it nearest the role target, and stays where it was when the zone is
+ * too short. A subject the block would cover pushes it just above or just
+ * below, whichever is closer, if either still fits. With no hint, `top` comes
+ * back unchanged.
+ */
+function hintedTextTop(
+  top: number,
+  { total, target, minTop, left, width, hints, image }: HintedPlacement,
+): number {
+  const maxTop = SAFE_BOTTOM - total;
+  let placed = top;
+  let inZone = (_y: number) => false;
+  if (hints?.freeZone) {
+    const third = FREE_ZONE_THIRD[hints.freeZone];
+    const zoneTop = Math.max(minTop, image.y(third / 3));
+    const zoneBottom = Math.min(SAFE_BOTTOM, image.y((third + 1) / 3));
+    if (zoneBottom - zoneTop >= total) {
+      placed = clamp(target - total / 2, zoneTop, zoneBottom - total);
+      inZone = (y) => y >= zoneTop - 1e-9 && y + total <= zoneBottom + 1e-9;
+    }
+  }
+  const subject = hints?.subject;
+  if (!subject) return placed;
+  const subjectTop = image.y(subject.y);
+  const subjectBottom = image.y(subject.y + subject.h);
+  // The tolerance lets a block placed flush against the subject count as clear.
+  const covers = (y: number) => y < subjectBottom - 1e-9 && y + total > subjectTop + 1e-9;
+  const besideSubject =
+    image.x(subject.x + subject.w) <= left || image.x(subject.x) >= left + width;
+  if (besideSubject || !covers(placed)) return placed;
+  // A spot that stays in the free zone beats a nearer one outside it.
+  const clear = [subjectTop - total, subjectBottom]
+    .filter((y) => y >= minTop && y <= maxTop && !covers(y))
+    .sort(
+      (a, b) =>
+        Number(inZone(b)) - Number(inZone(a)) ||
+        Math.abs(a - placed) - Math.abs(b - placed),
+    );
+  return clear[0] ?? placed;
+}
+
+const FREE_ZONE_THIRD: Record<NonNullable<LayoutHints["freeZone"]>, number> = {
+  top: 0,
+  middle: 1,
+  bottom: 2,
+};
 
 /** Left edge of a text box: clear of the action buttons while it fits, centred otherwise. */
 function textLeft(maxWidth: number): number {
