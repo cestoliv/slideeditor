@@ -5,9 +5,12 @@ import {
   outlineColorFor,
   outputAspect,
   overlayCrop,
+  overlaps,
   textColorOf,
 } from "../../shared/geometry/index.js";
 import { parseDocument } from "../../shared/schema/index.js";
+import { outsideSafeZone } from "../../shared/compose/index.js";
+import type { Box } from "../../shared/geometry/index.js";
 import type { Overlay, Ratio, Slide, TextLayer } from "../../shared/schema/index.js";
 import {
   TEXT_WEIGHT,
@@ -34,8 +37,11 @@ import type { MediaStore } from "./media.js";
 export type PreviewWarning = {
   /** 1-based, the way export_slideshow numbers slides. */
   slide: number;
-  type: "text-out-of-frame" | "text-cut" | "overlay-over-text";
-  text: string;
+  type: "text-out-of-frame" | "text-cut" | "overlay-over-text" | "outside-safe-zone";
+  /** The text the warning is about, absent when it is about an image. */
+  text?: string;
+  /** The library item of the image the warning is about. */
+  itemId?: string;
   message: string;
 };
 
@@ -51,8 +57,6 @@ export type PreviewServices = {
   media: MediaStore;
   fonts: FontService;
 };
-
-type Box = { x: number; y: number; width: number; height: number };
 
 /** Same rounding as thumbnailHeight, at any width: an even pixel count. */
 export function previewHeight(ratio: Ratio, width: number): number {
@@ -73,15 +77,6 @@ function escapeXml(value: string): string {
             character
           ] ?? character,
       )
-  );
-}
-
-function overlaps(a: Box, b: Box): boolean {
-  return (
-    a.x < b.x + b.width &&
-    b.x < a.x + a.width &&
-    a.y < b.y + b.height &&
-    b.y < a.y + a.height
   );
 }
 
@@ -287,6 +282,10 @@ function stacked(slide: Slide) {
   return layers.sort((a, b) => (Number(a.item.z) || 0) - (Number(b.item.z) || 0));
 }
 
+const SAFE_ZONE_MESSAGE =
+  "This layer leaves the safe zone, where TikTok draws its tabs, caption or buttons over it. " +
+  "A text past the right edge needs shorter lines or a narrower account text width, not an anchor.";
+
 async function renderSlide(
   services: RenderServices,
   slide: Slide,
@@ -315,6 +314,14 @@ async function renderSlide(
     if (entry.kind === "overlay") {
       const { svg, box } = await overlaySvg(services, entry.item, width, height);
       parts.push(svg);
+      if (box !== null && outsideSafeZone(box)) {
+        warnings.push({
+          slide: number,
+          type: "outside-safe-zone",
+          itemId: entry.item.itemId,
+          message: SAFE_ZONE_MESSAGE,
+        });
+      }
       // ponytail: axis-aligned boxes, rotation ignored. Rotate the corners if
       // tilted layers start raising false alarms.
       for (const text of texts.filter((below) => box !== null && overlaps(box, below))) {
@@ -343,6 +350,14 @@ async function renderSlide(
         type: "text-out-of-frame",
         text: text.text,
         message: "This text box reaches past the edge of the slide.",
+      });
+    }
+    if (outsideSafeZone(text)) {
+      warnings.push({
+        slide: number,
+        type: "outside-safe-zone",
+        text: text.text,
+        message: SAFE_ZONE_MESSAGE,
       });
     }
     if (cut) {

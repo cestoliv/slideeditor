@@ -12,3 +12,4 @@ docs/superpowers/
 node_modules/
 coverage/
 .vitest-attachments/
+*.tsbuildinfo

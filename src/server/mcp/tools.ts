@@ -8,6 +8,7 @@ import {
 import type { Composition, CompositionSource } from "../../shared/compose/index.js";
 import {
   layoutHintsSchema,
+  slideLayoutSchema,
   styledTextSchema,
   type LibraryItem,
   type Slide,
@@ -124,6 +125,18 @@ const SLIDE_SHAPE = z.object({
         "Use it for a hook set larger than the rest or a key word in another colour. On a new line, a field " +
         "you leave out takes the account's default. On a line already on the slide, it keeps its current " +
         "value. The server still places every line.",
+    ),
+  layout: slideLayoutSchema
+    .optional()
+    .describe(
+      "Optional anchors for this slide, to use after preview_slideshow shows a text over a face or a key part " +
+        "of the image. `text`: top, middle or bottom of the safe zone. `assets`: top-left, top-right, center or " +
+        "bottom-left. `assetSize`: small, medium or large (each at most 0.25, 0.40 or 0.60 of the slide width). A key you " +
+        "leave out keeps the default for the slide's role, except that assets with no anchor sit next to an anchored " +
+        "text. Texts and assets do not overlap: when the anchors you " +
+        "pick would make them, the assets move out of the text's way, or else the text moves above or below " +
+        "them, and the result says so in `notes`. A text taller than the safe zone ignores its anchors and can " +
+        "overlap the assets.",
     ),
 });
 
@@ -280,9 +293,9 @@ const getSlideshow = defineTool({
   description:
     "Read one slideshow as a composition: per slide, its background id, asset ids and texts. " +
     "Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. " +
-    "Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow. " +
-    "`layoutChanged` counts the slides the human changed by hand since the slideshow was created or " +
-    "duplicated, or is null when no agent composed it.",
+    "A slide composed with anchors also carries its `layout`. Coordinates are deliberately not exposed. Use " +
+    "the returned `version` when calling update_slideshow. `layoutChanged` counts the slides the human " +
+    "changed by hand since the slideshow was created or duplicated, or is null when no agent composed it.",
   inputSchema: { id: z.string().describe("Slideshow id.") },
   async handler({ id }, { projects, baseUrl }) {
     const project = projects.require(id);
@@ -328,12 +341,15 @@ const createSlideshow = defineTool({
   description:
     "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any " +
     "number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, " +
-    "so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set " +
-    "positions: the server lays everything out from the account's defaults and the human adjusts it by hand " +
+    "so `description` and `hashtags` are part of the draft rather than an afterthought. You never send " +
+    "coordinates: the server lays everything out from the account's defaults and the human adjusts it by hand " +
     "afterwards. It keeps texts and assets clear of the TikTok buttons and caption, puts a lone asset top " +
     "left, and stacks the texts below it: high on the first slide, mid-height in the middle, lower on the " +
-    "last. A text line can carry its own size, colour and style when one line has to stand out. Call list_accounts first if you do not already know the accountId. Returns " +
-    "the edit URL to hand back to the user.",
+    "last. A text line can carry its own size, colour and style when one line has to stand out. Then call " +
+    "preview_slideshow. Where a text covers a face or a key part of the image, move it with that slide's " +
+    "`layout` anchors through update_slideshow, and preview the changed slides again. Stop after two rounds " +
+    "and report what is still wrong. Call list_accounts first if you do not already know the accountId. " +
+    "Returns the edit URL to hand back to the user, and `notes` when an anchor could not be honoured.",
   inputSchema: {
     accountId: z
       .string()
@@ -354,12 +370,14 @@ const createSlideshow = defineTool({
     if (account === null) throw new HttpError(400, `No account with id ${accountId}.`);
     const compositions = slides as Composition[];
     validateComposition(compositions, { accountId, lookupItem: (id) => library.get(id) });
+    const notes: string[] = [];
     const document = composeDocument({
       ratio: ratio || account.defaults.ratio,
       slides: compositions,
       library,
       defaults: account.defaults,
       advanceRatioFor: (family) => fonts.advanceRatioFor(family),
+      notes,
     });
     const project = projects.create({
       name: name || "Agent slideshow",
@@ -378,6 +396,7 @@ const createSlideshow = defineTool({
       description: project.description,
       hashtags: project.hashtags,
       editUrl: editUrl(baseUrl(), project.id),
+      ...(notes.length ? { notes } : {}),
     });
   },
 });
@@ -387,8 +406,11 @@ const updateSlideshow = defineTool({
   title: "Update a slideshow",
   description:
     "Replace a slideshow's composition. Pass the `version` you read from get_slideshow: a stale version is " +
-    "rejected so you cannot overwrite the human's work. Slides whose composition is unchanged keep the layout " +
-    "the human adjusted, and geometry is preserved for any asset or text that is still present. A caption field " +
+    "rejected so you cannot overwrite the human's work. Slides whose composition and `layout` anchors are " +
+    "unchanged keep the layout the human adjusted, and geometry is preserved for any asset or text that is " +
+    "still present. Send back the `layout` get_slideshow returns, or the slide is laid out again from its " +
+    "defaults. To fix a slide the preview shows wrong, change only its anchors: that slide is laid out again " +
+    "and the others keep their geometry. Fix a slide at most twice. A caption field " +
     "you leave out keeps what is stored, so editing the slides never wipes a caption the human has been working " +
     "on. Send an empty string to clear one on purpose.",
   inputSchema: {
@@ -410,6 +432,7 @@ const updateSlideshow = defineTool({
       throw new HttpError(400, `No account with id ${current.accountId}.`);
     }
     const compositions = slides as Composition[];
+    const notes: string[] = [];
     validateComposition(compositions, {
       accountId: current.accountId,
       lookupItem: (itemId) => library.get(itemId),
@@ -421,6 +444,7 @@ const updateSlideshow = defineTool({
       defaults: account.defaults,
       previous: asComposable(current),
       advanceRatioFor: (family) => fonts.advanceRatioFor(family),
+      notes,
     });
     const project = projects.save(id, {
       name: name ?? current.name,
@@ -436,6 +460,7 @@ const updateSlideshow = defineTool({
       description: project.description,
       hashtags: project.hashtags,
       editUrl: editUrl(baseUrl(), project.id),
+      ...(notes.length ? { notes } : {}),
     });
   },
 });
@@ -798,7 +823,7 @@ const LAYOUT_HINTS_SHAPE = layoutHintsSchema.describe(
     "bottom or right). Look at the image before you write this. `freeZone` is the third of the image with " +
     "the most empty space for text: `top`, `middle` or `bottom`. `subject` is the box around the face or " +
     "the main subject, {x, y, w, h}, which text must not cover. create_slideshow puts the text in the free " +
-    "zone and off the subject. Ignored on an asset.",
+    "zone and off the subject, unless the slide's `layout` sets a text anchor. Ignored on an asset.",
 );
 
 const TAGS_SHAPE = z
@@ -940,8 +965,12 @@ const previewSlideshow = defineTool({
     "than in the editor, and a font added from Google Fonts is drawn in another face. Treat it as a " +
     "check, not as the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: " +
     "text that reaches past the slide edge (`text-out-of-frame`), text with more lines than its box shows " +
-    "(`text-cut`) and an image drawn over a text (`overlay-over-text`). Fix a warning with update_slideshow, " +
-    "for example with shorter lines, then preview again.",
+    "(`text-cut`), an image drawn over a text (`overlay-over-text`) and a text or image outside the zone " +
+    "TikTok keeps clear of its tabs, caption and buttons (`outside-safe-zone`). A text anchor moves a text up " +
+    "or down only, so a text past the right edge of the zone needs shorter lines. Look at each image too: a " +
+    "text over a face or over the key part of a screenshot needs moving. Fix a slide with update_slideshow, " +
+    "by changing its `layout` anchors or by shortening its lines, then preview only the slides you changed. " +
+    "Stop after two rounds and report what is still wrong.",
   inputSchema: {
     id: z.string().describe("Slideshow id."),
     slides: z

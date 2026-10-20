@@ -3,11 +3,13 @@ import {
   ensureBoxedTextContrast,
   getImageLayout,
   outputHeight,
+  overlaps,
 } from "../geometry/index.js";
 import {
   DEFAULT_RATIO,
   RATIO_ASPECT_MAX,
   RATIO_ASPECT_MIN,
+  slideLayoutSchema,
   styledTextSchema,
 } from "../schema/index.js";
 import { newTextLayer } from "../defaults/index.js";
@@ -29,13 +31,16 @@ import type {
   Ratio,
   Slide,
   SlideDocument,
+  SlideLayout,
   TextLayer,
 } from "../schema/index.js";
+import type { Box } from "../geometry/index.js";
 import {
   ASSET_GAP,
   ASSET_LEFT,
   ASSET_MAX_WIDTH,
   ASSET_ROW_MAX,
+  ASSET_SIZE_WIDTHS,
   ASSET_TEXT_GAP,
   ASSET_TOP,
   ASSET_TOP_MARGIN,
@@ -100,6 +105,7 @@ export interface Composition {
   background: string;
   assets?: string[];
   texts?: CompositionText[];
+  layout?: SlideLayout;
 }
 
 interface StyledText {
@@ -125,6 +131,11 @@ export interface ComposeDocumentInput {
    * gets.
    */
   advanceRatioFor?: ((family: string) => number) | undefined;
+  /**
+   * Collects one sentence per slide whose anchors could not all be honoured,
+   * for the caller to hand back to the agent.
+   */
+  notes?: string[] | undefined;
 }
 
 /** A project row joined to its document, the shape toComposition reduces. */
@@ -139,6 +150,7 @@ export interface CompositionSlide {
   background: string | null;
   assets: string[];
   texts: string[];
+  layout?: SlideLayout;
 }
 
 export interface CompositionProject {
@@ -175,6 +187,7 @@ interface ComposeSlideInput {
   ratioChanged: boolean;
   newId: () => string;
   advanceRatioFor: (family: string) => number;
+  notes: string[];
 }
 
 // Injected everywhere below so tests get deterministic ids, and so this module
@@ -197,6 +210,7 @@ export function composeDocument({
   previous = null,
   newId = defaultNewId,
   advanceRatioFor = defaultAdvanceRatioFor,
+  notes = [],
 }: ComposeDocumentInput): SlideDocument {
   const safeRatio = normalizeRatio(ratio);
   const previousSlides = previous?.slides || [];
@@ -214,6 +228,7 @@ export function composeDocument({
         ratioChanged: previous ? !sameRatio(previous.ratio, safeRatio) : false,
         newId,
         advanceRatioFor,
+        notes,
       }),
     ),
   };
@@ -230,16 +245,20 @@ function composeSlide({
   ratioChanged,
   newId,
   advanceRatioFor,
+  notes,
 }: ComposeSlideInput): Slide {
   const background = library.require(composition.background, "background");
   const assetIds = normalizeList(composition.assets);
   const texts = normalizeList(composition.texts).map(toStyledText);
   const assets = assetIds.map((id) => library.require(id, "asset"));
+  const layout = toLayout(composition.layout, index);
+  // A new anchor asks for a new placement, so hand-made geometry gives way.
+  const relayout = ratioChanged || !sameLayout(previousSlide?.layout, layout);
 
   // An unchanged composition keeps the slide exactly as the user left it.
   if (
     previousSlide &&
-    !ratioChanged &&
+    !relayout &&
     sameComposition(previousSlide, background.id, assetIds, texts)
   ) {
     return previousSlide;
@@ -251,52 +270,48 @@ function composeSlide({
     measured.reduce((sum, box) => sum + box.height, 0) +
     TEXT_GAP * Math.max(0, measured.length - 1);
   const fitsSafeZone = total <= SAFE_BOTTOM - SAFE_TOP;
-  const fallbackTop = fallbackTextTop(total);
-  // Assets go first and leave room for the whole text block below them, so
-  // pushing the text under the lowest asset keeps it in the zone. The one
-  // exception is a block that leaves assets less than layoutAssets' floor.
-  const assetAreaBottom = !measured.length
-    ? SAFE_BOTTOM
-    : fitsSafeZone
-      ? SAFE_BOTTOM - total - ASSET_TEXT_GAP
-      : fallbackTop >= 0
-        ? fallbackTop - 0.04
-        : 1 - TEXT_BOTTOM_MARGIN;
-  const laidOutAssets = layoutAssets(assets, height, assetAreaBottom);
-  const lowestAsset = Math.max(
-    -Infinity,
-    ...laidOutAssets.map((asset) => asset.y + asset.height),
-  );
+  const placement = fitsSafeZone
+    ? placeInSafeZone(
+        assets,
+        height,
+        total,
+        measured.length > 0,
+        index,
+        slideCount,
+        defaults,
+        layout,
+      )
+    : placeOversized(assets, height, total, layout);
+  if (placement.note) notes.push(`Slide ${String(index + 1)}: ${placement.note}`);
+  const laidOutAssets = placement.assets;
   const imageScale = previousSlide?.imageScale ?? 1;
   const imageX = previousSlide?.imageX ?? 0;
   const imageY = previousSlide?.imageY ?? 0;
-  const target = roleCenter(index, slideCount);
-  const textTop = fitsSafeZone
-    ? hintedTextTop(
-        Math.max(
-          clamp(target - total / 2, SAFE_TOP, SAFE_BOTTOM - total),
-          lowestAsset + ASSET_TEXT_GAP,
+  // A text anchor the agent picked wins over the background's free zone.
+  const band =
+    fitsSafeZone && !layout?.text
+      ? freeBand(laidOutAssets, placement.textTop, total)
+      : undefined;
+  const textTop = band
+    ? hintedTextTop(placement.textTop, {
+        total,
+        target: roleCenter(index, slideCount),
+        ...band,
+        left: textLeft(defaults.text.maxWidth),
+        width: defaults.text.maxWidth,
+        hints: background.layoutHints,
+        image: toSlideFractions(
+          {
+            width: background.width,
+            height: background.height,
+            imageScale,
+            imageX,
+            imageY,
+          },
+          height,
         ),
-        {
-          total,
-          target,
-          minTop: Math.max(SAFE_TOP, lowestAsset + ASSET_TEXT_GAP),
-          left: textLeft(defaults.text.maxWidth),
-          width: defaults.text.maxWidth,
-          hints: background.layoutHints,
-          image: toSlideFractions(
-            {
-              width: background.width,
-              height: background.height,
-              imageScale,
-              imageX,
-              imageY,
-            },
-            height,
-          ),
-        },
-      )
-    : fallbackTop;
+      })
+    : placement.textTop;
   let cursor = textTop;
   const laidOutTexts = measured.map((box) => {
     const placed = { ...box, y: cursor };
@@ -317,20 +332,21 @@ function composeSlide({
     imageY,
     overlays: [],
     texts: [],
+    ...(layout ? { layout } : {}),
   };
 
   // Geometry the user adjusted by hand survives wherever the same asset or the
   // same string is still on the slide.
   const keptOverlays = new Map<string, Overlay[]>();
   for (const overlay of previousSlide?.overlays || []) {
-    if (ratioChanged) break;
+    if (relayout) break;
     const bucket = keptOverlays.get(overlay.itemId) || [];
     bucket.push(overlay);
     keptOverlays.set(overlay.itemId, bucket);
   }
   const keptTexts = new Map<string, TextLayer[]>();
   for (const text of previousSlide?.texts || []) {
-    if (ratioChanged) break;
+    if (relayout) break;
     const bucket = keptTexts.get(text.text) || [];
     bucket.push(text);
     keptTexts.set(text.text, bucket);
@@ -411,6 +427,181 @@ function measureTexts(
   });
 }
 
+interface Placement {
+  assets: PlacedAsset[];
+  textTop: number;
+  note?: string | undefined;
+}
+
+/**
+ * Places a text block that fits the safe zone, and the assets beside it,
+ * from the slide's role and whatever anchors the agent picked. The assets
+ * leave room for the whole block, so the text always fits on one side of
+ * them: when its own anchor would overlap them, it moves to the nearer side.
+ */
+function placeInSafeZone(
+  assets: LibraryItem[],
+  height: number,
+  total: number,
+  hasTexts: boolean,
+  index: number,
+  slideCount: number,
+  defaults: AccountDefaults,
+  layout: SlideLayout | undefined,
+): Placement {
+  const reserve = hasTexts ? total + ASSET_TEXT_GAP : 0;
+  const size = layout?.assetSize ? ASSET_SIZE_WIDTHS[layout.assetSize] : undefined;
+  // Sized and placed top left first, which is the default, then moved.
+  let placed = layoutAssets(assets, height, SAFE_BOTTOM - reserve, size);
+  const target = textTarget(layout?.text, total, index, slideCount);
+  if (!placed.length) return { assets: placed, textTop: target };
+
+  let group = boundsOf(placed);
+  const anchor = layout?.assets ?? "top-left";
+  if (anchor === "top-right") placed = shift(placed, SAFE_RIGHT - group.right, 0);
+  // Several assets fill centred rows, so a left anchor asked for by name
+  // pulls them to the gutter. A lone asset already sits at ASSET_LEFT.
+  if (layout?.assets?.endsWith("-left") && placed.length > 1) {
+    placed = shift(placed, SIDE_MARGIN - group.x, 0);
+  }
+  if (anchor === "bottom-left") placed = shift(placed, 0, SAFE_BOTTOM - group.bottom);
+  if (anchor === "center") {
+    placed = shift(
+      placed,
+      (SIDE_MARGIN + SAFE_RIGHT - group.x - group.right) / 2,
+      (SAFE_TOP + SAFE_BOTTOM - group.y - group.bottom) / 2,
+    );
+  }
+  group = boundsOf(placed);
+  const maxWidth = defaults.text.maxWidth;
+  const block: Box = {
+    x: textLeft(maxWidth),
+    y: target - ASSET_TEXT_GAP,
+    width: maxWidth,
+    height: total + 2 * ASSET_TEXT_GAP,
+  };
+  const groupBox: Box = {
+    x: group.x,
+    y: group.y,
+    width: group.right - group.x,
+    height: group.bottom - group.y,
+  };
+  // Without a layout, only height counts, as it always has, so a narrow text
+  // column still starts below assets that sit beside it. A text anchor with
+  // no asset anchor pulls the assets next to the text, as if they collided.
+  const collides = layout
+    ? (layout.text !== undefined && !layout.assets) || overlaps(block, groupBox)
+    : block.y < groupBox.y + groupBox.height && groupBox.y < block.y + block.height;
+  if (!hasTexts || !collides) return { assets: placed, textTop: target };
+
+  // Without any anchor, top assets keep the text below them, as they always
+  // have, and stay where they are. With one, the assets first move to
+  // whichever side of the text keeps it on target, the side its target leans
+  // to first. Only when neither side fits does the text sit next to them,
+  // on that side. The height reserved for the text keeps both in the safe
+  // zone, unless layoutAssets' floor outgrows it.
+  let below =
+    !layout?.text && anchor.startsWith("top-")
+      ? true
+      : target + total / 2 >= (group.y + group.bottom) / 2;
+  // The move that puts the assets above the text, or below it, with the text on target.
+  const clearAbove = target - ASSET_TEXT_GAP - group.bottom;
+  const clearBelow = target + total + ASSET_TEXT_GAP - group.y;
+  const fitsAbove = group.y + clearAbove >= SAFE_TOP;
+  const fitsBelow = group.bottom + clearBelow <= SAFE_BOTTOM;
+  let dy: number;
+  let textTop: number;
+  if (layout && (fitsAbove || fitsBelow)) {
+    below = below ? fitsAbove : !fitsBelow;
+    dy = below ? clearAbove : clearBelow;
+    textTop = target;
+  } else if (below) {
+    // Without a layout the assets stay put, exactly as before anchors existed.
+    dy = layout
+      ? Math.max(
+          Math.min(0, SAFE_BOTTOM - total - ASSET_TEXT_GAP - group.bottom),
+          Math.min(0, SAFE_TOP - group.y),
+        )
+      : 0;
+    textTop = group.bottom + dy + ASSET_TEXT_GAP;
+  } else {
+    dy = Math.min(
+      Math.max(0, SAFE_TOP + total + ASSET_TEXT_GAP - group.y),
+      Math.max(0, SAFE_BOTTOM - group.bottom),
+    );
+    textTop = group.y + dy - ASSET_TEXT_GAP - total;
+  }
+  placed = shift(placed, 0, dy);
+  const epsilon = 1e-9;
+  let note: string | undefined;
+  if (
+    layout &&
+    (textTop < SAFE_TOP - epsilon || textTop + total > SAFE_BOTTOM + epsilon)
+  ) {
+    note =
+      "the text and the assets do not both fit the safe zone, so the text leaves it.";
+  } else if (layout && Math.abs(textTop - target) > epsilon) {
+    const subject = layout.text ? `text "${layout.text}"` : "the text";
+    note = `${subject} would overlap the assets, so it sits ${below ? "below" : "above"} them.`;
+    if (layout.assets && Math.abs(dy) > epsilon) {
+      note += ` The assets leave "${layout.assets}" to make room.`;
+    }
+  } else if (layout?.assets && Math.abs(dy) > epsilon) {
+    note = `assets "${layout.assets}" would overlap the text, so they sit ${below ? "above" : "below"} it.`;
+  }
+  return { assets: placed, textTop, note };
+}
+
+/**
+ * Places a text block taller than the safe zone the way it always was, with
+ * the assets squeezed above it. No anchor can help such a block.
+ */
+function placeOversized(
+  assets: LibraryItem[],
+  height: number,
+  total: number,
+  layout: SlideLayout | undefined,
+): Placement {
+  const textTop = fallbackTextTop(total);
+  const areaBottom = textTop >= 0 ? textTop - 0.04 : 1 - TEXT_BOTTOM_MARGIN;
+  return {
+    assets: layoutAssets(assets, height, areaBottom),
+    textTop,
+    note: layout
+      ? "the text is too tall for the safe zone, so its anchors are ignored."
+      : undefined,
+  };
+}
+
+/** The top of a text block on its anchor, or on its role's target without one. */
+function textTarget(
+  anchor: SlideLayout["text"],
+  total: number,
+  index: number,
+  slideCount: number,
+): number {
+  if (anchor === "top") return SAFE_TOP;
+  if (anchor === "bottom") return SAFE_BOTTOM - total;
+  if (anchor === "middle") return (SAFE_TOP + SAFE_BOTTOM - total) / 2;
+  return clamp(roleCenter(index, slideCount) - total / 2, SAFE_TOP, SAFE_BOTTOM - total);
+}
+
+function boundsOf(placed: PlacedAsset[]) {
+  return {
+    x: Math.min(...placed.map((asset) => asset.x)),
+    y: Math.min(...placed.map((asset) => asset.y)),
+    right: Math.max(...placed.map((asset) => asset.x + asset.width)),
+    bottom: Math.max(...placed.map((asset) => asset.y + asset.height)),
+  };
+}
+
+// A zero move returns the same objects, so a default slide keeps its exact
+// floating-point geometry.
+function shift(placed: PlacedAsset[], dx: number, dy: number): PlacedAsset[] {
+  if (!dx && !dy) return placed;
+  return placed.map((asset) => ({ ...asset, x: asset.x + dx, y: asset.y + dy }));
+}
+
 /** Where a text block's centre goes: the hook sits high, the call to action low. */
 function roleCenter(index: number, slideCount: number): number {
   if (index === 0) return TEXT_CENTER_FIRST;
@@ -421,6 +612,7 @@ interface HintedPlacement {
   total: number;
   target: number;
   minTop: number;
+  maxBottom: number;
   left: number;
   width: number;
   hints: LayoutHints | undefined;
@@ -451,15 +643,15 @@ function toSlideFractions(slide: ImageSlide, height: number): ImageToSlide {
  */
 function hintedTextTop(
   top: number,
-  { total, target, minTop, left, width, hints, image }: HintedPlacement,
+  { total, target, minTop, maxBottom, left, width, hints, image }: HintedPlacement,
 ): number {
-  const maxTop = SAFE_BOTTOM - total;
+  const maxTop = maxBottom - total;
   let placed = top;
   let inZone = (_y: number) => false;
   if (hints?.freeZone) {
     const third = FREE_ZONE_THIRD[hints.freeZone];
     const zoneTop = Math.max(minTop, image.y(third / 3));
-    const zoneBottom = Math.min(SAFE_BOTTOM, image.y((third + 1) / 3));
+    const zoneBottom = Math.min(maxBottom, image.y((third + 1) / 3));
     if (zoneBottom - zoneTop >= total) {
       placed = clamp(target - total / 2, zoneTop, zoneBottom - total);
       inZone = (y) => y >= zoneTop - 1e-9 && y + total <= zoneBottom + 1e-9;
@@ -483,6 +675,29 @@ function hintedTextTop(
         Math.abs(a - placed) - Math.abs(b - placed),
     );
   return clear[0] ?? placed;
+}
+
+/**
+ * The span a text block can move in without meeting an asset, or none when
+ * an asset sits beside the block rather than above or below it.
+ */
+function freeBand(
+  assets: PlacedAsset[],
+  top: number,
+  total: number,
+): { minTop: number; maxBottom: number } | undefined {
+  let minTop = SAFE_TOP;
+  let maxBottom = SAFE_BOTTOM;
+  for (const asset of assets) {
+    if (asset.y + asset.height <= top + 1e-9) {
+      minTop = Math.max(minTop, asset.y + asset.height + ASSET_TEXT_GAP);
+    } else if (asset.y >= top + total - 1e-9) {
+      maxBottom = Math.min(maxBottom, asset.y - ASSET_TEXT_GAP);
+    } else {
+      return undefined;
+    }
+  }
+  return { minTop, maxBottom };
 }
 
 const FREE_ZONE_THIRD: Record<NonNullable<LayoutHints["freeZone"]>, number> = {
@@ -556,13 +771,14 @@ function textHeight(
 
 /**
  * Places assets above `areaBottom`. A lone asset sits top left, at most
- * ASSET_MAX_WIDTH wide. Several share rows of at most three, centred in the
- * band left of SAFE_RIGHT.
+ * `maxWidth` wide. Several share rows of at most three, centred in the band
+ * left of SAFE_RIGHT, each at most `maxWidth` wide.
  */
 function layoutAssets(
   assets: LibraryItem[],
   height: number,
   areaBottom: number,
+  maxWidth: number = ASSET_MAX_WIDTH,
 ): PlacedAsset[] {
   if (!assets.length) return [];
   const areaTop = ASSET_TOP_MARGIN;
@@ -575,7 +791,7 @@ function layoutAssets(
   const [lone] = assets;
   if (lone && assets.length === 1) {
     const aspect = aspectOf(lone);
-    let width = ASSET_MAX_WIDTH;
+    let width = maxWidth;
     let boxHeight = (width * DESIGN_WIDTH * aspect) / height;
     if (ASSET_TOP + boxHeight > bottom) {
       boxHeight = bottom - ASSET_TOP;
@@ -592,7 +808,7 @@ function layoutAssets(
   // item size and simply sits centered instead of stretching.
   const columns = Math.min(assets.length, ASSET_ROW_MAX);
   const bandWidth = SAFE_RIGHT - SIDE_MARGIN;
-  const slotWidth = (bandWidth - ASSET_GAP * (columns - 1)) / columns;
+  const slotWidth = Math.min(maxWidth, (bandWidth - ASSET_GAP * (columns - 1)) / columns);
 
   rows.forEach((row, rowIndex) => {
     const sized = row.map((item) => {
@@ -642,6 +858,7 @@ export function toComposition(project: CompositionSource): CompositionProject {
         .slice()
         .sort((a, b) => (a.z || 0) - (b.z || 0))
         .map((text) => text.text),
+      ...(slide.layout ? { layout: slide.layout } : {}),
     })),
   };
 }
@@ -749,6 +966,23 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+/** Parses a slide's anchors, refusing an unknown one. An empty object means none. */
+function toLayout(value: unknown, index: number): SlideLayout | undefined {
+  if (value == null) return undefined;
+  const parsed = slideLayoutSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new ComposeError(
+      `Slide ${String(index + 1)} has an invalid layout at ${issue?.path.join(".") || "layout"}: ${issue?.message ?? "bad value"}`,
+    );
+  }
+  return Object.keys(parsed.data).length ? parsed.data : undefined;
+}
+
+function sameLayout(a: SlideLayout | undefined, b: SlideLayout | undefined): boolean {
+  return a?.text === b?.text && a?.assets === b?.assets && a?.assetSize === b?.assetSize;
 }
 
 function toStyledText(value: CompositionText): StyledText {

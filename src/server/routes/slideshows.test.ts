@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { makeTempApp, pngFixture } from "../testing.js";
 import { BUILTIN_DEFAULTS } from "../../shared/schema/index.js";
+import { renderPreview } from "../services/preview.js";
 
 let app: FastifyInstance;
 
@@ -466,4 +467,78 @@ it("keeps an explicit ratio even when the account default differs", async () => 
   });
   const read = await app.inject({ method: "GET", url: `/api/slideshows/${created.id}` });
   expect(read.json().slideshow.ratio).toEqual({ w: 1, h: 1 });
+});
+
+it("refuses an unknown layout anchor with a 400", async () => {
+  const background = await addItem("background", "Beach");
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/slideshows",
+    payload: {
+      accountId: "default",
+      slides: [{ background, texts: ["Hi"], layout: { text: "left" } }],
+    },
+  });
+  expect(response.statusCode).toBe(400);
+  expect(response.json().error).toMatch(/^Slide 1 has an invalid layout at text/);
+});
+
+it("reads a slide's anchors back and reports an anchor it moved", async () => {
+  const background = await addItem("background", "Beach");
+  const asset = await addItem("asset", "Logo");
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/slideshows",
+    payload: {
+      accountId: "default",
+      slides: [
+        {
+          background,
+          assets: [asset],
+          texts: ["Hi"],
+          layout: { text: "middle", assets: "center", assetSize: "large" },
+        },
+        { background, texts: ["Plain"] },
+      ],
+    },
+  });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().notes).toEqual([
+    'Slide 1: text "middle" would overlap the assets, so it sits below them.',
+  ]);
+  const read = await app.inject({
+    method: "GET",
+    url: `/api/slideshows/${String(response.json().id)}`,
+  });
+  const slides = read.json().slideshow.slides as { layout?: unknown }[];
+  expect(slides.map((slide) => slide.layout)).toEqual([
+    { text: "middle", assets: "center", assetSize: "large" },
+    undefined,
+  ]);
+});
+
+it("warns in the preview about a text a human pushed out of the safe zone", async () => {
+  const background = await addItem("background", "Beach");
+  const created = await createSlideshow({ slides: [{ background, texts: ["Hello"] }] });
+  const fresh = app.projects.require(created.id);
+  const services = { library: app.library, media: app.media, fonts: app.fonts };
+  expect((await renderPreview(services, fresh, [1], 216)).warnings).toEqual([]);
+
+  const slides = fresh.slides as { texts: { y: number }[] }[];
+  for (const text of slides[0]?.texts ?? []) text.y = 0.85;
+  const saved = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${created.id}`,
+    payload: { document: { ratio: fresh.ratio, slides }, version: created.version },
+  });
+  expect(saved.statusCode).toBe(200);
+  const { warnings } = await renderPreview(
+    services,
+    app.projects.require(created.id),
+    [1],
+    216,
+  );
+  expect(warnings).toContainEqual(
+    expect.objectContaining({ slide: 1, type: "outside-safe-zone", text: "Hello" }),
+  );
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { slideLayoutSchema } from "./layout.js";
 import { normalizeTextBackground, textColorOf } from "../geometry/color.js";
 import {
   DEFAULT_FONT_FAMILY,
@@ -167,6 +168,9 @@ export const slideSchema = z.object({
   imageY: z.number().catch(0),
   overlays: overlayListSchema,
   texts: textListSchema,
+  // The anchors the agent last composed this slide with. A bad value is
+  // dropped rather than losing the slide, and a missing one means defaults.
+  layout: slideLayoutSchema.optional().catch(undefined),
 });
 
 export type Slide = z.infer<typeof slideSchema>;

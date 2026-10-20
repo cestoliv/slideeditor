@@ -15,7 +15,8 @@ Everything runs on your own machine. Nothing is sent to a third party.
 4. You open the URL and move things around until it looks right.
 5. You export every slide as a ZIP and publish them yourself.
 
-The agent chooses images and words. It never chooses layout or styling.
+The agent chooses images and words. It can pick a named anchor for a slide's
+text and assets, but it never sends coordinates.
 
 ## Run it
 
@@ -224,7 +225,8 @@ for landscape. Default is 9:16.
 
 Do not try to set positions or fonts. There are no parameters for them. The
 server places everything, and the human adjusts it afterwards. That split is the
-point of the tool.
+point of the tool. What you can pick is a named anchor per slide, described in
+Moving a slide's text or assets.
 
 The server keeps everything inside a safe zone clear of the TikTok interface:
 below 7% of the height, above 80%, and left of 76% of the width. Texts start
@@ -239,7 +241,8 @@ centred when it cannot fit the slide.
 A background can carry `layoutHints` that say where its text goes. The server
 moves the block into the `freeZone` third of the image, at the spot nearest its
 role target, and off the `subject` box when another spot fits. A background with
-no hints keeps the placement above.
+no hints keeps the placement above. A slide's `text` anchor wins over the hints,
+and hints never move the text into the slide's assets.
 
 To make one line stand out, such as a hook set larger than the rest, pass that
 line as an object instead of a string. A field you leave out takes the account's
@@ -258,12 +261,44 @@ The style fields are `size` (20 to 180), `style` (`plain`, `outline`, or
 Before you hand it over, call `preview_slideshow` to see each slide. It returns
 one JPEG per slide and a list of `warnings`: text past the slide edge
 (`text-out-of-frame`), text cut off by its box (`text-cut`), and an image drawn
-over a text (`overlay-over-text`). The server draws it with estimated text
-widths, so a line can wrap at a different word than in the editor. Fix what the
-warnings name with `update_slideshow`, then preview again.
+over a text (`overlay-over-text`), and a text or image outside the safe zone
+(`outside-safe-zone`). A text anchor moves a text up or down only, so a text
+past the right edge of the zone needs shorter lines. The server draws the
+preview with estimated text widths, so a line can wrap at a different word than
+in the editor. Look at each image too: a text over a face or over the key part
+of a screenshot needs to move.
+
+#### Moving a slide's text or assets
+
+To move what the preview shows in the wrong place, give that slide a `layout`
+in `update_slideshow`. Every key is optional, and a key you leave out keeps the
+default for the slide's role:
+
+```json
+"layout": { "text": "top", "assets": "bottom-left", "assetSize": "small" }
+```
+
+- `text` puts the text block at the `top`, `middle` or `bottom` of the safe
+  zone.
+- `assets` puts the assets `top-left`, `top-right`, `center` or `bottom-left`.
+  Without it, a slide with a `text` anchor keeps its assets next to the text.
+- `assetSize` makes each asset `small`, `medium` or `large`: at most 25%, 40% or
+  60% of the slide width. Several assets share a row, so they can be narrower.
+
+Texts and assets do not overlap. When the anchors you pick would make them, the
+assets move out of the text's way, or else the text moves above or below them.
+The response says so in `notes`. A text block taller than the safe zone ignores
+its anchors, and can overlap the assets. An unknown anchor is refused.
+
+`get_slideshow` returns each slide's `layout`. Send it back unchanged on the
+slides you do not mean to move. A slide sent without its stored `layout` is laid
+out again from its defaults, and loses the human's adjustments.
+
+Then preview only the slides you changed. Stop after two rounds of fixes and
+tell the user what is still wrong.
 
 Finish by giving the user the `editUrl` from the response. That is the
-deliverable. Say what is on each slide, and leave the layout to them.
+deliverable. Say what is on each slide. The human makes the final adjustments.
 
 ### 5. Editing a slideshow later
 
@@ -276,8 +311,9 @@ A caption field you leave out keeps what is stored, so editing the slides never
 wipes a caption the human has been working on. Send an empty string to clear one
 on purpose.
 
-Slides whose composition you leave untouched keep the exact layout the human
-gave them. On a slide you do change, any asset or text line that is still there
+Slides whose composition and `layout` you leave untouched keep the exact layout
+the human gave them. A slide whose `layout` changes is laid out again from
+scratch. On a slide you do change, any asset or text line that is still there
 keeps its position too. So a small edit stays small.
 
 To reuse a slideshow the human has already adjusted as a template, call
