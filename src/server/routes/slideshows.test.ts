@@ -256,6 +256,57 @@ it("preserves the human's layout on an update that changes one slide", async () 
   expect(after.json().project.slides[1].texts[0].text).toBe("Changed");
 });
 
+it("counts the slides a human changed since the agent composed them", async () => {
+  const background = await addItem("background", "Beach");
+  const created = await createSlideshow({
+    slides: [
+      { background, texts: ["One"] },
+      { background, texts: ["Two"] },
+      { background, texts: ["Three"] },
+    ],
+  });
+  const stats = async (): Promise<{ layoutChanged: number; slides: unknown[] }> =>
+    (await app.inject({ method: "GET", url: `/api/slideshows/${created.id}` })).json()
+      .slideshow;
+  expect(await stats()).toMatchObject({ layoutChanged: 0 });
+
+  const read = await app.inject({ method: "GET", url: `/api/projects/${created.id}` });
+  const document = read.json().project;
+  document.slides[1].texts[0].y = 0.2;
+  const saved = await app.inject({
+    method: "PUT",
+    url: `/api/projects/${created.id}`,
+    payload: { document, version: document.version },
+  });
+  expect(saved.statusCode).toBe(200);
+
+  const after = await stats();
+  expect(after.layoutChanged).toBe(1);
+  expect(after.slides).toHaveLength(3);
+
+  const composed = await app.inject({
+    method: "GET",
+    url: `/api/projects/${created.id}?include=composed`,
+  });
+  expect(composed.json().project.composedDocument.slides[1].texts[0].y).toBe(
+    read.json().project.slides[1].texts[0].y,
+  );
+  expect(composed.json().project.slides[1].texts[0].y).toBe(0.2);
+});
+
+it("reports no composed version for a slideshow made in the editor", async () => {
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/projects",
+    payload: { accountId: "default" },
+  });
+  const id = String(created.json().project.id);
+  const read = await app.inject({ method: "GET", url: `/api/slideshows/${id}` });
+  expect(read.json().slideshow.layoutChanged).toBeNull();
+  const plain = await app.inject({ method: "GET", url: `/api/projects/${id}` });
+  expect(plain.json().project).not.toHaveProperty("composedDocument");
+});
+
 it("takes the current version when an update sends none", async () => {
   const background = await addItem("background", "Beach");
   const created = await createSlideshow({ name: "Trip", slides: [{ background }] });

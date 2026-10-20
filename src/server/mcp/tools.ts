@@ -276,7 +276,9 @@ const getSlideshow = defineTool({
   description:
     "Read one slideshow as a composition: per slide, its background id, asset ids and texts. " +
     "Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. " +
-    "Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow.",
+    "Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow. " +
+    "`layoutChanged` counts the slides the human changed by hand since the slideshow was created or " +
+    "duplicated, or is null when no agent composed it.",
   inputSchema: { id: z.string().describe("Slideshow id.") },
   async handler({ id }, { projects, baseUrl }) {
     const project = projects.require(id);
@@ -287,6 +289,7 @@ const getSlideshow = defineTool({
         status: project.status,
         description: project.description,
         hashtags: project.hashtags,
+        layoutChanged: projects.layoutChanged(project.id),
       },
       editUrl: editUrl(baseUrl(), project.id),
     });
@@ -360,6 +363,7 @@ const createSlideshow = defineTool({
       document,
       description,
       hashtags,
+      composed: true,
     });
     return json({
       id: project.id,
@@ -459,6 +463,7 @@ const duplicateSlideshow = defineTool({
       document: { ratio: source.ratio, slides: source.slides },
       description: description ?? source.description,
       hashtags: hashtags ?? source.hashtags,
+      composed: true,
     });
     return json({
       id: project.id,

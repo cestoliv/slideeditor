@@ -30,7 +30,7 @@ it("creates the auth tables and lands on the current version", () => {
       "slideshow_render_variant",
     ]),
   );
-  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(9);
+  expect(db.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(10);
   db.close();
 });
 
@@ -61,6 +61,27 @@ it("keys a render on the slideshow, the version and the index", () => {
   expect(db.prepare("SELECT COUNT(*) AS n FROM slideshow_render").get()?.["n"]).toBe(0);
   expect(db.prepare("SELECT COUNT(*) AS n FROM slideshow_export").get()?.["n"]).toBe(0);
   db.close();
+});
+
+it("adds composed_document to a slideshow that already exists, empty", () => {
+  const paths = dataPaths(directory);
+  const before = openDb(paths.database);
+  before.exec("ALTER TABLE project DROP COLUMN composed_document");
+  before.exec("PRAGMA user_version = 9");
+  before
+    .prepare(
+      `INSERT INTO project (id, name, document, version, created_at, updated_at)
+       VALUES ('p1', 'Trip', '{}', 1, 0, 0)`,
+    )
+    .run();
+  before.close();
+
+  const after = openDb(paths.database);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(10);
+  expect(
+    after.prepare("SELECT composed_document FROM project WHERE id = 'p1'").get(),
+  ).toEqual({ composed_document: null });
+  after.close();
 });
 
 it("holds one credential row at most", () => {
@@ -114,10 +135,11 @@ it("adopts the legacy token when an existing install upgrades", () => {
   before.exec("DROP TABLE slideshow_render");
   before.exec("DROP TABLE slideshow_export");
   before.exec("DROP TABLE slideshow_render_variant");
+  before.exec("ALTER TABLE project DROP COLUMN composed_document");
   before.close();
 
   const after = openDb(paths.database, paths.token);
-  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(9);
+  expect(after.prepare("PRAGMA user_version").get()?.["user_version"]).toBe(10);
   expect(after.prepare("SELECT name FROM auth_token").get()?.["name"]).toBe("legacy");
   after.close();
 });
