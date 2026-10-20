@@ -226,6 +226,16 @@ Do not try to set positions or fonts. There are no parameters for them. The
 server places everything, and the human adjusts it afterwards. That split is the
 point of the tool.
 
+The server keeps everything inside a safe zone clear of the TikTok interface:
+below 7% of the height, above 80%, and left of 76% of the width. Texts start
+at 10% from the left and touch, so they read as one block. The block's centre
+depends on the slide's place in the slideshow: 36% of the height on the first
+slide (the hook), 47% on the middle slides, and 55% on the last slide (the call
+to action). A lone asset sits top left, at most 40% of the width, and the text
+moves below it when the two would overlap. Several assets share rows above the
+text. A block too tall for the safe zone is placed as before: at the bottom, or
+centred when it cannot fit the slide.
+
 To make one line stand out, such as a hook set larger than the rest, pass that
 line as an object instead of a string. A field you leave out takes the account's
 default, and the server still places the line:

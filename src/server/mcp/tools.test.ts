@@ -509,7 +509,7 @@ const PINNED = [
     name: "create_slideshow",
     title: "Create a slideshow",
     description:
-      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. A text line can carry its own size, colour and style when one line has to stand out. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user.",
+      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. It keeps texts and assets clear of the TikTok buttons and caption, puts a lone asset top left, and stacks the texts below it: high on the first slide, mid-height in the middle, lower on the last. A text line can carry its own size, colour and style when one line has to stand out. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user.",
   },
   {
     name: "update_slideshow",
