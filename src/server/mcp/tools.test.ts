@@ -497,7 +497,7 @@ const PINNED = [
     name: "get_slideshow",
     title: "Read a slideshow",
     description:
-      "Read one slideshow as a composition: per slide, its background id, asset ids and texts. Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. Layout is deliberately not exposed. Use the returned `version` when calling update_slideshow. `layoutChanged` counts the slides the human changed by hand since the slideshow was created or duplicated, or is null when no agent composed it.",
+      "Read one slideshow as a composition: per slide, its background id, asset ids and texts. Also returns the caption: `description` and `hashtags`, and the `accountId` it belongs to. A slide composed with anchors also carries its `layout`. Coordinates are deliberately not exposed. Use the returned `version` when calling update_slideshow. `layoutChanged` counts the slides the human changed by hand since the slideshow was created or duplicated, or is null when no agent composed it.",
   },
   {
     name: "set_slideshow_status",
@@ -509,13 +509,13 @@ const PINNED = [
     name: "create_slideshow",
     title: "Create a slideshow",
     description:
-      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. Do not attempt to set positions: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. It keeps texts and assets clear of the TikTok buttons and caption, puts a lone asset top left, and stacks the texts below it: high on the first slide, mid-height in the middle, lower on the last. A text line can carry its own size, colour and style when one line has to stand out. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user.",
+      "Draft a slideshow from library images and text, in one account. Each slide takes one background id, any number of asset ids and any number of text lines. Write the caption too: a slideshow exists to be posted, so `description` and `hashtags` are part of the draft rather than an afterthought. You never send coordinates: the server lays everything out from the account's defaults and the human adjusts it by hand afterwards. It keeps texts and assets clear of the TikTok buttons and caption, puts a lone asset top left, and stacks the texts below it: high on the first slide, mid-height in the middle, lower on the last. A text line can carry its own size, colour and style when one line has to stand out. Then call preview_slideshow. Where a text covers a face or a key part of the image, move it with that slide's `layout` anchors through update_slideshow, and preview the changed slides again. Stop after two rounds and report what is still wrong. Call list_accounts first if you do not already know the accountId. Returns the edit URL to hand back to the user, and `notes` when an anchor could not be honoured.",
   },
   {
     name: "update_slideshow",
     title: "Update a slideshow",
     description:
-      "Replace a slideshow's composition. Pass the `version` you read from get_slideshow: a stale version is rejected so you cannot overwrite the human's work. Slides whose composition is unchanged keep the layout the human adjusted, and geometry is preserved for any asset or text that is still present. A caption field you leave out keeps what is stored, so editing the slides never wipes a caption the human has been working on. Send an empty string to clear one on purpose.",
+      "Replace a slideshow's composition. Pass the `version` you read from get_slideshow: a stale version is rejected so you cannot overwrite the human's work. Slides whose composition and `layout` anchors are unchanged keep the layout the human adjusted, and geometry is preserved for any asset or text that is still present. Send back the `layout` get_slideshow returns, or the slide is laid out again from its defaults. To fix a slide the preview shows wrong, change only its anchors: that slide is laid out again and the others keep their geometry. Fix a slide at most twice. A caption field you leave out keeps what is stored, so editing the slides never wipes a caption the human has been working on. Send an empty string to clear one on purpose.",
   },
   {
     name: "duplicate_slideshow",
@@ -569,7 +569,7 @@ const PINNED = [
     name: "preview_slideshow",
     title: "Preview a slideshow",
     description:
-      "See a slideshow before the human does: one JPEG per slide, drawn on the server from the stored layout, in any status. The preview is approximate. Text is measured by estimate, so a line can wrap at a different word than in the editor, and a font added from Google Fonts is drawn in another face. Treat it as a check, not as the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: text that reaches past the slide edge (`text-out-of-frame`), text with more lines than its box shows (`text-cut`) and an image drawn over a text (`overlay-over-text`). Fix a warning with update_slideshow, for example with shorter lines, then preview again.",
+      "See a slideshow before the human does: one JPEG per slide, drawn on the server from the stored layout, in any status. The preview is approximate. Text is measured by estimate, so a line can wrap at a different word than in the editor, and a font added from Google Fonts is drawn in another face. Treat it as a check, not as the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: text that reaches past the slide edge (`text-out-of-frame`), text with more lines than its box shows (`text-cut`), an image drawn over a text (`overlay-over-text`) and a text or image outside the zone TikTok keeps clear of its tabs, caption and buttons (`outside-safe-zone`). A text anchor moves a text up or down only, so a text past the right edge of the zone needs shorter lines. Look at each image too: a text over a face or over the key part of a screenshot needs moving. Fix a slide with update_slideshow, by changing its `layout` anchors or by shortening its lines, then preview only the slides you changed. Stop after two rounds and report what is still wrong.",
   },
 ];
 
@@ -1622,4 +1622,45 @@ it("draws a line styled bigger than the rest bigger in the preview", async () =>
   }
 
   expect(await inkFor(120)).toBeGreaterThan((await inkFor(40)) * 3);
+});
+
+it("returns anchors from get_slideshow and recomposes only the slide whose anchor changed", async () => {
+  const id = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      {
+        accountId: ACCOUNT_ID,
+        slides: [
+          { background: id, texts: ["Hook"] },
+          { background: id, texts: ["Body"], layout: { text: "bottom" } },
+        ],
+      },
+      context,
+    ),
+  ) as { id: string; version: number };
+  const read = payload(
+    await tools.get_slideshow.handler({ id: created.id }, context),
+  ) as {
+    slideshow: { slides: { layout?: unknown }[] };
+  };
+  expect(read.slideshow.slides.map((slide) => slide.layout)).toEqual([
+    undefined,
+    { text: "bottom" },
+  ]);
+
+  const before = slidesOf(created.id);
+  await tools.update_slideshow.handler(
+    {
+      id: created.id,
+      version: created.version,
+      slides: [
+        { background: id, texts: ["Hook"] },
+        { background: id, texts: ["Body"], layout: { text: "top" } },
+      ],
+    },
+    context,
+  );
+  const after = slidesOf(created.id);
+  expect(after[0]).toEqual(before[0]);
+  expect(after[1]?.texts[0]?.y).toBeLessThan(before[1]?.texts[0]?.y ?? 0);
 });

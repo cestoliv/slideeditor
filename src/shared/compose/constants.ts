@@ -71,3 +71,6 @@ export const ASSET_GAP = 0.03;
 
 /** The most assets a single row holds (server/compose.mjs:18). */
 export const ASSET_ROW_MAX = 3;
+
+/** Asset width for each `assetSize` an agent may pick, as a fraction of the slide width. */
+export const ASSET_SIZE_WIDTHS = { small: 0.25, medium: 0.4, large: 0.6 } as const;

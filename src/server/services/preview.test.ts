@@ -42,7 +42,7 @@ async function slideWith(layers: { overlays?: unknown[]; texts?: unknown[] }) {
 }
 
 function text(fields: Record<string, unknown>) {
-  return { id: "t1", text: "Hello", x: 0.1, y: 0.4, width: 0.8, height: 0.1, ...fields };
+  return { id: "t1", text: "Hello", x: 0.1, y: 0.4, width: 0.6, height: 0.1, ...fields };
 }
 
 it("draws every layer style into a JPEG at the preview size", async () => {
@@ -52,7 +52,7 @@ it("draws every layer style into a JPEG at the preview size", async () => {
   });
   const document = await slideWith({
     overlays: [
-      { id: "o1", itemId: asset.id, x: 0.1, y: 0.05, width: 0.3, cropW: 0.5, z: 1 },
+      { id: "o1", itemId: asset.id, x: 0.1, y: 0.1, width: 0.3, cropW: 0.5, z: 1 },
     ],
     texts: [
       text({ id: "a", y: 0.3, style: "boxed", backgroundShape: "lines", z: 2 }),
@@ -65,7 +65,7 @@ it("draws every layer style into a JPEG at the preview size", async () => {
         strikethrough: true,
         z: 4,
       }),
-      text({ id: "d", y: 0.85, style: "plain", align: "left", italic: true, z: 5 }),
+      text({ id: "d", y: 0.65, style: "plain", align: "left", italic: true, z: 5 }),
     ],
   });
 
@@ -96,7 +96,26 @@ it("warns when a text box reaches past the slide edge", async () => {
 
   const { warnings } = await renderPreview(services, document, [1], 270);
 
-  expect(warnings.map((warning) => warning.type)).toEqual(["text-out-of-frame"]);
+  expect(warnings.map((warning) => warning.type)).toEqual([
+    "text-out-of-frame",
+    "outside-safe-zone",
+  ]);
+});
+
+it("warns when a text or an image leaves the safe zone, and not inside it", async () => {
+  const asset = await addItem(harness.services.library, "asset", "Arrow");
+  const overlay = { id: "o1", itemId: asset.id, x: 0.5, y: 0.1, width: 0.4, z: 1 };
+  const document = await slideWith({
+    overlays: [overlay],
+    texts: [text({ y: 0.75, z: 2 })],
+  });
+
+  const { warnings } = await renderPreview(services, document, [1], 270);
+
+  expect(warnings).toEqual([
+    expect.objectContaining({ type: "outside-safe-zone", itemId: asset.id }),
+    expect.objectContaining({ type: "outside-safe-zone", text: "Hello" }),
+  ]);
 });
 
 it("warns when an image sits over a text, and not when it sits under one", async () => {

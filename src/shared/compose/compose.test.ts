@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryItem, Slide, SlideDocument } from "../schema/index.js";
+import type { LibraryItem, Slide, SlideDocument, SlideLayout } from "../schema/index.js";
 import {
   ComposeError,
   composeDocument,
@@ -98,6 +98,7 @@ const items: Record<string, StubItem> = {
     height: 1920,
     layoutHints: { subject: { x: 0.8, y: 0.4, w: 0.2, h: 0.2 } },
   },
+  a5: { id: "a5", kind: "asset", width: 100, height: 800 },
 };
 
 const library: LibraryLookup = {
@@ -1109,5 +1110,439 @@ describe("styled text lines from an unparsed body", () => {
     expect(() => compose([{ background: "bg1", texts: [line as never] }])).toThrow(
       ComposeError,
     );
+  });
+});
+
+describe("layout anchors", () => {
+  const RATIOS = { "3:4": { w: 3, h: 4 }, "9:16": PORTRAIT };
+  const TEXT_ANCHORS = ["top", "middle", "bottom"] as const;
+  const ASSET_ANCHORS = ["top-left", "top-right", "center", "bottom-left"] as const;
+  const ASSET_SIZES = ["small", "medium", "large"] as const;
+
+  function inSafeZone(box: {
+    x: number;
+    y: number;
+    width: number;
+    height?: number | undefined;
+  }) {
+    const epsilon = 1e-9;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(SAFE_TOP - epsilon);
+    expect(box.x + box.width).toBeLessThanOrEqual(SAFE_RIGHT + epsilon);
+    expect(box.y + (box.height ?? 0)).toBeLessThanOrEqual(SAFE_BOTTOM + epsilon);
+  }
+
+  for (const [label, ratio] of Object.entries(RATIOS)) {
+    it(`keeps every anchor pair inside the safe zone, without overlap, at ${label}`, () => {
+      for (const text of TEXT_ANCHORS) {
+        for (const assets of ASSET_ANCHORS) {
+          for (const assetSize of ASSET_SIZES) {
+            for (const assetIds of [[], ["a2"], ["a1", "a3"]]) {
+              const slide = firstSlide(
+                compose(
+                  [
+                    {
+                      background: "bg1",
+                      assets: assetIds,
+                      texts: ["A hook that wraps to two lines", "Second"],
+                      layout: { text, assets, assetSize },
+                    },
+                  ],
+                  { ratio },
+                ),
+              );
+              for (const layer of [...slide.texts, ...slide.overlays]) inSafeZone(layer);
+              const textTop = Math.min(...slide.texts.map((t) => t.y));
+              const textBottom = Math.max(...slide.texts.map((t) => t.y + t.height));
+              for (const overlay of slide.overlays) {
+                const bottom = overlay.y + (overlay.height ?? 0);
+                expect(bottom <= textTop + 1e-9 || overlay.y >= textBottom - 1e-9).toBe(
+                  true,
+                );
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  it("puts the text block where its anchor says", () => {
+    const at3 = (text: (typeof TEXT_ANCHORS)[number]) =>
+      firstSlide(compose([{ background: "bg1", texts: ["Line"], layout: { text } }]));
+    const top = at(at3("top").texts, 0);
+    expect(top.y).toBeCloseTo(SAFE_TOP, 10);
+    const bottom = at(at3("bottom").texts, 0);
+    expect(bottom.y + bottom.height).toBeCloseTo(SAFE_BOTTOM, 10);
+    expect(blockCenter(at3("middle"))).toBeCloseTo((SAFE_TOP + SAFE_BOTTOM) / 2, 10);
+  });
+
+  it("sizes and places a lone asset from its anchors", () => {
+    const slide = firstSlide(
+      compose([
+        {
+          background: "bg1",
+          assets: ["a1"],
+          texts: [],
+          layout: { assets: "top-right", assetSize: "small" },
+        },
+      ]),
+    );
+    const overlay = at(slide.overlays, 0);
+    expect(overlay.width).toBeCloseTo(0.25, 10);
+    expect(overlay.x + overlay.width).toBeCloseTo(SAFE_RIGHT, 10);
+    expect(overlay.y).toBe(ASSET_TOP);
+  });
+
+  it("moves an anchored text off the assets and says so", () => {
+    const notes: string[] = [];
+    const doc = composeDocument({
+      ratio: PORTRAIT,
+      slides: [
+        {
+          background: "bg1",
+          assets: ["a2"],
+          texts: ["Over the asset"],
+          layout: { text: "middle", assets: "center" },
+        },
+      ],
+      library,
+      defaults: BUILTIN_DEFAULTS,
+      newId,
+      notes,
+    });
+    const slide = firstSlide(doc);
+    const overlay = at(slide.overlays, 0);
+    const text = at(slide.texts, 0);
+    expect(text.y).toBeCloseTo(overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP, 10);
+    expect(notes).toEqual([
+      'Slide 1: text "middle" would overlap the assets, so it sits below them.',
+    ]);
+  });
+
+  it("leaves a slide with no anchors exactly as before", () => {
+    const plain = { background: "bg1", assets: ["a2"], texts: ["Same"] };
+    const before = firstSlide(compose([plain]));
+    const after = firstSlide(compose([{ ...plain, layout: {} }]));
+    expect({ ...after, id: "" }).toEqual({
+      ...before,
+      id: "",
+      overlays: before.overlays.map((o, i) => ({ ...o, id: at(after.overlays, i).id })),
+      texts: before.texts.map((t, i) => ({ ...t, id: at(after.texts, i).id })),
+    });
+    expect(after.layout).toBeUndefined();
+  });
+
+  it("refuses an unknown anchor", () => {
+    const bad = (layout: unknown) => () =>
+      compose([{ background: "bg1", texts: ["x"], layout: layout as SlideLayout }]);
+    expect(bad({ text: "left" })).toThrow(ComposeError);
+    expect(bad({ textAnchor: "top" })).toThrow(ComposeError);
+    expect(bad({ assetSize: "huge" })).toThrow(/layout at assetSize/);
+  });
+
+  it("recomposes only the slide whose anchor changed", () => {
+    const slides: Composition[] = [
+      { background: "bg1", assets: ["a1"], texts: ["One"] },
+      { background: "bg1", texts: ["Two"], layout: { text: "middle" } },
+    ];
+    const first = compose(slides);
+    // A human drags the text on both slides.
+    const edited: SlideDocument = {
+      ...first,
+      slides: first.slides.map((slide) => ({
+        ...slide,
+        texts: slide.texts.map((text) => ({ ...text, y: 0.3 })),
+      })),
+    };
+    const moved = compose(
+      [
+        slides[0] as Composition,
+        { ...(slides[1] as Composition), layout: { text: "top" } },
+      ],
+      { previous: edited },
+    );
+    expect(at(moved.slides, 0)).toBe(at(edited.slides, 0));
+    expect(at(at(moved.slides, 1).texts, 0).y).toBeCloseTo(SAFE_TOP, 10);
+    expect(at(moved.slides, 1).layout).toEqual({ text: "top" });
+    expect(at(moved.slides, 1).id).toBe(at(edited.slides, 1).id);
+  });
+
+  it("keeps a hand-edited anchored slide when only another slide changes", () => {
+    const slides: Composition[] = [
+      { background: "bg1", texts: ["One"], layout: { text: "bottom" } },
+      { background: "bg1", texts: ["Two"] },
+    ];
+    const first = compose(slides);
+    const edited: SlideDocument = {
+      ...first,
+      slides: first.slides.map((slide) => ({
+        ...slide,
+        texts: slide.texts.map((text) => ({ ...text, x: 0.2, y: 0.3 })),
+      })),
+    };
+    const next = compose(
+      [slides[0] as Composition, { background: "bg1", texts: ["Deux"] }],
+      {
+        previous: edited,
+      },
+    );
+    expect(at(next.slides, 0)).toBe(at(edited.slides, 0));
+  });
+
+  it("returns a slide's anchors in the shorthand", () => {
+    const doc = compose([
+      { background: "bg1", texts: ["One"], layout: { text: "top", assetSize: "large" } },
+      { background: "bg1", texts: ["Two"] },
+    ]);
+    const shorthand = toComposition({ ...doc, id: "p", name: "P", version: 1 });
+    expect(shorthand.slides.map((slide) => slide.layout)).toEqual([
+      { text: "top", assetSize: "large" },
+      undefined,
+    ]);
+  });
+});
+
+describe("anchors and free zones", () => {
+  const compose = (layout: SlideLayout) =>
+    firstSlide(
+      composeDocument({
+        ratio: PORTRAIT,
+        slides: [
+          { background: "topZone", assets: ["a1"], texts: ["Short hook"], layout },
+        ],
+        library,
+        defaults: BUILTIN_DEFAULTS,
+        newId,
+      }),
+    );
+
+  it("keeps a text anchor over the background's free zone", () => {
+    const text = at(compose({ text: "bottom" }).texts, 0);
+    expect(text.y + text.height).toBeCloseTo(SAFE_BOTTOM, 10);
+  });
+
+  it("moves an unanchored text into the free zone, clear of anchored assets", () => {
+    const slide = compose({ assets: "bottom-left" });
+    const text = at(slide.texts, 0);
+    const overlay = at(slide.overlays, 0);
+    expect(text.y + text.height).toBeLessThanOrEqual(1 / 3 + 1e-9);
+    expect(text.y + text.height + ASSET_TEXT_GAP).toBeLessThanOrEqual(overlay.y + 1e-9);
+  });
+});
+
+describe("anchors that collide", () => {
+  it.each(["middle", "bottom"] as const)(
+    "keeps unanchored assets next to a %s text",
+    (anchor) => {
+      const notes: string[] = [];
+      const slide = firstSlide(
+        composeDocument({
+          ratio: PORTRAIT,
+          slides: [
+            {
+              background: "bg1",
+              assets: ["a1"],
+              texts: ["Short hook"],
+              layout: { text: anchor, assetSize: "small" },
+            },
+          ],
+          library,
+          defaults: BUILTIN_DEFAULTS,
+          newId,
+          notes,
+        }),
+      );
+      const text = at(slide.texts, 0);
+      const overlay = at(slide.overlays, 0);
+      expect(overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP).toBeCloseTo(text.y, 10);
+      expect(notes).toEqual([]);
+    },
+  );
+
+  it("moves the assets out of the way so the text stays on its anchor", () => {
+    const notes: string[] = [];
+    const slide = firstSlide(
+      composeDocument({
+        ratio: PORTRAIT,
+        slides: [
+          {
+            background: "bg1",
+            assets: ["a1"],
+            texts: ["Short hook"],
+            layout: { text: "middle", assets: "center", assetSize: "small" },
+          },
+        ],
+        library,
+        defaults: BUILTIN_DEFAULTS,
+        newId,
+        notes,
+      }),
+    );
+    const text = at(slide.texts, 0);
+    const overlay = at(slide.overlays, 0);
+    expect(text.y + text.height / 2).toBeCloseTo((SAFE_TOP + SAFE_BOTTOM) / 2, 10);
+    expect(overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP).toBeCloseTo(text.y, 10);
+    expect(overlay.y).toBeGreaterThanOrEqual(SAFE_TOP);
+    expect(notes).toEqual([
+      'Slide 1: assets "center" would overlap the text, so they sit above it.',
+    ]);
+  });
+
+  it("says so when an asset anchor alone moves the text", () => {
+    const notes: string[] = [];
+    composeDocument({
+      ratio: PORTRAIT,
+      slides: [
+        {
+          background: "bg1",
+          assets: ["a2"],
+          texts: ["Hook"],
+          layout: { assets: "center" },
+        },
+      ],
+      library,
+      defaults: BUILTIN_DEFAULTS,
+      newId,
+      notes,
+    });
+    expect(notes).toEqual([
+      "Slide 1: the text would overlap the assets, so it sits above them.",
+    ]);
+  });
+
+  it("says so when a tall text and its assets cannot both stay in the zone", () => {
+    const notes: string[] = [];
+    composeDocument({
+      ratio: { w: 3, h: 4 },
+      slides: [
+        {
+          background: "bg1",
+          assets: ["a2"],
+          texts: ["word ".repeat(56).trim()],
+          layout: { text: "top" },
+        },
+      ],
+      library,
+      defaults: BUILTIN_DEFAULTS,
+      newId,
+      notes,
+    });
+    expect(notes).toEqual([
+      "Slide 1: the text and the assets do not both fit the safe zone, so the text leaves it.",
+    ]);
+  });
+
+  it("keeps a top text on target by moving a short asset below it", () => {
+    const notes: string[] = [];
+    const slide = firstSlide(
+      composeDocument({
+        ratio: PORTRAIT,
+        slides: [
+          {
+            background: "bg1",
+            assets: ["a4"],
+            texts: ["One line", "Two lines", "Three lines"],
+            layout: { text: "top" },
+          },
+        ],
+        library,
+        defaults: BUILTIN_DEFAULTS,
+        newId,
+        notes,
+      }),
+    );
+    const last = at(slide.texts, 2);
+    expect(at(slide.texts, 0).y).toBeCloseTo(SAFE_TOP, 10);
+    expect(at(slide.overlays, 0).y).toBeCloseTo(
+      last.y + last.height + ASSET_TEXT_GAP,
+      10,
+    );
+    expect(notes).toEqual([]);
+  });
+
+  it("keeps a bottom text on target by moving bottom-left assets above it", () => {
+    const notes: string[] = [];
+    const slide = firstSlide(
+      composeDocument({
+        ratio: PORTRAIT,
+        slides: [
+          {
+            background: "bg1",
+            assets: ["a4"],
+            texts: ["One line", "Two lines", "Three lines"],
+            layout: { text: "bottom", assets: "bottom-left" },
+          },
+        ],
+        library,
+        defaults: BUILTIN_DEFAULTS,
+        newId,
+        notes,
+      }),
+    );
+    const last = at(slide.texts, 2);
+    const overlay = at(slide.overlays, 0);
+    expect(last.y + last.height).toBeCloseTo(SAFE_BOTTOM, 10);
+    expect(overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP).toBeCloseTo(
+      at(slide.texts, 0).y,
+      10,
+    );
+    expect(notes).toEqual([
+      'Slide 1: assets "bottom-left" would overlap the text, so they sit above it.',
+    ]);
+  });
+
+  it("leaves a lone asset where it was under a tall text when the slide has no layout", () => {
+    const slide = firstSlide(
+      compose(
+        [
+          {
+            background: "bg1",
+            assets: ["a3"],
+            texts: ["word ".repeat(27).trim(), "word ".repeat(27).trim()],
+          },
+        ],
+        { ratio: { w: 3, h: 4 } },
+      ),
+    );
+    const overlay = at(slide.overlays, 0);
+    expect(overlay.y).toBe(ASSET_TOP);
+    expect(at(slide.texts, 0).y).toBeCloseTo(
+      overlay.y + (overlay.height ?? 0) + ASSET_TEXT_GAP,
+      10,
+    );
+  });
+
+  it("pulls several assets to the gutter for a left anchor", () => {
+    const slide = firstSlide(
+      compose([
+        {
+          background: "bg1",
+          assets: ["a2", "a2"],
+          texts: [],
+          layout: { assets: "bottom-left" },
+        },
+      ]),
+    );
+    expect(Math.min(...slide.overlays.map((overlay) => overlay.x))).toBeCloseTo(
+      SIDE_MARGIN,
+      10,
+    );
+  });
+
+  it("starts a narrow unanchored text below assets that sit beside it", () => {
+    const defaults = {
+      ...BUILTIN_DEFAULTS,
+      text: { ...BUILTIN_DEFAULTS.text, maxWidth: 0.1 },
+    };
+    const slide = firstSlide(
+      compose([{ background: "bg1", assets: ["a5", "a5", "a5", "a5"], texts: ["Hi"] }], {
+        defaults,
+      }),
+    );
+    const lowest = Math.max(
+      ...slide.overlays.map((overlay) => overlay.y + (overlay.height ?? 0)),
+    );
+    expect(at(slide.texts, 0).y).toBeCloseTo(lowest + ASSET_TEXT_GAP, 10);
   });
 });

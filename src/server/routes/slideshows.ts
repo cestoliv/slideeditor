@@ -44,6 +44,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
     const account = app.accounts.get(accountId);
     if (!account) throw new HttpError(400, `No account with id ${accountId}.`);
     const slides = asCompositions(body["slides"]);
+    const notes: string[] = [];
     validateComposition(slides, { accountId, lookupItem: (id) => app.library.get(id) });
     const document = composeDocument({
       ratio: body["ratio"] ? asRatio(body["ratio"]) : account.defaults.ratio,
@@ -51,6 +52,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       library: app.library,
       defaults: account.defaults,
       advanceRatioFor: (family) => app.fonts.advanceRatioFor(family),
+      notes,
     });
     const project = app.projects.create({
       name: field(body, "name") || "Agent slideshow",
@@ -69,6 +71,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       // without a second read to find out what its input became.
       description: project.description,
       hashtags: project.hashtags,
+      ...(notes.length ? { notes } : {}),
     };
   });
 
@@ -79,6 +82,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
     const account = app.accounts.get(current.accountId);
     if (!account) throw new HttpError(400, `No account with id ${current.accountId}.`);
     const slides = asCompositions(body["slides"]);
+    const notes: string[] = [];
     validateComposition(slides, {
       accountId: current.accountId,
       lookupItem: (itemId) => app.library.get(itemId),
@@ -92,6 +96,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       defaults: account.defaults,
       previous: asComposable(current),
       advanceRatioFor: (family) => app.fonts.advanceRatioFor(family),
+      notes,
     });
     const project = app.projects.save(id, {
       name: field(body, "name") ?? current.name,
@@ -109,6 +114,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       slideCount: project.slides.length,
       description: project.description,
       hashtags: project.hashtags,
+      ...(notes.length ? { notes } : {}),
     };
   });
 
