@@ -1,4 +1,4 @@
-import { DESIGN_WIDTH } from "../geometry/ratio.js";
+import { DESIGN_WIDTH, OUTPUT_WIDTH } from "../geometry/ratio.js";
 import type { TextLayer } from "../schema/document.js";
 import {
   BOX_CORNER_RADIUS,
@@ -31,6 +31,32 @@ export type TextAlign = "left" | "center" | "right";
  */
 export function fontSizeAt(layer: TextLayer, renderWidth: number): number {
   return layer.size * (renderWidth / DESIGN_WIDTH);
+}
+
+/**
+ * How far a per-line pill reaches past the padding at the top and the bottom
+ * of its stack, in pixels at the scale of `fontSize`. A pill is taller than
+ * the line advance, so its stack overhangs the 0.1 em plain text keeps.
+ */
+export function pillOverhang(fontSize: number, perLineBox: boolean): number {
+  if (!perLineBox) return 0;
+  const reach = (BOX_LINE_HEIGHT - BOX_TEXT_LINE_HEIGHT) / 2 - TEXT_VERTICAL_PADDING;
+  return Math.max(0, reach) * fontSize;
+}
+
+/**
+ * Height a box needs to hold `lineCount` lines and the pills drawn around
+ * them, in pixels at the scale of `fontSize`. compose.ts sizes every box from
+ * this, so a composed box holds its pills as well as its lines.
+ */
+export function textContentHeight(
+  lineCount: number,
+  fontSize: number,
+  perLineBox: boolean,
+): number {
+  const lineHeight = fontSize * (perLineBox ? BOX_TEXT_LINE_HEIGHT : TEXT_LINE_HEIGHT);
+  const padding = fontSize * TEXT_VERTICAL_PADDING;
+  return lineCount * lineHeight + 2 * (padding + pillOverhang(fontSize, perLineBox));
 }
 
 /** Keeps a pill's corner radii inside its own half-width, the way both draw paths do. */
@@ -67,17 +93,26 @@ export type TextLayout = {
    * How many lines the text wrapped to before clipping. Greater than
    * `lines.length` when the box dropped lines, but never below one, so a single
    * line taller than its box reports no dropped lines and still does not fit.
-   * The overflow test is `contentHeight > boxHeight`.
+   * `contentHeight > boxHeight` catches that line, and also a per-line box
+   * that shows every line but not its whole pills.
    */
   totalLineCount: number;
   /**
-   * Height the box would need to show every wrapped line. This is what
-   * ensureTextFits (app.js:2931-2947) reads off `scrollHeight` today, so a
-   * renderer can grow the box without measuring the DOM a second time.
+   * Height the box would need to show every wrapped line, and every pill
+   * around them (textContentHeight). This is what ensureTextFits
+   * (app.js:2931-2947) read off `scrollHeight`, so a renderer can grow the box
+   * without measuring the DOM a second time.
    */
   contentHeight: number;
   /** The font size the caller asked for, echoed so renderers read one object. */
   fontSize: number;
+  /**
+   * The optical size to draw the glyphs at, which is the export's own font
+   * size at every scale. A face with an `opsz` axis otherwise draws a stage
+   * line in a wider design than the export, so the line outgrows the width
+   * it was wrapped by. The caller's `measure` measures at this size too.
+   */
+  opticalSize: number;
   /** Distance from one line's centre to the next. */
   lineHeight: number;
   /** True when each line gets its own pill rather than one background behind all of them. */
@@ -230,8 +265,9 @@ export function computeTextLayout(input: TextLayoutInput): TextLayout {
   return {
     lines,
     totalLineCount: wrapped.length,
-    contentHeight: wrapped.length * lineHeight + verticalPadding * 2,
+    contentHeight: textContentHeight(wrapped.length, fontSize, perLineBox),
     fontSize,
+    opticalSize: fontSizeAt(layer, OUTPUT_WIDTH),
     lineHeight,
     perLineBox,
     fullBox,

@@ -15,7 +15,7 @@ import {
 } from "./actions.js";
 import { useMoveGesture, useResizeGesture, useRotateGesture } from "./gestures.js";
 import type { GestureContext, LayerRect } from "./gestures.js";
-import { LayerBox, layerClipCss } from "./LayerBox.js";
+import { LayerBox, canvasClipCss, layerClipCss } from "./LayerBox.js";
 import type { Handle } from "./LayerBox.js";
 import { InlineTextEditor } from "../text/InlineTextEditor.js";
 import type { CaretRequest } from "../text/InlineTextEditor.js";
@@ -219,8 +219,11 @@ export function TextLayerView({
     [editing, onStartEditing, selected, store, textId],
   );
 
+  // Pills and strokes reach past the box to the canvas edges, as the export
+  // draws them. Plain text is cut at its box, as the export cuts it.
+  const clip = layer.style === "plain" ? layerClipCss : canvasClipCss;
   const clipStyle: CSSProperties = {
-    clipPath: layerClipCss(layer.x, layer.y, layer.width, layer.height),
+    clipPath: clip(layer.x, layer.y, layer.width, layer.height),
   };
 
   return (
@@ -273,18 +276,30 @@ export function TextLayerView({
           {renderTextDom(layer, layout)}
         </div>
         {editing ? (
-          <InlineTextEditor
-            value={layer.text}
-            layout={layout}
-            layer={layer}
-            caret={caret}
-            onInput={(value) => {
-              writeText((live) => {
-                live.text = value;
-              });
+          // The editor's own text would spill the lines a short box drops,
+          // so it alone keeps the clip at the box. It takes its own pointer
+          // events, so the wrapper refuses them.
+          <div
+            className={styles.inside}
+            data-testid="text-editor-clip"
+            style={{
+              clipPath: layerClipCss(layer.x, layer.y, layer.width, layer.height),
+              pointerEvents: "none",
             }}
-            onBlur={onEndEditing}
-          />
+          >
+            <InlineTextEditor
+              value={layer.text}
+              layout={layout}
+              layer={layer}
+              caret={caret}
+              onInput={(value) => {
+                writeText((live) => {
+                  live.text = value;
+                });
+              }}
+              onBlur={onEndEditing}
+            />
+          </div>
         ) : null}
       </div>
     </LayerBox>

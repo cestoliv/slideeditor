@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import type { LibraryItem, SlideDocument } from "../schema/index.js";
 import { BUILTIN_DEFAULTS } from "../schema/index.js";
+import { TEXT_WEIGHT, readFontMetrics } from "../text/index.js";
+import tiktokSansUri from "../../../assets/TikTokSans.ttf?inline";
 import { composeDocument } from "./compose.js";
 import type { Composition, ComposeDocumentInput, LibraryLookup } from "./compose.js";
 // Imported as a module rather than read off disk, because everything under
@@ -84,6 +86,15 @@ const strip = (doc: SlideDocument) => ({
   })),
 });
 
+// The bundled face, measured the way the server's FontService.measureText
+// measures it, so the recorded boxes are the ones production composes.
+const tiktokSans = readFontMetrics(
+  Uint8Array.from(
+    atob(tiktokSansUri.slice(tiktokSansUri.indexOf(",") + 1)),
+    (character) => character.charCodeAt(0),
+  ),
+);
+
 // Not "the previous engine's geometry" any more: the size ladder is gone
 // (product decision), and an unfittable text block (case 4 below) is
 // centered on the frame rather than floored to one edge, so this fixture is
@@ -96,6 +107,8 @@ it("matches this engine's recorded geometry exactly", () => {
     ...entry,
     library,
     defaults: BUILTIN_DEFAULTS,
+    measureText: (line, font) =>
+      tiktokSans?.measure(line, font.size, font.weight ?? TEXT_WEIGHT) ?? NaN,
   });
   expect(cases.map((entry) => strip(composeDocument(input(entry))))).toEqual(golden);
 });

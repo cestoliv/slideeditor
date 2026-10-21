@@ -202,6 +202,11 @@ function drawTextBackground(
  * app.js:4431-4506 wrapped the lines, counted them, sized the pills and rounded
  * their corners here, all over again. Every one of those numbers now arrives on
  * `layout`, and this function only turns them into calls.
+ *
+ * The layer is laid out and drawn at the export's own size, then scaled to
+ * this canvas. A face with an optical size axis draws small text in a wider
+ * design, so a thumbnail measured at its own size would wrap differently from
+ * the export it stands for.
  */
 function drawTextLayer(
   context: CanvasRenderingContext2D,
@@ -209,9 +214,10 @@ function drawTextLayer(
   canvasWidth: number,
   canvasHeight: number,
 ): void {
-  const boxWidth = layer.width * canvasWidth;
-  const boxHeight = layer.height * canvasHeight;
-  const fontSize = fontSizeAt(layer, canvasWidth);
+  const scale = canvasWidth / OUTPUT_WIDTH;
+  const boxWidth = layer.width * OUTPUT_WIDTH;
+  const boxHeight = (layer.height * canvasHeight) / scale;
+  const fontSize = fontSizeAt(layer, OUTPUT_WIDTH);
   const centerX = (layer.x + layer.width / 2) * canvasWidth;
   const centerY = (layer.y + layer.height / 2) * canvasHeight;
   const x = -boxWidth / 2;
@@ -220,6 +226,7 @@ function drawTextLayer(
   context.save();
   context.translate(centerX, centerY);
   context.rotate((layer.rotation * Math.PI) / 180);
+  context.scale(scale, scale);
   // Set before the layout is computed, because `measure` below reads this very
   // context. The string comes from the shared module, so the measuring canvas
   // on the stage and this one cannot bind different faces. The weight comes

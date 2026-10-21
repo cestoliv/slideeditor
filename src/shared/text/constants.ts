@@ -73,25 +73,15 @@ export const TEXT_VERTICAL_PADDING = 0.1;
 export const DEFAULT_FONT_FAMILY = "TikTok Sans";
 
 /**
- * Average glyph advance, as a fraction of font size — the compose engine's
- * line-wrap estimate (shared/compose/compose.ts's textHeight) has no font
- * file to measure against, so this stands in for one. The best guess
- * available for a family with no measured value of its own: this is what a
- * Google font falls back to today, since nothing in this codebase extracts
- * font metrics.
- *
- * This is the fallback only. The real per-family value — every family this
- * codebase has actually tuned, both bundled builtins included — lives in the
- * `font` table's own `advance` column (services/fonts.ts's
- * FontService.advanceRatioFor, seeded by BUILTIN_FONTS there), which is
- * shared code with no database to read: composeDocument takes an
- * `advanceRatioFor` a caller with a real catalogue can inject, and
- * `advanceRatioFor` below — this module's own, name-keyed version — is only
- * what a caller lacking one (or a test) gets instead.
+ * Average glyph advance, as a fraction of font size, for a line measured
+ * without its face. The server measures a bundled face from its own file
+ * (fontMetrics.ts, FontService.measureText) and falls back to this for a
+ * Google face it cannot read. composeDocument falls back to it when no
+ * caller injects a measure, which is what a test gets.
  */
 export const DEFAULT_ADVANCE_RATIO = 0.5;
 
-/** advanceRatioFor's own fallback for a caller with no font catalogue to inject — see its doc comment above. */
+/** The average advance for a caller with no font catalogue, as DEFAULT_ADVANCE_RATIO describes. */
 export function advanceRatioFor(_family: string): number {
   return DEFAULT_ADVANCE_RATIO;
 }

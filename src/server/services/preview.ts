@@ -1,9 +1,11 @@
 import sharp from "sharp";
 import {
+  OUTPUT_WIDTH,
   getImageLayout,
   getOverlayMetrics,
   outlineColorFor,
   outputAspect,
+  outputHeight,
   overlayCrop,
   overlaps,
   textColorOf,
@@ -28,10 +30,10 @@ import type { MediaStore } from "./media.js";
  * An approximate server render of a slide, for an agent that cannot open the
  * editor. It follows export/render.ts layer for layer and, like it, computes no
  * geometry: text comes from computeTextLayout and images from
- * src/shared/geometry. The one estimate is `measure`, which counts characters
- * against the family's advance ratio the way compose.ts does, because the
- * server has no canvas to measure glyphs with. A line can therefore wrap at a
- * different word than in the editor, and every result says so.
+ * src/shared/geometry. Lines are measured with FontService.measureText at the
+ * export's own size, from the face's own file, so a line wraps where the
+ * export wraps it. librsvg draws the glyphs in whatever face it finds, which
+ * for a Google family is another one, so every result says it is approximate.
  */
 
 export type PreviewWarning = {
@@ -83,8 +85,14 @@ function escapeXml(value: string): string {
 /** A part of an image, in fractions of its own width and height. */
 type Region = { x: number; y: number; w: number; h: number };
 
-/** The services, plus each font family's default weight, read once per render. */
-type RenderServices = PreviewServices & { weights: ReadonlyMap<string, number> };
+/**
+ * The services, plus what a render reads once: each font family's default
+ * weight, and the slide's height at the export's own width.
+ */
+type RenderServices = PreviewServices & {
+  weights: ReadonlyMap<string, number>;
+  exportHeight: number;
+};
 
 /**
  * The part of a library image a layer shows, cut out and resized to the pixels
@@ -193,16 +201,25 @@ function textSvg(
   height: number,
   clipId: string,
 ): { svg: string; cut: boolean } {
-  const boxWidth = layer.width * width;
-  const boxHeight = layer.height * height;
-  const fontSize = fontSizeAt(layer, width);
-  const advance = services.fonts.advanceRatioFor(layer.fontFamily);
+  // Laid out and drawn at the export's own size, then scaled to the preview,
+  // as export/render.ts draws a thumbnail. The preview's rounded height and a
+  // face's optical size would otherwise wrap and cut lines the export keeps.
+  const scale = width / OUTPUT_WIDTH;
+  const boxWidth = layer.width * OUTPUT_WIDTH;
+  const boxHeight = layer.height * services.exportHeight;
+  const fontSize = fontSizeAt(layer, OUTPUT_WIDTH);
+  const font = {
+    family: layer.fontFamily,
+    size: fontSize,
+    weight: layer.weight,
+    italic: layer.italic,
+  };
   const layout = computeTextLayout({
     layer,
     boxWidth,
     boxHeight,
     fontSize,
-    measure: (line) => line.length * fontSize * advance,
+    measure: (line) => services.fonts.measureText(line, font),
   });
   const x = -boxWidth / 2;
   const y = -boxHeight / 2;
@@ -262,7 +279,7 @@ function textSvg(
   const centerX = (layer.x + layer.width / 2) * width;
   const centerY = (layer.y + layer.height / 2) * height;
   const svg =
-    `<g transform="translate(${String(centerX)} ${String(centerY)}) rotate(${String(layer.rotation)})">` +
+    `<g transform="translate(${String(centerX)} ${String(centerY)}) rotate(${String(layer.rotation)}) scale(${String(scale)})">` +
     clip +
     parts.join("") +
     `<g${clip ? ` clip-path="url(#${clipId})"` : ""}>` +
@@ -396,7 +413,7 @@ export async function renderPreview(
   const weights = new Map(
     services.fonts.list().map((font) => [font.family, font.weight]),
   );
-  const render = { ...services, weights };
+  const render = { ...services, weights, exportHeight: outputHeight(document.ratio) };
   for (const number of numbers) {
     const slide = document.slides[number - 1];
     if (slide === undefined) continue;

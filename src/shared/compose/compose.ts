@@ -14,13 +14,13 @@ import {
 } from "../schema/index.js";
 import { newTextLayer } from "../defaults/index.js";
 import {
-  BOX_TEXT_LINE_HEIGHT,
-  TEXT_LINE_HEIGHT,
-  TEXT_VERTICAL_PADDING,
   TEXT_WRAP_INSET,
-  advanceRatioFor as defaultAdvanceRatioFor,
+  advanceRatioFor,
+  pillOverhang,
+  textContentHeight,
   wrapText,
 } from "../text/index.js";
+import type { MeasureFont, MeasureText, TextFont } from "../text/index.js";
 import type { ImageSlide } from "../geometry/index.js";
 import type {
   AccountDefaults,
@@ -121,16 +121,12 @@ export interface ComposeDocumentInput {
   previous?: SlideDocument | null | undefined;
   newId?: (() => string) | undefined;
   /**
-   * The per-family average glyph advance measureTexts estimates line-wrap
-   * height from — this module has no font file to measure against, and
-   * (being shared code) no database to read a measured one from either. A
-   * caller with a font catalogue to consult (server/services/fonts.ts's
-   * FontService.advanceRatioFor) passes it here; omitting it falls back to
-   * the same shared, name-keyed constant this always used, which is what
-   * every existing test (and any caller that predates this field) still
-   * gets.
+   * Measures a line the way the editor and the export draw it. This module
+   * reads no font file, so the server passes FontService.measureText, which
+   * reads the face itself. Without one, a line is estimated from the shared
+   * average glyph advance.
    */
-  advanceRatioFor?: ((family: string) => number) | undefined;
+  measureText?: MeasureFont | undefined;
   /**
    * Collects one sentence per slide whose anchors could not all be honoured,
    * for the caller to hand back to the agent.
@@ -166,6 +162,8 @@ interface MeasuredText {
   style: TextStyle;
   size: number;
   height: number;
+  /** How far its pills reach past its padding at each edge (pillOverhang). */
+  overhang: number;
 }
 
 interface PlacedAsset {
@@ -186,8 +184,13 @@ interface ComposeSlideInput {
   previousSlide: Slide | null;
   ratioChanged: boolean;
   newId: () => string;
-  advanceRatioFor: (family: string) => number;
+  measureText: MeasureFont;
   notes: string[];
+}
+
+/** A line's width from the shared average glyph advance, for a caller with no font to read. */
+function estimateText(line: string, font: TextFont): number {
+  return line.length * font.size * advanceRatioFor(font.family);
 }
 
 // Injected everywhere below so tests get deterministic ids, and so this module
@@ -209,7 +212,7 @@ export function composeDocument({
   defaults,
   previous = null,
   newId = defaultNewId,
-  advanceRatioFor = defaultAdvanceRatioFor,
+  measureText = estimateText,
   notes = [],
 }: ComposeDocumentInput): SlideDocument {
   const safeRatio = normalizeRatio(ratio);
@@ -227,7 +230,7 @@ export function composeDocument({
         previousSlide: previousSlides[index] || null,
         ratioChanged: previous ? !sameRatio(previous.ratio, safeRatio) : false,
         newId,
-        advanceRatioFor,
+        measureText,
         notes,
       }),
     ),
@@ -244,7 +247,7 @@ function composeSlide({
   previousSlide,
   ratioChanged,
   newId,
-  advanceRatioFor,
+  measureText,
   notes,
 }: ComposeSlideInput): Slide {
   const background = library.require(composition.background, "background");
@@ -265,10 +268,11 @@ function composeSlide({
   }
 
   const height = outputHeight(ratio);
-  const measured = measureTexts(texts, height, defaults, advanceRatioFor);
-  const total =
-    measured.reduce((sum, box) => sum + box.height, 0) +
-    TEXT_GAP * Math.max(0, measured.length - 1);
+  const measured = measureTexts(texts, height, defaults, measureText);
+  const total = measured.reduce(
+    (sum, box, index) => sum + box.height + stackGap(box, measured[index + 1]),
+    0,
+  );
   const fitsSafeZone = total <= SAFE_BOTTOM - SAFE_TOP;
   const placement = fitsSafeZone
     ? placeInSafeZone(
@@ -313,9 +317,9 @@ function composeSlide({
       })
     : placement.textTop;
   let cursor = textTop;
-  const laidOutTexts = measured.map((box) => {
+  const laidOutTexts = measured.map((box, index) => {
     const placed = { ...box, y: cursor };
-    cursor += box.height + TEXT_GAP;
+    cursor += box.height + stackGap(box, measured[index + 1]);
     return placed;
   });
 
@@ -396,33 +400,53 @@ function composeSlide({
   return slide;
 }
 
+/**
+ * The space from one stacked text box to the next, none after the last.
+ * Each boxed box holds its own pills, so two of them overlap by both
+ * overhangs and their pills overlap as before, rather than meeting edge to
+ * edge, where the export shows the background through a hairline seam.
+ */
+function stackGap(box: MeasuredText, next: MeasuredText | undefined): number {
+  return next ? TEXT_GAP - box.overhang - next.overhang : 0;
+}
+
 /** Measures each text box at its own size and style, in canvas fractions. */
 function measureTexts(
   texts: StyledText[],
   height: number,
   defaults: AccountDefaults,
-  advanceRatioFor: (family: string) => number,
+  measureText: MeasureFont,
 ): MeasuredText[] {
-  const advance = advanceRatioFor(defaults.text.fontFamily);
   return texts.map(({ text, style }) => {
     // Each line measures at its own size and style, because a hook set
-    // larger than the rest wraps to more lines and needs a taller box.
-    // Weight and italic do not change the estimate: the renderer's
-    // computeTextLayout stays the source of truth for the real wrap.
+    // larger than the rest wraps to more lines and needs a taller box, and
+    // a heavier weight draws wider glyphs.
     const size = style.size ?? defaults.text.size;
-    // computeTextLayout picks the line advance off the same two fields, and
-    // the two constants are tuned independently, so reading them here keeps
-    // this estimate from drifting away from what the renderer lays out.
-    const lineHeight =
+    const font: TextFont = {
+      family: defaults.text.fontFamily,
+      size,
+      weight: style.weight ?? defaults.text.weight,
+      italic: style.italic ?? defaults.text.italic,
+    };
+    // computeTextLayout draws per-line pills off the same two fields, and the
+    // pills reach past the plain padding, so reading them here keeps this
+    // height from drifting away from what the renderer lays out.
+    const perLineBox =
       (style.style ?? defaults.text.style) === "boxed" &&
-      defaults.text.backgroundShape !== "full"
-        ? BOX_TEXT_LINE_HEIGHT
-        : TEXT_LINE_HEIGHT;
+      defaults.text.backgroundShape !== "full";
     return {
       text,
       style,
       size,
-      height: textHeight(text, size, height, advance, defaults.text.maxWidth, lineHeight),
+      height: textHeight(
+        text,
+        size,
+        height,
+        (line) => measureText(line, font),
+        defaults.text.maxWidth,
+        perLineBox,
+      ),
+      overhang: pillOverhang(size, perLineBox) / height,
     };
   });
 }
@@ -742,31 +766,29 @@ function clamp(value: number, min: number, max: number): number {
  * downwards for as long as the text needs, because the alternative is losing
  * the lines that do not fit.
  *
- * This wraps through the same wrapText computeTextLayout uses, and adds the
- * same TEXT_WRAP_INSET and TEXT_VERTICAL_PADDING, because the renderer clips
- * to `visibleLineCount` and drops whatever a shorter box cannot hold. The old
- * estimate here divided the character count by an average line length, which
- * ignored word boundaries and both insets, and so undercounted the lines of
- * most real captions: an 80-character caption wrapped to five lines, was
- * composed a three-line box, and lost its last two lines.
+ * This wraps through the same wrapText computeTextLayout uses, with the same
+ * TEXT_WRAP_INSET, and takes the height from the same textContentHeight,
+ * because the renderer clips to `visibleLineCount` and drops whatever a
+ * shorter box cannot hold. The old estimate here divided the character count
+ * by an average line length, which ignored word boundaries and both insets,
+ * and so undercounted the lines of most real captions: an 80-character
+ * caption wrapped to five lines, was composed a three-line box, and lost its
+ * last two lines.
  *
- * Only measurement is still an estimate: `advance` is the family's average
- * glyph width as a fraction of size (advanceRatioFor), standing in for the
- * real face this module has no way to read.
+ * `measure` works at the export's own scale, where a design pixel is an
+ * output pixel, so the box holds exactly the lines the export draws.
  */
 function textHeight(
   text: string,
   size: number,
   height: number,
-  advance: number,
+  measure: MeasureText,
   maxWidth: number,
-  lineHeight: number,
+  perLineBox: boolean,
 ): number {
-  const measure = (line: string) => line.length * size * advance;
   const wrapWidth = Math.max(1, maxWidth * DESIGN_WIDTH - size * TEXT_WRAP_INSET);
   const lines = wrapText(text, wrapWidth, measure);
-  const content = lines.length * size * lineHeight + size * TEXT_VERTICAL_PADDING * 2;
-  return content / height;
+  return textContentHeight(lines.length, size, perLineBox) / height;
 }
 
 /**

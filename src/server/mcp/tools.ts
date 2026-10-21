@@ -376,7 +376,7 @@ const createSlideshow = defineTool({
       slides: compositions,
       library,
       defaults: account.defaults,
-      advanceRatioFor: (family) => fonts.advanceRatioFor(family),
+      measureText: (line, font) => fonts.measureText(line, font),
       notes,
     });
     const project = projects.create({
@@ -443,7 +443,7 @@ const updateSlideshow = defineTool({
       library,
       defaults: account.defaults,
       previous: asComposable(current),
-      advanceRatioFor: (family) => fonts.advanceRatioFor(family),
+      measureText: (line, font) => fonts.measureText(line, font),
       notes,
     });
     const project = projects.save(id, {
@@ -961,9 +961,9 @@ const previewSlideshow = defineTool({
   title: "Preview a slideshow",
   description:
     "See a slideshow before the human does: one JPEG per slide, drawn on the server from the stored layout, in " +
-    "any status. The preview is approximate. Text is measured by estimate, so a line can wrap at a different word " +
-    "than in the editor, and a font added from Google Fonts is drawn in another face. Treat it as a " +
-    "check, not as the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: " +
+    "any status. The preview is approximate. A line wraps where the export wraps it, or at most one word " +
+    "sooner, and a font added from Google Fonts is drawn in another face. Treat it as a check, not as " +
+    "the export. The last block is JSON with `approximate`, the `version` drawn and `warnings`: " +
     "text that reaches past the slide edge (`text-out-of-frame`), text with more lines than its box shows " +
     "(`text-cut`), an image drawn over a text (`overlay-over-text`) and a text or image outside the zone " +
     "TikTok keeps clear of its tabs, caption and buttons (`outside-safe-zone`). A text anchor moves a text up " +

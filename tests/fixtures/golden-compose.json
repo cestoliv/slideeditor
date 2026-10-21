@@ -212,9 +212,9 @@
           {
             "text": "A very long line that has to wrap several times before it fits inside the content width of the slide",
             "x": 0.1,
-            "y": 0.1549629629629629,
+            "y": 0.18814814814814812,
             "width": 0.6,
-            "height": 0.41007407407407415,
+            "height": 0.34370370370370373,
             "size": 64,
             "style": "plain",
             "color": "#FFFFFF",

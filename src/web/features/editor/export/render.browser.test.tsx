@@ -91,6 +91,35 @@ function overlaySeed(overrides: Record<string, unknown>): Record<string, unknown
 }
 
 describe("renderSlideCanvas", () => {
+  it("wraps a thumbnail's lines where the export wraps them", async () => {
+    // At thumbnail size TikTok Sans picks a wider optical size, which would
+    // push "34" down to the second line.
+    const slide = slideFixture({
+      texts: [
+        textSeed({
+          text: "un curl sur 6 mois : de 26 à 34 kg",
+          size: 48,
+          width: 0.6,
+          height: 0.1,
+          style: "boxed",
+          backgroundShape: "lines",
+          color: "#111111",
+        }),
+      ],
+    });
+    const linesDrawn = async (width: number, height: number) => {
+      const fillText = vi.spyOn(CanvasRenderingContext2D.prototype, "fillText");
+      await renderSlideCanvas(slide, { width, height, assets: backgroundOnly() });
+      const lines = fillText.mock.calls.map((call) => call[0]);
+      fillText.mockRestore();
+      return lines;
+    };
+
+    const exported = await linesDrawn(1080, 1920);
+    expect(exported).toEqual(["un curl sur 6 mois : de 26 à 34", "kg"]);
+    expect(await linesDrawn(540, 960)).toEqual(exported);
+  });
+
   it("renders at 1080 wide and the ratio's height", async () => {
     const canvas = await renderSlideCanvas(slideFixture(), {
       height: 1920,

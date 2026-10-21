@@ -6,6 +6,7 @@ import type {
   SlideDocument,
   TextLayer,
 } from "@shared/schema/index.js";
+import { OUTPUT_WIDTH } from "@shared/geometry/index.js";
 import { computeTextLayout, fontSizeAt, textFontString } from "@shared/text/index.js";
 import type { MeasureText, TextLayout } from "@shared/text/index.js";
 import { weightFor } from "../../../app/fontFaces.js";
@@ -153,6 +154,9 @@ export function slideFixture(seed: SlideSeed = {}): Slide {
  * a test that derived them from either one could not tell whether that one had
  * drifted. Deriving them here from the layer and the render size alone is the
  * only version that can.
+ *
+ * Both measure at the export's font size and scale the width to the render
+ * size, so a face with an optical size axis wraps the same at every scale.
  */
 export function layoutAt(
   layer: TextLayer,
@@ -160,11 +164,17 @@ export function layoutAt(
   renderHeight: number,
 ): TextLayout {
   const fontSize = fontSizeAt(layer, renderWidth);
+  const exportSize = fontSizeAt(layer, OUTPUT_WIDTH);
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("This browser gave no 2d canvas context.");
-  context.font = textFontString(fontSize, layer.fontFamily, weightFor(layer.fontFamily));
-  const measure: MeasureText = (line) => context.measureText(line).width;
+  context.font = textFontString(
+    exportSize,
+    layer.fontFamily,
+    weightFor(layer.fontFamily),
+  );
+  const measure: MeasureText = (line) =>
+    (context.measureText(line).width * fontSize) / exportSize;
   return computeTextLayout({
     layer,
     boxWidth: layer.width * renderWidth,
