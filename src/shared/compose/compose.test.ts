@@ -31,6 +31,7 @@ import {
   computeTextLayout,
   fontSizeAt,
 } from "../text/index.js";
+import type { MeasureFont, TextFont } from "../text/index.js";
 import { BUILTIN_DEFAULTS } from "../schema/index.js";
 import type { AccountDefaults } from "../schema/index.js";
 
@@ -145,7 +146,7 @@ function compose(
     ratio?: { w: number; h: number };
     previous?: SlideDocument | null;
     defaults?: AccountDefaults;
-    advanceRatioFor?: (family: string) => number;
+    measureText?: MeasureFont;
   } = {},
 ): SlideDocument {
   return composeDocument({
@@ -155,7 +156,7 @@ function compose(
     previous: options.previous ?? null,
     newId,
     defaults: options.defaults ?? BUILTIN_DEFAULTS,
-    advanceRatioFor: options.advanceRatioFor,
+    measureText: options.measureText,
   });
 }
 
@@ -508,40 +509,70 @@ describe("layout", () => {
   });
 
   /*
-   * Finding 10: measureTexts had no font file to measure a family's average
-   * glyph width against, so it read a shared, name-keyed constant with only
-   * two entries. composeDocument now takes an `advanceRatioFor` a caller
-   * with a real font catalogue (server/services/fonts.ts's FontService) can
-   * inject — this is what proves it actually reaches measureTexts, by giving
-   * the exact same string a wider "measured" advance and checking the
-   * resulting block is taller, rather than the fixed, name-keyed value
-   * every input got before.
+   * composeDocument reads no font file, so the server injects one that does
+   * (FontService.measureText). These prove the injected measure reaches the
+   * wrap, with the face each line asks for.
    */
-  it("uses an injected advanceRatioFor for the line-wrap estimate", () => {
+  it("wraps with an injected measureText", () => {
     const line = "word ".repeat(30).trim();
+    const at =
+      (advance: number): MeasureFont =>
+      (text, font) =>
+        text.length * font.size * advance;
     const narrow = firstSlide(
       compose([{ background: "bg1", assets: [], texts: [line] }], {
-        advanceRatioFor: () => 0.3,
+        measureText: at(0.3),
       }),
     ).texts[0]!;
     const wide = firstSlide(
       compose([{ background: "bg1", assets: [], texts: [line] }], {
-        advanceRatioFor: () => 0.8,
+        measureText: at(0.8),
       }),
     ).texts[0]!;
-    // A wider average glyph fits fewer characters per line, so the same
-    // string wraps to more lines and a taller box.
+    // A wider measure fits fewer characters per line, so the same string
+    // wraps to more lines and a taller box.
     expect(wide.height).toBeGreaterThan(narrow.height);
   });
 
-  it("falls back to the shared, name-keyed default when no advanceRatioFor is injected", () => {
+  it("measures each line in its own size, weight and style", () => {
+    const fonts: TextFont[] = [];
+    compose(
+      [
+        {
+          background: "bg1",
+          assets: [],
+          texts: ["plain", { text: "styled", size: 90, weight: 800, italic: true }],
+        },
+      ],
+      {
+        measureText: (text, font) => {
+          fonts.push(font);
+          return text.length * font.size * 0.5;
+        },
+      },
+    );
+    expect(fonts).toContainEqual({
+      family: BUILTIN_DEFAULTS.text.fontFamily,
+      size: BUILTIN_DEFAULTS.text.size,
+      weight: BUILTIN_DEFAULTS.text.weight,
+      italic: false,
+    });
+    expect(fonts).toContainEqual({
+      family: BUILTIN_DEFAULTS.text.fontFamily,
+      size: 90,
+      weight: 800,
+      italic: true,
+    });
+  });
+
+  it("falls back to the shared average advance when no measureText is injected", () => {
     const line = "word ".repeat(30).trim();
     const withoutInjection = firstSlide(
       compose([{ background: "bg1", assets: [], texts: [line] }]),
     ).texts[0]!;
     const withDefaultExplicitly = firstSlide(
       compose([{ background: "bg1", assets: [], texts: [line] }], {
-        advanceRatioFor: () => DEFAULT_ADVANCE_RATIO,
+        measureText: (text, font) => text.length * font.size * DEFAULT_ADVANCE_RATIO,
       }),
     ).texts[0]!;
     expect(withoutInjection.height).toBe(withDefaultExplicitly.height);
@@ -642,6 +673,45 @@ describe("layout", () => {
       });
       expect(layout.lines).toHaveLength(layout.totalLineCount);
       expect(layout.contentHeight).toBeLessThanOrEqual(layer.height * canvasHeight);
+    }
+  });
+
+  it("gives every boxed text room for its pills, and overlaps stacked pills", () => {
+    const boxed: AccountDefaults = {
+      ...BUILTIN_DEFAULTS,
+      text: {
+        ...BUILTIN_DEFAULTS.text,
+        style: "boxed",
+        backgroundShape: "lines",
+        size: 48,
+      },
+    };
+    const texts = ["One line", "word ".repeat(12).trim(), "Last"];
+    const doc = compose([{ background: "bg1", assets: [], texts }], { defaults: boxed });
+    const canvasHeight = outputHeight(doc.ratio);
+    const pills = firstSlide(doc).texts.map((layer) => {
+      const fontSize = fontSizeAt(layer, DESIGN_WIDTH);
+      const layout = computeTextLayout({
+        layer,
+        boxWidth: layer.width * DESIGN_WIDTH,
+        boxHeight: layer.height * canvasHeight,
+        fontSize,
+        measure: (line) => line.length * fontSize * DEFAULT_ADVANCE_RATIO,
+      });
+      expect(layout.lines).toHaveLength(layout.totalLineCount);
+      const boxTop = layer.y * canvasHeight;
+      const top = boxTop + (layout.lineCenters[0] ?? 0) - layout.pillHeight / 2;
+      const bottom = boxTop + (layout.lineCenters.at(-1) ?? 0) + layout.pillHeight / 2;
+      expect(top).toBeGreaterThanOrEqual(boxTop - 1e-6);
+      expect(bottom).toBeLessThanOrEqual(boxTop + layer.height * canvasHeight + 1e-6);
+      return { top, bottom };
+    });
+    // Two pill stacks meeting edge to edge leave a hairline seam in the
+    // export, so stacked texts keep the 0.1 em overlap they always had.
+    for (let index = 1; index < pills.length; index++) {
+      const above = pills[index - 1];
+      const below = pills[index];
+      expect((above?.bottom ?? 0) - (below?.top ?? 0)).toBeCloseTo(0.1 * 48, 6);
     }
   });
 

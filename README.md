@@ -263,9 +263,10 @@ one JPEG per slide and a list of `warnings`: text past the slide edge
 (`text-out-of-frame`), text cut off by its box (`text-cut`), and an image drawn
 over a text (`overlay-over-text`), and a text or image outside the safe zone
 (`outside-safe-zone`). A text anchor moves a text up or down only, so a text
-past the right edge of the zone needs shorter lines. The server draws the
-preview with estimated text widths, so a line can wrap at a different word than
-in the editor. Look at each image too: a text over a face or over the key part
+past the right edge of the zone needs shorter lines. The server measures each
+line with the slideshow's own font file, so a line wraps where the export wraps
+it, or at most one word sooner. A font added from Google Fonts is drawn in
+another face. Look at each image too: a text over a face or over the key part
 of a screenshot needs to move.
 
 #### Moving a slide's text or assets

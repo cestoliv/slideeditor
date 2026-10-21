@@ -65,16 +65,30 @@ export type HarnessProps = Omit<LayerStackOptions, "library" | "defaults"> & {
   extras?: ReactNode;
   /** Defaults to BUILTIN_DEFAULTS; only a test about a specific account overrides it. */
   defaults?: AccountDefaults;
+  /** The space the stage fits into, in CSS pixels. */
+  frame?: { width: number; height: number };
 };
 
-export function LayerHarness({ library, extras, defaults, ...options }: HarnessProps) {
+export function LayerHarness({
+  library,
+  extras,
+  defaults,
+  frame = { width: 640, height: 760 },
+  ...options
+}: HarnessProps) {
   const { layers, onFinishCrop } = useLayerStack({
     ...options,
     library,
     defaults: defaults ?? BUILTIN_DEFAULTS,
   });
   return (
-    <div style={{ width: "640px", height: "760px", display: "grid" }}>
+    <div
+      style={{
+        width: `${String(frame.width)}px`,
+        height: `${String(frame.height)}px`,
+        display: "grid",
+      }}
+    >
       <Stage
         store={options.store}
         library={library}

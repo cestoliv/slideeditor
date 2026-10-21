@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { OUTPUT_WIDTH, outputHeight } from "@shared/geometry/index.js";
+import { OUTPUT_WIDTH, outputAspect, outputHeight } from "@shared/geometry/index.js";
 import type { AccountDefaults, LibraryItem } from "@shared/schema/index.js";
 import type { LibraryIndex } from "../../../app/useLibrary.js";
 import { activeSlideOf, useEditor } from "../store.js";
@@ -94,9 +94,21 @@ export function useLayerStack({
     [library],
   );
 
+  /*
+   * The browser snaps the stage's width and its height to layout units one
+   * at a time, so their ratio drifts from the slide's by a hair. A text box
+   * sized to exactly its lines then reads a fraction of a pixel short against
+   * a font sized off the width, and drops its last line. The height is taken
+   * from the width instead, as the export takes it.
+   */
+  const stageWidth = size.width;
   const context: GestureContext = useMemo(
-    () => ({ store, stage: size, rectOf }),
-    [rectOf, size, store],
+    () => ({
+      store,
+      stage: { width: stageWidth, height: stageWidth / outputAspect(ratio) },
+      rectOf,
+    }),
+    [rectOf, stageWidth, ratio, store],
   );
 
   const crop = useCrop({ ...context, ratio, assetOf });

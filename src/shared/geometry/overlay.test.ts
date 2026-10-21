@@ -8,6 +8,7 @@ import {
   initialOverlayWidth,
   INITIAL_OVERLAY_MAX_SIZE,
   layerOffsetToStage,
+  canvasInset,
   layerStageInset,
   localPointOnLayer,
   MIN_CROP_SIZE,
@@ -194,6 +195,15 @@ it("reports how far a layer overhangs the canvas", () => {
     left: 0.2,
   });
   expect(layerStageInset(0, 0, 0, 0)).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+});
+
+it("places the canvas edges around a layer, negative where the canvas reaches past it", () => {
+  const inset = canvasInset(0.1, 0.2, 0.5, 0.25);
+  expect(inset.top).toBeCloseTo(-0.8, 9);
+  expect(inset.right).toBeCloseTo(-0.8, 9);
+  expect(inset.bottom).toBeCloseTo(-2.2, 9);
+  expect(inset.left).toBeCloseTo(-0.2, 9);
+  expect(canvasInset(0, 0, 0, 0)).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
 });
 
 it("keeps the opposite edge fixed when a corner handle resizes", () => {

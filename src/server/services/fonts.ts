@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { FontEntry, FontSource } from "../../shared/schema/index.js";
-import { DEFAULT_ADVANCE_RATIO, TEXT_WEIGHT } from "../../shared/text/index.js";
+import {
+  DEFAULT_ADVANCE_RATIO,
+  TEXT_WEIGHT,
+  readFontMetrics,
+} from "../../shared/text/index.js";
+import type { FontMetrics, TextFont } from "../../shared/text/index.js";
+import { packageRoot } from "../plugins/client.js";
+import { woff2ToSfnt } from "./woff2.js";
 import {
   integer,
   optionalInteger,
@@ -529,6 +538,11 @@ export class FontService {
   private readonly media: MediaStore;
   private readonly fetchCss: (family: string, metadata: FontMetadata) => Promise<string>;
   private readonly fetchMetadata: (family: string) => Promise<FontMetadata>;
+  /** Each face's metrics, read from its file on first use, by italic and family. */
+  private readonly faces = new Map<
+    string,
+    { metrics: FontMetrics; weight: number } | null
+  >();
 
   constructor({
     db,
@@ -648,16 +662,15 @@ export class FontService {
   }
 
   /**
-   * The compose engine's line-wrap estimate (shared/compose/compose.ts's
-   * layoutTexts) has no font file to measure a family's average glyph width
-   * against, so it reads this instead — a real per-family value where one
-   * has been measured (both builtins, seeded by seedBuiltins above), the
-   * shared default where it has not (every Google-added family today,
-   * `advance` NULL — see the `advance` column's own migration comment). A
-   * family with no row at all (never added, or removed since) also falls
-   * back rather than throwing: whoever calls this already resolved the
-   * family from an account's own defaults, and a missing font row is that
-   * caller's problem to surface, not this lookup's to refuse over.
+   * The average glyph width measureText estimates a line from when it has
+   * no file to read: a real per-family value where one has been measured
+   * (both builtins, seeded by seedBuiltins above), the shared default where
+   * it has not (every Google-added family today, `advance` NULL — see the
+   * `advance` column's own migration comment). A family with no row at all
+   * (never added, or removed since) also falls back rather than throwing:
+   * whoever calls this already resolved the family from an account's own
+   * defaults, and a missing font row is that caller's problem to surface,
+   * not this lookup's to refuse over.
    */
   advanceRatioFor(family: string): number {
     const row = this.db
@@ -665,6 +678,59 @@ export class FontService {
       .get(family) as Row | undefined;
     const advance = row ? optionalNumber(row, "advance") : null;
     return advance ?? DEFAULT_ADVANCE_RATIO;
+  }
+
+  /**
+   * The width of one line in pixels, as the editor and the export draw it,
+   * read from the face's own file: the bundled TTF of a builtin, the
+   * self-hosted WOFF2 of a Google family. A family with no readable file
+   * falls back to its average advance.
+   */
+  measureText(line: string, font: TextFont): number {
+    const key = `${String(font.italic)}:${font.family}`;
+    if (!this.faces.has(key))
+      this.faces.set(key, this.readFace(font.family, font.italic));
+    const face = this.faces.get(key);
+    if (face) {
+      try {
+        return face.metrics.measure(line, font.size, font.weight ?? face.weight);
+      } catch {
+        // A corrupt file reads past its own end. The estimate beats a 500.
+        this.faces.set(key, null);
+      }
+    }
+    return line.length * font.size * this.advanceRatioFor(font.family);
+  }
+
+  private readFace(
+    family: string,
+    italic: boolean,
+  ): { metrics: FontMetrics; weight: number } | null {
+    const row = this.db
+      .prepare(
+        "SELECT source, weight, media_id, italic_media_id, ext FROM font WHERE family = ?",
+      )
+      .get(family) as Row | undefined;
+    if (row === undefined) return null;
+    const ext = text(row, "ext");
+    // A builtin ships no italic file, and the browser slants the roman one.
+    const mediaId =
+      (italic ? optionalText(row, "italic_media_id") : null) ??
+      optionalText(row, "media_id");
+    const path =
+      text(row, "source") === "builtin"
+        ? join(packageRoot(), "assets", `${fileStem(family)}.${ext}`)
+        : mediaId && this.media.pathFor(mediaId, ext);
+    if (!path) return null;
+    try {
+      const file = readFileSync(path);
+      const bytes = ext === "woff2" ? woff2ToSfnt(file) : file;
+      const metrics = bytes && readFontMetrics(bytes);
+      return metrics ? { metrics, weight: integer(row, "weight") } : null;
+    } catch {
+      // A missing file, or one corrupt past its header.
+      return null;
+    }
   }
 
   async addGoogleFont(family: string): Promise<FontEntry> {
@@ -768,12 +834,15 @@ export class FontService {
     }
     const created = this.get(id);
     if (!created) throw new Error("The font row just inserted has vanished.");
+    // A family measured before it was added fell back to its estimate.
+    this.faces.clear();
     return created;
   }
 
   remove(id: string): void {
     const entry = this.get(id);
     if (!entry) throw new HttpError(404, `No font with id ${id}.`);
+    this.faces.clear();
     // seedBuiltins() re-inserts a missing builtin on every construction, so a
     // "deleted" TikTok Sans or Space Mono would silently come back on the
     // next restart while every reference to it in between resolved to

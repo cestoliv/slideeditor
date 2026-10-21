@@ -461,11 +461,36 @@ export function layerStageInset(
   width: number,
   height: number,
 ): { top: number; right: number; bottom: number; left: number } {
+  const inset = canvasInset(x, y, width, height);
+  return {
+    top: Math.max(0, inset.top),
+    right: Math.max(0, inset.right),
+    bottom: Math.max(0, inset.bottom),
+    left: Math.max(0, inset.left),
+  };
+}
+
+/**
+ * The canvas edges as an inset of a layer's own box, as a share of its size,
+ * negative wherever the canvas reaches past the layer. A text clipped to it
+ * keeps the pills and strokes the export draws past its box inside the
+ * canvas, which a clip at its own box would cut.
+ *
+ * ponytail: measured in the layer's unrotated frame, as layerStageInset is,
+ * so a rotated layer near an edge is clipped off the true canvas edge.
+ * Rotate the canvas corners into the layer's frame if that shows.
+ */
+export function canvasInset(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { top: number; right: number; bottom: number; left: number } {
   if (!width || !height) return { top: 0, right: 0, bottom: 0, left: 0 };
   return {
-    top: Math.max(0, -y / height),
-    right: Math.max(0, (x + width - 1) / width),
-    bottom: Math.max(0, (y + height - 1) / height),
-    left: Math.max(0, -x / width),
+    top: -y / height,
+    right: (x + width - 1) / width,
+    bottom: (y + height - 1) / height,
+    left: -x / width,
   };
 }

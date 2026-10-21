@@ -63,7 +63,13 @@ export function textBlockStyle(layout: TextLayout, layer: TextLayer): CSSPropert
     fontFamily: fontStack(layer.fontFamily),
     fontWeight: weightFor(layer.fontFamily, layer.weight),
     fontStyle: layer.italic ? "italic" : "normal",
+    fontVariationSettings: opticalSizeOf(layout),
   };
+}
+
+/** Draws the stage's glyphs in the export's design, whatever the zoom (TextLayout.opticalSize). */
+function opticalSizeOf(layout: TextLayout): string {
+  return `"opsz" ${String(layout.opticalSize)}`;
 }
 
 export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element {
@@ -194,6 +200,7 @@ export function renderTextDom(layer: TextLayer, layout: TextLayout): JSX.Element
                 fontWeight={weightFor(layer.fontFamily, layer.weight)}
                 fontStyle={layer.italic ? "italic" : "normal"}
                 fontSize={`${String(layout.fontSize)}px`}
+                style={{ fontVariationSettings: opticalSizeOf(layout) }}
               >
                 {line === "" ? " " : line}
               </text>

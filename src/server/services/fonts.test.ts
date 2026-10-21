@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import {
   createTestApp,
   addItem,
   asHttpError,
   catchError,
+  toWoff2,
   type TestApp,
 } from "../testing.js";
+import { packageRoot } from "../plugins/client.js";
 import type { FontEntry } from "../../shared/schema/index.js";
 import { DEFAULT_ADVANCE_RATIO } from "../../shared/text/index.js";
 import {
@@ -61,10 +64,13 @@ function extractMediaRef(url: string): { mediaId: string; ext: string } {
  * with `fetchCss: async (family) => CSS_FIXTURE(family)`, the way the "adds a
  * google font" test above does.
  */
-async function addFont(target: TestApp, family: string) {
+async function addFont(
+  target: TestApp,
+  family: string,
+  file: Uint8Array<ArrayBuffer> = new Uint8Array([0, 1, 2, 3]),
+) {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () =>
-    new Response(new Uint8Array([0, 1, 2, 3]), { status: 200 })) as typeof fetch;
+  globalThis.fetch = (async () => new Response(file, { status: 200 })) as typeof fetch;
   try {
     return await target.services.fonts.addGoogleFont(family);
   } finally {
@@ -128,6 +134,52 @@ it("falls back to the shared default for a family with no measured value", async
   // column's own migration comment — so this is DEFAULT_ADVANCE_RATIO, not
   // some other family's tuned value.
   expect(app.services.fonts.advanceRatioFor("Space Grotesk")).toBe(DEFAULT_ADVANCE_RATIO);
+});
+
+it("measures a builtin from its own file, at the weight a layer asks for", () => {
+  app = createTestApp();
+  const font = { family: "TikTok Sans", size: 48, weight: null, italic: false };
+  // Chrome's canvas measureText for the same line at TikTok Sans 500.
+  expect(app.services.fonts.measureText("elle avait raison", font)).toBeCloseTo(
+    319.95,
+    1,
+  );
+  expect(
+    app.services.fonts.measureText("elle avait raison", { ...font, weight: 800 }),
+  ).toBeGreaterThan(330);
+});
+
+it("measures a Google family from its self-hosted WOFF2 once it is added", async () => {
+  app = createTestApp({ fetchCss: async (family) => CSS_FIXTURE(family) });
+  const font = { family: "Space Grotesk", size: 48, weight: null, italic: false };
+  const line = "un curl sur 6 mois";
+  expect(app.services.fonts.measureText(line, font)).toBe(
+    line.length * 48 * DEFAULT_ADVANCE_RATIO,
+  );
+  // Space Mono's own outlines, served under another name.
+  const ttf = readFileSync(join(packageRoot(), "assets", "SpaceMono.ttf"));
+  await addFont(app, "Space Grotesk", new Uint8Array(toWoff2(new Uint8Array(ttf))));
+  expect(app.services.fonts.measureText(line, font)).toBeCloseTo(528.77, 1);
+});
+
+it("estimates a family whose file is cut short rather than failing", async () => {
+  app = createTestApp({ fetchCss: async (family) => CSS_FIXTURE(family) });
+  const ttf = readFileSync(join(packageRoot(), "assets", "SpaceMono.ttf"));
+  // A whole WOFF2 around a font file that stops partway through its tables.
+  await addFont(app, "Space Grotesk", new Uint8Array(toWoff2(ttf.subarray(0, 20000))));
+  const font = { family: "Space Grotesk", size: 48, weight: null, italic: false };
+  expect(app.services.fonts.measureText("abcd", font)).toBe(
+    4 * 48 * DEFAULT_ADVANCE_RATIO,
+  );
+});
+
+it("estimates a family it has no readable file for from its average advance", async () => {
+  app = createTestApp({ fetchCss: async (family) => CSS_FIXTURE(family) });
+  await addFont(app, "Space Grotesk");
+  const font = { family: "Space Grotesk", size: 40, weight: null, italic: false };
+  expect(app.services.fonts.measureText("abcd", font)).toBe(
+    4 * 40 * DEFAULT_ADVANCE_RATIO,
+  );
 });
 
 it("falls back to the shared default for a family with no font row at all", () => {

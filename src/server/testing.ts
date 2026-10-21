@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deflateSync } from "node:zlib";
+import { brotliCompressSync, constants, deflateSync } from "node:zlib";
 import type { DatabaseSync } from "node:sqlite";
 import type { FastifyInstance } from "fastify";
 import sharp from "sharp";
@@ -227,3 +227,71 @@ export async function catchError(fn: () => unknown): Promise<unknown> {
  * minimum the password routes enforce.
  */
 export const fixturePassword = `fixture-${randomBytes(12).toString("hex")}`;
+
+/** WOFF2's known-tag table, as far as the faces these tests pack need it. */
+const WOFF2_TAGS = [
+  "cmap", "head", "hhea", "hmtx", "maxp", "name", "OS/2", "post", "cvt ", "fpgm",
+  "glyf", "loca",
+]; // prettier-ignore
+
+/** One WOFF2 UIntBase128. */
+function base128(value: number): number[] {
+  const bytes = [value & 0x7f];
+  for (let rest = Math.floor(value / 128); rest > 0; rest = Math.floor(rest / 128)) {
+    bytes.unshift((rest & 0x7f) | 0x80);
+  }
+  return bytes;
+}
+
+/**
+ * Packs a TrueType file as WOFF2, the format a Google face is self-hosted
+ * in. glyf and loca are marked transformed, as in every Google file, and hold
+ * filler, because woff2ToSfnt drops both. hmtx keeps its side bearings unless
+ * `transformHmtx`, which stores only its advances, as Google's encoder may.
+ */
+export function toWoff2(sfnt: Uint8Array, transformHmtx = false): Uint8Array {
+  const view = new DataView(sfnt.buffer, sfnt.byteOffset, sfnt.byteLength);
+  const tables = Array.from({ length: view.getUint16(4) }, (_, index) => {
+    const record = 12 + 16 * index;
+    const tag = String.fromCharCode(...sfnt.subarray(record, record + 4));
+    const offset = view.getUint32(record + 8);
+    return { tag, data: sfnt.subarray(offset, offset + view.getUint32(record + 12)) };
+  });
+  const hhea = tables.find((table) => table.tag === "hhea")?.data;
+  const metrics = hhea ? new DataView(hhea.buffer, hhea.byteOffset).getUint16(34) : 0;
+  const directory: number[] = [];
+  const stream: Uint8Array[] = [];
+  for (const { tag, data } of tables) {
+    const known = WOFF2_TAGS.indexOf(tag);
+    const hmtx = transformHmtx && tag === "hmtx";
+    let packed: Uint8Array | null = null;
+    if (tag === "glyf") packed = new Uint8Array(8);
+    else if (tag === "loca") packed = new Uint8Array(0);
+    else if (hmtx) {
+      packed = new Uint8Array(1 + 2 * metrics);
+      packed[0] = 3;
+      for (let index = 0; index < metrics; index++)
+        packed.set(data.subarray(4 * index, 4 * index + 2), 1 + 2 * index);
+    }
+    // Version 0 transforms glyf and loca and leaves every other table as is.
+    directory.push((known === -1 ? 63 : known) | ((hmtx ? 1 : 0) << 6));
+    if (known === -1)
+      directory.push(...[...tag].map((character) => character.charCodeAt(0)));
+    directory.push(...base128(data.byteLength));
+    if (packed !== null) directory.push(...base128(packed.byteLength));
+    stream.push(packed ?? data);
+  }
+  // The lowest quality, because the default takes seconds over a whole face.
+  const compressed = brotliCompressSync(Buffer.concat(stream), {
+    params: { [constants.BROTLI_PARAM_QUALITY]: 1 },
+  });
+  const header = Buffer.alloc(48);
+  header.write("wOF2", 0, "latin1");
+  header.writeUInt32BE(view.getUint32(0), 4);
+  header.writeUInt32BE(48 + directory.length + compressed.byteLength, 8);
+  header.writeUInt16BE(tables.length, 12);
+  header.writeUInt32BE(sfnt.byteLength, 16);
+  header.writeUInt32BE(compressed.byteLength, 20);
+  header.writeUInt16BE(1, 24);
+  return Buffer.concat([header, Buffer.from(directory), compressed]);
+}

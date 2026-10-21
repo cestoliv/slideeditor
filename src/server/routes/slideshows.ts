@@ -51,7 +51,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       slides,
       library: app.library,
       defaults: account.defaults,
-      advanceRatioFor: (family) => app.fonts.advanceRatioFor(family),
+      measureText: (line, font) => app.fonts.measureText(line, font),
       notes,
     });
     const project = app.projects.create({
@@ -95,7 +95,7 @@ export function slideshowRoutes(app: FastifyInstance): void {
       library: app.library,
       defaults: account.defaults,
       previous: asComposable(current),
-      advanceRatioFor: (family) => app.fonts.advanceRatioFor(family),
+      measureText: (line, font) => app.fonts.measureText(line, font),
       notes,
     });
     const project = app.projects.save(id, {

@@ -91,6 +91,48 @@ it("warns when a text has more lines than its box shows", async () => {
   ]);
 });
 
+/** A box that holds `lines` lines of 48px text on a 9:16 slide, and no more. */
+function linesTall(lines: number): number {
+  return (lines * 48 * 1.12 + 48 * 0.1 * 2) / 1920;
+}
+
+it("warns about a box the face wraps past, measured with the real face", async () => {
+  // A character-count estimate fits these capitals on one line. TikTok Sans
+  // draws them wider and wraps WORKOUT to a second one.
+  const caps = "MAXIMUM WEIGHT WORKOUT";
+  const document = await slideWith({
+    texts: [text({ text: caps, size: 48, height: linesTall(1) })],
+  });
+
+  const { warnings } = await renderPreview(services, document, [1], 540);
+
+  expect(warnings).toEqual([
+    expect.objectContaining({ slide: 1, type: "text-cut", text: caps }),
+  ]);
+});
+
+it("says nothing about a box that holds every line, at any preview width", async () => {
+  const document = await slideWith({
+    texts: [
+      text({ id: "a", text: "MAXIMUM WEIGHT WORKOUT", size: 48, height: linesTall(2) }),
+      // A character-count estimate wraps this to two lines. The face draws one.
+      text({
+        id: "b",
+        y: 0.6,
+        text: "elle m'a dit que j'avais changé",
+        size: 48,
+        height: linesTall(1),
+      }),
+    ],
+  });
+
+  // 600 rounds the preview's height down, which once cut the last line.
+  for (const width of [540, 600, 1080]) {
+    const { warnings } = await renderPreview(services, document, [1], width);
+    expect(warnings, `at ${String(width)}px`).toEqual([]);
+  }
+});
+
 it("warns when a text box reaches past the slide edge", async () => {
   const document = await slideWith({ texts: [text({ y: 0.95 })] });
 

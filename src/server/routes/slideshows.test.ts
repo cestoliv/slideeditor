@@ -454,6 +454,18 @@ it("wraps the same caption to a different height for a different builtin family"
   expect(spaceMonoHeight).toBeGreaterThan(tiktokHeight);
 });
 
+it("sizes a composed box to the lines the bundled face really wraps to", async () => {
+  const background = await addItem("background", "Bg");
+  // A character-count estimate fits these capitals on one line. TikTok Sans
+  // wraps them to two, so the box must hold two.
+  const created = await createSlideshow({
+    slides: [{ background, texts: [{ text: "MAXIMUM WEIGHT WORKOUT", size: 48 }] }],
+  });
+  const read = await app.inject({ method: "GET", url: `/api/projects/${created.id}` });
+  const height = read.json().project.slides[0].texts[0].height as number;
+  expect(height * 1920).toBeCloseTo(2 * 48 * 1.12 + 2 * 48 * 0.1, 6);
+});
+
 it("keeps an explicit ratio even when the account default differs", async () => {
   const account = app.accounts.create({
     name: "Instagram",

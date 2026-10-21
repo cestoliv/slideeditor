@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { OUTPUT_WIDTH } from "@shared/geometry/index.js";
 import { computeTextLayout, fontSizeAt, textFontString } from "@shared/text/index.js";
 import type { MeasureText, TextLayout } from "@shared/text/index.js";
 import type { TextLayer } from "@shared/schema/index.js";
@@ -19,8 +20,16 @@ import {
 /** One canvas for the whole app, as app.js:2734 kept one. */
 let measureCanvas: HTMLCanvasElement | null = null;
 
+/**
+ * Measures at the export's own font size and scales the width down to
+ * `fontSize`. A face with an optical size axis (TikTok Sans has one) draws a
+ * small line in a wider design, so a line measured at stage size wraps to
+ * more lines than the export and than the box compose sized for it.
+ * renderTextDom pins the stage's glyphs to the same optical size.
+ */
 function measurerFor(
   fontSize: number,
+  exportSize: number,
   family: string,
   weight: number,
   italic: boolean,
@@ -28,8 +37,8 @@ function measurerFor(
   measureCanvas ??= document.createElement("canvas");
   const context = measureCanvas.getContext("2d");
   if (context === null) return (line) => line.length * fontSize * 0.5;
-  context.font = textFontString(fontSize, family, weight, italic);
-  return (line) => context.measureText(line).width;
+  context.font = textFontString(exportSize, family, weight, italic);
+  return (line) => (context.measureText(line).width * fontSize) / exportSize;
 }
 
 type FontState = "idle" | "loading" | "ready";
@@ -248,6 +257,7 @@ export function layoutAt(layer: TextLayer, stage: StageSize): TextLayout {
     fontSize,
     measure: measurerFor(
       fontSize,
+      fontSizeAt(layer, OUTPUT_WIDTH),
       layer.fontFamily,
       weightFor(layer.fontFamily, layer.weight),
       layer.italic,

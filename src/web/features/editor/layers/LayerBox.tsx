@@ -5,7 +5,7 @@ import type {
   PointerEvent,
   ReactNode,
 } from "react";
-import { layerStageInset } from "@shared/geometry/index.js";
+import { canvasInset, layerStageInset } from "@shared/geometry/index.js";
 import { Icon } from "../../../design/index.js";
 import type { LayerKind } from "../selection.js";
 import styles from "./LayerBox.module.css";
@@ -84,7 +84,23 @@ export function layerClipCss(
   width: number,
   height: number,
 ): string {
-  const inset = layerStageInset(x, y, width, height);
+  return insetCss(layerStageInset(x, y, width, height));
+}
+
+/**
+ * The CSS clip at the canvas edges alone, for a text whose pills and strokes
+ * reach past its box the way the export draws them.
+ */
+export function canvasClipCss(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): string {
+  return insetCss(canvasInset(x, y, width, height));
+}
+
+function insetCss(inset: { top: number; right: number; bottom: number; left: number }) {
   return `inset(${String(inset.top * 100)}% ${String(inset.right * 100)}% ${String(
     inset.bottom * 100,
   )}% ${String(inset.left * 100)}%)`;

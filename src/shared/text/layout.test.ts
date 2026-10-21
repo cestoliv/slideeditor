@@ -445,6 +445,29 @@ it("reports the height the box would need to show every line", () => {
   expect(layout.contentHeight).toBeGreaterThan(92);
 });
 
+it("sizes a per-line box to hold its pills as well as its lines", () => {
+  const layer = { ...base, style: "boxed" as const, backgroundShape: "lines" as const };
+  const sized = computeTextLayout({
+    layer: { ...layer, text: "one two three four five" },
+    boxWidth: 200,
+    boxHeight: 1,
+    fontSize: 40,
+    measure,
+  });
+  const layout = computeTextLayout({
+    layer: { ...layer, text: "one two three four five" },
+    boxWidth: 200,
+    boxHeight: sized.contentHeight,
+    fontSize: 40,
+    measure,
+  });
+  expect(layout.lines).toHaveLength(layout.totalLineCount);
+  const top = (layout.lineCenters[0] ?? 0) - layout.pillHeight / 2;
+  const bottom = (layout.lineCenters.at(-1) ?? 0) + layout.pillHeight / 2;
+  expect(top).toBeCloseTo(0, 6);
+  expect(bottom).toBeCloseTo(sized.contentHeight, 6);
+});
+
 it("keeps every line of a box sized to exactly its content height", () => {
   // compose.ts stores the content height as a fraction of the canvas, so a
   // renderer multiplies it back out and lands a rounding error short: this
