@@ -262,6 +262,65 @@ it("patches the fields it is given and leaves the rest alone", async () => {
   });
 });
 
+it("stores layout hints sent on create and on patch", async () => {
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/library",
+    payload: {
+      kind: "background",
+      name: "Portrait",
+      contentType: "image/png",
+      data: pngFixture(64, 64),
+      accountId: "default",
+      layoutHints: { freeZone: "bottom" },
+    },
+  });
+  expect(created.json().item.layoutHints).toEqual({ freeZone: "bottom" });
+  const id = String(created.json().item.id);
+  const subject = { x: 0.1, y: 0.2, w: 0.5, h: 0.5 };
+  await app.inject({
+    method: "PATCH",
+    url: `/api/library/${id}`,
+    payload: { layoutHints: { subject } },
+  });
+  const read = await app.inject({ method: "GET", url: `/api/library/${id}` });
+  expect(read.json().item.layoutHints).toEqual({ subject });
+});
+
+it("refuses invalid layout hints with 400", async () => {
+  const id = await createItem();
+  for (const layoutHints of [
+    { freeZone: "left" },
+    { subject: { x: 0.5, y: 0, w: 0.6, h: 0.5 } },
+    { subject: { x: -0.1, y: 0, w: 0.5, h: 0.5 } },
+    { subject: { x: 0, y: 0, w: 0.5 } },
+    { anchor: "top" },
+    "top",
+  ]) {
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/library/${id}`,
+      payload: { layoutHints },
+    });
+    expect(response.statusCode, JSON.stringify(layoutHints)).toBe(400);
+  }
+  const read = await app.inject({ method: "GET", url: `/api/library/${id}` });
+  expect(read.json().item.layoutHints).toBeUndefined();
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/library",
+    payload: {
+      kind: "background",
+      name: "Portrait",
+      contentType: "image/png",
+      data: pngFixture(64, 64),
+      accountId: "default",
+      layoutHints: { freeZone: "left" },
+    },
+  });
+  expect(created.statusCode).toBe(400);
+});
+
 it("returns 409 with usedBy when deleting an item in use", async () => {
   const id = await createItem();
   const slideshow = await app.inject({

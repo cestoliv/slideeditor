@@ -307,4 +307,10 @@ export const MIGRATIONS: string[] = [
   -- hand. NULL for a slideshow created in the editor, or before this column.
   ALTER TABLE project ADD COLUMN composed_document TEXT;
   `,
+  `
+  -- Where a background leaves room for text, as the JSON of layoutHintsSchema
+  -- in src/shared/schema/library.ts. Empty for an image nobody annotated yet,
+  -- which the compositor reads as no hint at all.
+  ALTER TABLE library_item ADD COLUMN layout_hints TEXT NOT NULL DEFAULT '';
+  `,
 ];

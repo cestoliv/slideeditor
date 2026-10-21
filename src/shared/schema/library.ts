@@ -17,6 +17,26 @@ export const libraryStatsSchema = z.object({
   lastUsedAt: z.number().nullable().catch(null),
 });
 
+const fraction = z.number().min(0).max(1);
+
+/**
+ * Where a background leaves room for text, written by an agent that looked at
+ * the image. Every value is a fraction of the image, not of the slide, so one
+ * note holds for every ratio and crop the background is used at.
+ */
+export const layoutHintsSchema = z
+  .object({
+    freeZone: z.enum(["top", "middle", "bottom"]).optional(),
+    subject: z
+      .object({ x: fraction, y: fraction, w: fraction, h: fraction })
+      .strict()
+      .refine((box) => box.x + box.w <= 1 && box.y + box.h <= 1, {
+        message: "The subject has to sit inside the image.",
+      })
+      .optional(),
+  })
+  .strict();
+
 // Mirrors toItem in server/library.mjs:179-201.
 export const libraryItemSchema = z.object({
   id: z.string(),
@@ -34,6 +54,7 @@ export const libraryItemSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   stats: libraryStatsSchema,
+  layoutHints: layoutHintsSchema.optional().catch(undefined),
 });
 
 /*
@@ -50,3 +71,4 @@ export type LibraryKind = z.infer<typeof libraryKindSchema>;
 export type LibrarySort = z.infer<typeof librarySortSchema>;
 export type LibraryStats = z.infer<typeof libraryStatsSchema>;
 export type LibraryItem = z.infer<typeof libraryItemSchema>;
+export type LayoutHints = z.infer<typeof layoutHintsSchema>;
