@@ -2,7 +2,12 @@
 # publishes @img/sharp-linuxmusl-x64 and @img/sharp-linuxmusl-arm64, which is
 # what makes musl safe here. A dependency whose native module has no musl
 # prebuild needs a glibc base instead.
-FROM node:22-alpine AS build
+#
+# Both stages pin the same digest, so a rebuild of one commit gets one base.
+# To take Node or Alpine fixes, bump the digest in both lines. CI caches layers,
+# so a rerun reuses the `apk add` layer and its old packages. Only a change at or
+# above that layer (the digest, the manifest or the lockfile) refetches them.
+FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 # --ignore-scripts: prepare runs `npm run build`, but at this point only the
@@ -12,7 +17,7 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # package.json defines prepare as `npm run build`, which a production install
