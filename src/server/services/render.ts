@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import type { FastifyInstance } from "fastify";
 import { SESSION_COOKIE } from "../auth/cookie.js";
@@ -54,18 +56,35 @@ export function createServerRender(app: FastifyInstance): ServerRender {
   };
 }
 
+/**
+ * Chromium with its home under the temp directory. A container with a
+ * read-only root has no writable home, and Chromium's crash handler aborts
+ * the launch without one. Exported for the CI check that launches it inside
+ * the image.
+ */
+export function launchBrowser(): Promise<Browser> {
+  const executablePath = process.env["SLIDE_STUDIO_CHROMIUM"];
+  const home = tmpdir();
+  return chromium.launch({
+    timeout: LAUNCH_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, ".config"),
+      XDG_CACHE_HOME: join(home, ".cache"),
+    },
+    ...(executablePath ? { executablePath } : {}),
+  });
+}
+
 async function renderInBrowser(
   app: FastifyInstance,
   id: string,
   version: number,
 ): Promise<void> {
-  const executablePath = process.env["SLIDE_STUDIO_CHROMIUM"];
   // ponytail: one browser per render, closed after. Keep one alive if launch
   // time ever matters more than the memory it holds between exports.
-  const browser = await chromium.launch({
-    timeout: LAUNCH_TIMEOUT_MS,
-    ...(executablePath ? { executablePath } : {}),
-  });
+  const browser = await launchBrowser();
   const session = app.sessions.create({ userAgent: "slide-studio server render" });
   let timer: NodeJS.Timeout | undefined;
   try {

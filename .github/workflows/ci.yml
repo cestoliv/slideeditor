@@ -54,14 +54,17 @@ jobs:
       # export_slideshow draws slides in the image's own Chromium, through the
       # pinned playwright-core. An Alpine Chromium that playwright-core can no
       # longer drive fails here rather than on the first export in production.
+      # The flags mirror the deployed container on atlas: a read-only root with a
+      # tmpfs /tmp, no capabilities and a 512 MB cap.
       - name: Launches Chromium inside the image
         run: |
-          docker run --rm --entrypoint node slide-studio:ci -e "
-            require('playwright-core').chromium
-              .launch({ executablePath: process.env.SLIDE_STUDIO_CHROMIUM })
-              .then((browser) => browser.close())
-              .catch((error) => { console.error(error); process.exit(1); });
-          "
+          docker run --rm --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true --memory 512m \
+            --entrypoint node slide-studio:ci --input-type=module -e "
+              const { launchBrowser } = await import('./dist/server/server/services/render.js');
+              const browser = await launchBrowser();
+              await browser.close();
+            "
       # preview_slideshow draws text through sharp's librsvg, which falls back
       # to a generic face without a word when it cannot find the bundled one.
       # The same word drawn in TikTok Sans and in a family that does not exist
