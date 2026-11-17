@@ -32,6 +32,13 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 RUN apk add --no-cache fontconfig
 COPY assets/*.ttf /usr/share/fonts/slide-studio/
 RUN fc-cache -f
+# export_slideshow draws a ready slideshow in headless Chromium when no editor
+# tab has uploaded it (src/server/services/render.ts). playwright-core drives
+# this system build, because Playwright ships no browser for musl.
+# The emoji font is there because the editor draws emoji in colour, and Alpine
+# ships no emoji face for Chromium to fall back on.
+RUN apk add --no-cache chromium font-noto-emoji
+ENV SLIDE_STUDIO_CHROMIUM=/usr/bin/chromium
 COPY --from=build /app/dist ./dist
 COPY bin ./bin
 COPY assets ./assets

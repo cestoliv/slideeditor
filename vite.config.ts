@@ -11,7 +11,18 @@ export default defineConfig({
       "@assets": fileURLToPath(new URL("./assets", import.meta.url)),
     },
   },
-  build: { outDir: "dist/web", emptyOutDir: true },
+  build: {
+    outDir: "dist/web",
+    emptyOutDir: true,
+    // render.html is the page the server opens in headless Chromium to draw
+    // exports (src/server/services/render.ts).
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        render: fileURLToPath(new URL("./render.html", import.meta.url)),
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

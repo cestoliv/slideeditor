@@ -348,16 +348,21 @@ server converts each slide over an opaque white background, so a transparent
 pixel never reaches a feed composited against something the platform picked.
 `quality` with `format: "png"` is refused, because PNG is lossless.
 
-The browser still renders every slide as a PNG. The conversion happens once per
-format and quality, so exporting the same version twice re-encodes nothing.
+Every slide renders as a PNG first, with the editor's own canvas code. The
+conversion happens once per format and quality, so exporting the same version
+twice re-encodes nothing.
 
 Each URL needs no credential and expires after 45 minutes. A URL serves only
 the format its call asked for, so a JPEG URL cannot be edited into the PNG.
 
-A `status` of `pending` means the editor has not rendered this version yet,
-because the images render in the browser rather than on the server. Ask the
-human to open the edit URL while the slideshow is `ready`, then call
-`export_slideshow` again.
+When no editor tab has rendered this version, the server draws it in headless
+Chromium before it answers, which takes a few seconds. No tab has to be open.
+The server finds Chromium through `SLIDE_STUDIO_CHROMIUM`, or else uses the one
+`npx playwright install chromium` installs. The Docker image ships its own.
+
+A `status` of `pending` means the server could not draw the slides, and
+`renderError` says why. Ask the human to open the edit URL while the slideshow
+is `ready`, then call `export_slideshow` again.
 
 Call `revoke_export` once the scheduling tool finishes downloading. It stops
 every URL early, whatever format each one serves, and keeps the rendered

@@ -1,11 +1,17 @@
 import { expect, inject, it } from "vitest";
 import "./provided.js";
 import { page, userEvent } from "vitest/browser";
+import "@web/design/fonts.css";
+import { outputHeight } from "@shared/geometry/index.js";
+import { parseProject } from "@shared/schema/index.js";
+import { injectFontFaces } from "@web/app/fontFaces.js";
+import { renderSlideBlob } from "@web/features/editor/export/render.js";
 import {
   baseUrl,
   createSlideshow,
   editPath,
   openApp,
+  readProject,
   seedLibrary,
 } from "./setup/fixtures.js";
 
@@ -267,3 +273,57 @@ it("hands an agent public image URLs once a person marks the slideshow ready", a
   expect(reissued?.sha256).toBe(first.sha256);
   expect((await download(reissued!.url)).status).toBe(200);
 });
+
+it("exports a slideshow no browser has opened, in the editor's own pixels", async () => {
+  const { backgrounds } = await seedLibrary(baseUrl);
+  const created = await createSlideshow(baseUrl, {
+    name: "Export with no tab",
+    slides: [{ background: backgrounds[0]!.id, texts: ["Drawn on the server 🔥"] }],
+  });
+  const status = await callTool("set_slideshow_status", {
+    id: created.id,
+    status: "ready",
+  });
+  expect(status.isError).toBe(false);
+  const project = parseProject(await readProject(baseUrl, created.id));
+
+  // No editor tab ever opened this slideshow, so the server draws it itself.
+  const answer = await exportSlideshow(project.id, project.version, { format: "png" });
+  expect(answer.status).toBe("ready");
+  const slide = answer.slides?.[0];
+  expect(slide).toBeDefined();
+  const served = await (await download(slide!.url)).blob();
+
+  // The same slide through the editor's own renderer, in this browser. The two
+  // runs use one Chromium build, so the pixels match up to antialiasing.
+  await injectFontFaces();
+  const local = await renderSlideBlob(project.slides[0]!, {
+    height: outputHeight(project.ratio),
+    assets: new Map(backgrounds.map((item) => [item.id, item])),
+  });
+  const [a, b] = await Promise.all([pixelsOf(served), pixelsOf(local)]);
+  expect(a.length).toBe(b.length);
+  let differing = 0;
+  for (let index = 0; index < a.length; index += 4) {
+    const drift = Math.max(
+      Math.abs(a[index]! - b[index]!),
+      Math.abs(a[index + 1]! - b[index + 1]!),
+      Math.abs(a[index + 2]! - b[index + 2]!),
+    );
+    if (drift > 8) differing += 1;
+  }
+  // A wrong font, size or anchor moves thousands of pixels. Antialiasing moves
+  // a handful.
+  expect(differing / (a.length / 4)).toBeLessThan(0.001);
+});
+
+async function pixelsOf(blob: Blob): Promise<Uint8ClampedArray> {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext("2d");
+  if (context === null) throw new Error("This browser has no 2d canvas.");
+  context.drawImage(bitmap, 0, 0);
+  return context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+}

@@ -51,6 +51,17 @@ jobs:
       # eval string as CommonJS regardless of the package's own module type.
       - name: Loads sharp inside the musl image
         run: docker run --rm --entrypoint node slide-studio:ci -e "require('sharp')"
+      # export_slideshow draws slides in the image's own Chromium, through the
+      # pinned playwright-core. An Alpine Chromium that playwright-core can no
+      # longer drive fails here rather than on the first export in production.
+      - name: Launches Chromium inside the image
+        run: |
+          docker run --rm --entrypoint node slide-studio:ci -e "
+            require('playwright-core').chromium
+              .launch({ executablePath: process.env.SLIDE_STUDIO_CHROMIUM })
+              .then((browser) => browser.close())
+              .catch((error) => { console.error(error); process.exit(1); });
+          "
       # preview_slideshow draws text through sharp's librsvg, which falls back
       # to a generic face without a word when it cannot find the bundled one.
       # The same word drawn in TikTok Sans and in a family that does not exist

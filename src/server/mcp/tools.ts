@@ -33,6 +33,7 @@ import type {
   ProjectService,
   StoredProject,
 } from "../services/projects.js";
+import type { ServerRender } from "../services/render.js";
 import { editUrl } from "../urls.js";
 
 /** The things every tool reads, hung off the Fastify instance by Task 8. */
@@ -49,6 +50,9 @@ export interface ToolContext {
   // Replaced by a test that serves its image from loopback, which the real
   // fetcher refuses.
   fetchImage?: (url: string) => Promise<FetchedImage>;
+  // Draws a ready slideshow's slides on the server, so export_slideshow does
+  // not wait for an open editor. Absent in tests that need no browser.
+  render?: ServerRender;
 }
 
 /**
@@ -646,9 +650,9 @@ const exportSlideshow = defineTool({
     "for `png` or `webp`, always over an opaque white background, so a transparent pixel never reaches a feed " +
     "composited against something else. `quality` runs from 1 to 100 and is refused with `png`, which is " +
     "lossless. Each slide also carries its width, height, byte count and sha256, so you can check that what " +
-    "was downloaded is what was rendered. A `status` of `pending` means the human has not opened the editor " +
-    "since this version became ready: the pixels are drawn in the browser, so ask them to open the edit URL, " +
-    "then call again. Call revoke_export once the import is done.",
+    "was downloaded is what was rendered. The server draws the slides the first time you export a version, " +
+    "which can take a few seconds. A `status` of `pending` means it could not, and `renderError` says why: " +
+    "ask the human to open the edit URL, then call again. Call revoke_export once the import is done.",
   inputSchema: {
     id: z.string().describe("Slideshow id."),
     version: z
@@ -697,9 +701,18 @@ const exportSlideshow = defineTool({
     }
 
     const base = baseUrl();
-    const renders = exports.rendersFor(project.id, project.version);
+    let renders = exports.rendersFor(project.id, project.version);
+    let renderError: string | undefined;
     // Short as well as empty: an upload that failed halfway leaves a partial
     // set, and half a slideshow is not an export.
+    if (renders.length < project.slides.length && context.render) {
+      try {
+        await context.render(project.id, project.version);
+      } catch (error) {
+        renderError = error instanceof Error ? error.message : String(error);
+      }
+      renders = exports.rendersFor(project.id, project.version);
+    }
     if (renders.length < project.slides.length) {
       return json({
         slideshowId: project.id,
@@ -708,8 +721,9 @@ const exportSlideshow = defineTool({
         rendered: renders.length,
         slideCount: project.slides.length,
         editUrl: editUrl(base, project.id),
+        ...(renderError === undefined ? {} : { renderError }),
         message:
-          "The slides are drawn in the browser. Ask the human to open the edit URL with the slideshow " +
+          "The slides are not drawn yet. Ask the human to open the edit URL with the slideshow " +
           "marked ready, then call export_slideshow again.",
       });
     }
