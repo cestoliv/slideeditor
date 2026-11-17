@@ -533,7 +533,7 @@ const PINNED = [
     name: "export_slideshow",
     title: "Export a slideshow as image URLs",
     description:
-      "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and no token, and they stop working after 45 minutes. Slides come back as JPEG at quality 92 unless you ask for `png` or `webp`, always over an opaque white background, so a transparent pixel never reaches a feed composited against something else. `quality` runs from 1 to 100 and is refused with `png`, which is lossless. Each slide also carries its width, height, byte count and sha256, so you can check that what was downloaded is what was rendered. A `status` of `pending` means the human has not opened the editor since this version became ready: the pixels are drawn in the browser, so ask them to open the edit URL, then call again. Call revoke_export once the import is done.",
+      "Get one temporary public image URL per slide, in order, ready to hand to a scheduling tool such as Metricool that downloads media by URL. The slideshow has to be `ready`, and the `version` you pass has to be the one stored, so you can never publish a composition that has moved on. The URLs need no cookie and no token, and they stop working after 45 minutes. Slides come back as JPEG at quality 92 unless you ask for `png` or `webp`, always over an opaque white background, so a transparent pixel never reaches a feed composited against something else. `quality` runs from 1 to 100 and is refused with `png`, which is lossless. Each slide also carries its width, height, byte count and sha256, so you can check that what was downloaded is what was rendered. The server draws the slides the first time you export a version, which can take a few seconds. A `status` of `pending` means it could not, and `renderError` says why: ask the human to open the edit URL, then call again. Call revoke_export once the import is done.",
   },
   {
     name: "revoke_export",
@@ -1137,6 +1137,65 @@ it("reports pending, not failure, when the editor has not rendered yet", async (
   expect(body.status).toBe("pending");
   expect(body.slides).toBeUndefined();
   expect(body.editUrl).toContain(created.id);
+});
+
+it("draws missing slides on the server before it answers", async () => {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: backgroundId }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  const png = solidPng(1080, 1920);
+  const calls: [string, number][] = [];
+  context.render = async (id, version) => {
+    calls.push([id, version]);
+    const mediaId = await harness.services.media.put(png, "png");
+    harness.services.exports.putRender(id, version, 0, {
+      mediaId,
+      width: 1080,
+      height: 1920,
+      bytes: png.byteLength,
+    });
+  };
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id: created.id, version: created.version, format: "png" },
+      context,
+    ),
+  ) as { status: string; slides: unknown[] };
+  expect(calls).toEqual([[created.id, created.version]]);
+  expect(body.status).toBe("ready");
+  expect(body.slides).toHaveLength(1);
+
+  // Stored now, so the next export draws nothing.
+  await tools.export_slideshow.handler(
+    { id: created.id, version: created.version },
+    context,
+  );
+  expect(calls).toHaveLength(1);
+});
+
+it("reports pending with the reason when the server cannot draw", async () => {
+  const backgroundId = await background();
+  const created = payload(
+    await tools.create_slideshow.handler(
+      { accountId: ACCOUNT_ID, slides: [{ background: backgroundId }] },
+      context,
+    ),
+  ) as { id: string; version: number };
+  await tools.set_slideshow_status.handler({ id: created.id, status: "ready" }, context);
+  context.render = () => Promise.reject(new Error("No Chromium here."));
+  const body = payload(
+    await tools.export_slideshow.handler(
+      { id: created.id, version: created.version },
+      context,
+    ),
+  ) as { status: string; renderError: string };
+  expect(body.status).toBe("pending");
+  expect(body.renderError).toBe("No Chromium here.");
 });
 
 it("reports pending while only some slides have rendered", async () => {

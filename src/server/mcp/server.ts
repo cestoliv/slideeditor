@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { createServerRender } from "../services/render.js";
 import { tools, type RawShape, type ToolContext, type ToolDefinition } from "./tools.js";
 
 /**
@@ -73,6 +74,7 @@ export async function registerMcp(app: FastifyInstance): Promise<void> {
     exports: app.exports,
     media: app.media,
     baseUrl: app.baseUrl,
+    render: createServerRender(app),
   };
   await app.register((scope, _options, done) => {
     scope.route({
